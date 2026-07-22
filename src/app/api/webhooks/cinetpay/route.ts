@@ -1,0 +1,149 @@
+import { NextRequest, NextResponse } from "next/server";
+import { verifyCinetPaySignature } from "@/lib/cinetpay";
+import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
+
+// CinetPay POSTs notifications as application/x-www-form-urlencoded.
+async function parseNotificationBody(
+  request: NextRequest,
+): Promise<Record<string, unknown>> {
+  const contentType = request.headers.get("content-type") ?? "";
+
+  if (contentType.includes("application/json")) {
+    return (await request.json()) as Record<string, unknown>;
+  }
+
+  const formData = await request.formData();
+  return Object.fromEntries(formData.entries());
+}
+
+export async function POST(request: NextRequest) {
+  const notification = await parseNotificationBody(request);
+  const receivedToken = request.headers.get("x-token");
+
+  // Brief 0.1: fail closed, unconditionally. No signature, no dev
+  // trust-by-default, no exceptions.
+  const isValid = verifyCinetPaySignature(
+    notification,
+    receivedToken,
+    process.env.CINETPAY_SECRET_KEY,
+  );
+
+  if (!isValid) {
+    return NextResponse.json(
+      { error: "invalid or missing webhook signature" },
+      { status: 403 },
+    );
+  }
+
+  const transactionId = String(notification.cpm_trans_id ?? "");
+  const transStatus = String(notification.cpm_trans_status ?? "").toUpperCase();
+  const amount = Number(notification.cpm_amount);
+
+  if (!transactionId) {
+    return NextResponse.json(
+      { error: "cpm_trans_id missing from notification" },
+      { status: 400 },
+    );
+  }
+
+  if (transStatus !== "ACCEPTED") {
+    // Payment failed/cancelled: no transaction row was ever created for it,
+    // there is nothing to reconcile.
+    return NextResponse.json({ status: "ignored", reason: transStatus });
+  }
+
+  let custom: { fanId?: string; offreId?: string } = {};
+  try {
+    custom = JSON.parse(String(notification.cpm_custom ?? "{}"));
+  } catch {
+    return NextResponse.json(
+      { error: "cpm_custom is not valid JSON" },
+      { status: 400 },
+    );
+  }
+
+  if (!custom.fanId || !custom.offreId) {
+    return NextResponse.json(
+      { error: "cpm_custom missing fanId/offreId" },
+      { status: 400 },
+    );
+  }
+
+  const supabase = createSupabaseServiceRoleClient();
+
+  // Idempotency: CinetPay may resend a notification. transactionId doubles
+  // as the transactions primary key, so a repeat delivery just no-ops.
+  const { data: existing } = await supabase
+    .from("transactions")
+    .select("id")
+    .eq("id", transactionId)
+    .maybeSingle();
+
+  if (existing) {
+    return NextResponse.json({ status: "already_processed" });
+  }
+
+  // Brief 0.4: explicitly fetch the offer type via a real query before any
+  // conditional logic. A field that was never fetched must never be
+  // silently treated as falsy/undefined and fall into a default branch.
+  const { data: offre, error: offreError } = await supabase
+    .from("offres")
+    .select("id, type, createur_id, prix")
+    .eq("id", custom.offreId)
+    .single();
+
+  if (offreError || !offre) {
+    return NextResponse.json({ error: "offre introuvable" }, { status: 400 });
+  }
+
+  const offerType = offre.type as "video" | "don" | "whatsapp";
+  if (!offerType) {
+    throw new Error(
+      `offer type could not be determined for offre ${custom.offreId}`,
+    );
+  }
+
+  if (offerType !== "don" && Math.abs(amount - Number(offre.prix)) > 0.01) {
+    return NextResponse.json(
+      { error: "montant payé ne correspond pas au prix de l'offre" },
+      { status: 400 },
+    );
+  }
+
+  const { error: insertError } = await supabase.from("transactions").insert({
+    id: transactionId,
+    fan_id: custom.fanId,
+    createur_id: offre.createur_id,
+    offre_id: offre.id,
+    montant: amount,
+    reference_cinetpay: transactionId,
+  });
+
+  if (insertError) {
+    throw new Error(`failed to record transaction: ${insertError.message}`);
+  }
+
+  // Confirmed via the explicit join above, never via an undefined fallback:
+  // a don has no acceptation/livraison step, so payment success IS delivery.
+  if (offerType === "don") {
+    const { error: validateError } = await supabase
+      .from("transactions")
+      .update({ statut: "validee" })
+      .eq("id", transactionId);
+
+    if (validateError) {
+      throw new Error(`failed to validate don: ${validateError.message}`);
+    }
+
+    const { error: deliverError } = await supabase
+      .from("transactions")
+      .update({ statut: "livree" })
+      .eq("id", transactionId);
+
+    if (deliverError) {
+      throw new Error(`failed to deliver don: ${deliverError.message}`);
+    }
+  }
+
+  return NextResponse.json({ status: "ok" });
+}
