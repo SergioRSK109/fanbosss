@@ -13,6 +13,16 @@ export default async function DashboardPage() {
     redirect("/login");
   }
 
+  const { data: profile } = await supabase
+    .from("users")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+
+  if (profile?.role === "fan") {
+    redirect("/mes-transactions");
+  }
+
   const [{ data: offres }, { data: demandes }] = await Promise.all([
     supabase
       .from("offres")
