@@ -23,8 +23,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "offreId is required" }, { status: 400 });
   }
 
+  // Reads through the public view (id/type/prix/actif/createur_id only,
+  // never `config`) rather than the raw table, since this is a fan
+  // reading someone else's offer -- see migration 0006.
   const { data: offre, error } = await supabase
-    .from("offres")
+    .from("offres_publiques")
     .select("id, type, prix, actif, createur_id")
     .eq("id", offreId)
     .single();

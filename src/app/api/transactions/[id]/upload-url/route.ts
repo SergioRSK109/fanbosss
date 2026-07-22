@@ -38,9 +38,9 @@ export async function POST(
     return NextResponse.json({ error: "not authorized" }, { status: 403 });
   }
 
-  if (offre?.type !== "video") {
+  if (offre?.type !== "video" && offre?.type !== "shoutout") {
     return NextResponse.json(
-      { error: "seules les offres video se livrent par upload" },
+      { error: "seules les offres video/shoutout se livrent par upload" },
       { status: 400 },
     );
   }

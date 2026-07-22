@@ -1,13 +1,14 @@
 "use client";
 
 import { useState } from "react";
+import type { OffreType } from "@/lib/validation";
 
 export function CheckoutButton({
   offreId,
   type,
 }: {
   offreId: string;
-  type: "video" | "don" | "whatsapp";
+  type: OffreType;
 }) {
   const [montant, setMontant] = useState("3");
   const [loading, setLoading] = useState(false);

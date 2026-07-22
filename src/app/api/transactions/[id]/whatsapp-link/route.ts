@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import {
+  createSupabaseServerClient,
+  createSupabaseServiceRoleClient,
+} from "@/lib/supabase/server";
 
 // Brief 4.3: the créateur's number is revealed only after they've validated
 // THIS specific transaction (opt-in per transaction, not per profile), and
@@ -50,7 +53,15 @@ export async function GET(
     );
   }
 
-  const { data: createur } = await supabase
+  // Reads another user's telephone -- only reachable here because
+  // fan_id/statut were already re-verified above. Since migration 0006,
+  // `users` has no broad public SELECT policy (it previously matched
+  // "role in ('createur','both')", which is almost every account, and
+  // exposed telephone to any authenticated caller who queried the table
+  // directly rather than going through this route), so this now needs the
+  // service-role client, same as the webhook/cron paths.
+  const serviceClient = createSupabaseServiceRoleClient();
+  const { data: createur } = await serviceClient
     .from("users")
     .select("telephone")
     .eq("id", transaction.createur_id)

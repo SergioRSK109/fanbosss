@@ -3,6 +3,10 @@ import { CheckoutButton } from "@/components/CheckoutButton";
 import { ReportButton } from "@/components/ReportButton";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
+// Public browsing goes through profils_publics / offres_publiques, not the
+// raw `users`/`offres` tables -- those views intentionally omit
+// `telephone` and `config` so a visitor querying Supabase directly (not
+// through this page) can't read them either. See migration 0006.
 export default async function CreateurProfilePage({
   params,
 }: {
@@ -12,12 +16,11 @@ export default async function CreateurProfilePage({
   const supabase = await createSupabaseServerClient();
 
   const [{ data: createur }, { data: offres }] = await Promise.all([
-    supabase.from("users").select("id, role").eq("id", id).single(),
+    supabase.from("profils_publics").select("id").eq("id", id).single(),
     supabase
-      .from("offres")
+      .from("offres_publiques")
       .select("id, type, prix")
-      .eq("createur_id", id)
-      .eq("actif", true),
+      .eq("createur_id", id),
   ]);
 
   if (!createur) {
@@ -28,6 +31,9 @@ export default async function CreateurProfilePage({
     video: "Vidéo personnalisée",
     don: "Don libre",
     whatsapp: "Accès WhatsApp premium",
+    shoutout: "Mention (shoutout)",
+    contenu_debloque: "Contenu à débloquer",
+    evenement_live: "Accès live privé",
   };
 
   return (
@@ -44,7 +50,8 @@ export default async function CreateurProfilePage({
             className="border rounded px-4 py-3 flex items-center justify-between"
           >
             <span>
-              {labels[offre.type]} - {offre.prix}$
+              {labels[offre.type] ?? offre.type}
+              {offre.prix !== null && ` - ${offre.prix}$`}
             </span>
             <CheckoutButton offreId={offre.id} type={offre.type} />
           </li>

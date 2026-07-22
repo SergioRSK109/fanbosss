@@ -140,6 +140,52 @@ describe("POST /api/webhooks/cinetpay (brief checklist items 1 & 4)", () => {
     expect(statutsApplied).toEqual(["validee", "livree"]);
   });
 
+  it.each(["contenu_debloque", "evenement_live"] as const)(
+    "a validly-signed %s notification also moves straight to livree (brief v3 point 2)",
+    async (type) => {
+      const { client, updates, inserts } = buildSupabaseMock(
+        { id: "offre-1", type, createur_id: "createur-1", prix: 3 },
+        null,
+      );
+      vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(
+        client as unknown as ReturnType<typeof createSupabaseServiceRoleClient>,
+      );
+
+      const { POST } = await import("@/app/api/webhooks/cinetpay/route");
+      const notification = buildNotification();
+      const token = computeCinetPayToken(notification, SECRET);
+      const request = buildRequest(notification, token);
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+
+      expect(inserts).toHaveLength(1);
+      const statutsApplied = updates.map((update) => update.patch.statut);
+      expect(statutsApplied).toEqual(["validee", "livree"]);
+    },
+  );
+
+  it("a validly-signed video notification is only recorded, never auto-validated", async () => {
+    const { client, updates, inserts } = buildSupabaseMock(
+      { id: "offre-video-1", type: "video", createur_id: "createur-1", prix: 3 },
+      null,
+    );
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(
+      client as unknown as ReturnType<typeof createSupabaseServiceRoleClient>,
+    );
+
+    const { POST } = await import("@/app/api/webhooks/cinetpay/route");
+    const notification = buildNotification({ cpm_amount: "3" });
+    const token = computeCinetPayToken(notification, SECRET);
+    const request = buildRequest(notification, token);
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+
+    expect(inserts).toHaveLength(1);
+    expect(updates).toHaveLength(0);
+  });
+
   it("throws rather than silently defaulting when the offer join fails to produce a type", async () => {
     const { client } = buildSupabaseMock(
       { id: "offre-don-1", type: null, createur_id: "createur-1", prix: 3 },

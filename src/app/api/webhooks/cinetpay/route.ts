@@ -1,6 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyCinetPaySignature } from "@/lib/cinetpay";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
+import type { OffreType } from "@/lib/validation";
+
+// Types with no acceptation step: payment success IS delivery. Brief v3
+// point 2 adds contenu_debloque (pre-uploaded content, unlocked on
+// payment) and evenement_live (external link revealed on payment) to the
+// original don-only set.
+const TYPES_A_VALIDATION_IMMEDIATE: OffreType[] = [
+  "don",
+  "contenu_debloque",
+  "evenement_live",
+];
 
 // CinetPay POSTs notifications as application/x-www-form-urlencoded.
 async function parseNotificationBody(
@@ -96,13 +107,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "offre introuvable" }, { status: 400 });
   }
 
-  const offerType = offre.type as "video" | "don" | "whatsapp";
+  const offerType = offre.type as OffreType;
   if (!offerType) {
     throw new Error(
       `offer type could not be determined for offre ${custom.offreId}`,
     );
   }
 
+  // don has no fixed price -- the fan chooses the amount -- so it's the
+  // only type exempt from this check.
   if (offerType !== "don" && Math.abs(amount - Number(offre.prix)) > 0.01) {
     return NextResponse.json(
       { error: "montant payé ne correspond pas au prix de l'offre" },
@@ -124,15 +137,16 @@ export async function POST(request: NextRequest) {
   }
 
   // Confirmed via the explicit join above, never via an undefined fallback:
-  // a don has no acceptation/livraison step, so payment success IS delivery.
-  if (offerType === "don") {
+  // these types have no acceptation/livraison step, so payment success IS
+  // delivery.
+  if (TYPES_A_VALIDATION_IMMEDIATE.includes(offerType)) {
     const { error: validateError } = await supabase
       .from("transactions")
       .update({ statut: "validee" })
       .eq("id", transactionId);
 
     if (validateError) {
-      throw new Error(`failed to validate don: ${validateError.message}`);
+      throw new Error(`failed to validate transaction: ${validateError.message}`);
     }
 
     const { error: deliverError } = await supabase
@@ -141,7 +155,7 @@ export async function POST(request: NextRequest) {
       .eq("id", transactionId);
 
     if (deliverError) {
-      throw new Error(`failed to deliver don: ${deliverError.message}`);
+      throw new Error(`failed to deliver transaction: ${deliverError.message}`);
     }
   }
 

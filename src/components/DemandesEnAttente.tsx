@@ -2,12 +2,13 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import type { OffreType } from "@/lib/validation";
 
 type Demande = {
   id: string;
   montant: number;
   deadline_acceptation: string | null;
-  offres: { type: "video" | "don" | "whatsapp" } | null;
+  offres: { type: OffreType } | null;
 };
 
 export function DemandesEnAttente({ demandes }: { demandes: Demande[] }) {

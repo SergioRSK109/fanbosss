@@ -1,6 +1,23 @@
 "use client";
 
 import { useState } from "react";
+import type { OffreType } from "@/lib/validation";
+
+const REVEAL_ENDPOINTS: Partial<Record<OffreType, string>> = {
+  whatsapp: "whatsapp-link",
+  video: "video-url",
+  shoutout: "video-url",
+  contenu_debloque: "content-url",
+  evenement_live: "live-link",
+};
+
+const REVEAL_LABELS: Partial<Record<OffreType, string>> = {
+  whatsapp: "Obtenir le lien WhatsApp",
+  video: "Voir ma vidéo",
+  shoutout: "Voir mon shoutout",
+  contenu_debloque: "Débloquer le contenu",
+  evenement_live: "Obtenir le lien du live",
+};
 
 export function TransactionActions({
   transactionId,
@@ -8,24 +25,20 @@ export function TransactionActions({
   statut,
 }: {
   transactionId: string;
-  type: "video" | "don" | "whatsapp";
+  type: OffreType;
   statut: string;
 }) {
   const [link, setLink] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
+  const endpoint = REVEAL_ENDPOINTS[type];
 
-  if (statut !== "livree" || type === "don") {
+  if (statut !== "livree" || !endpoint) {
     return null;
   }
 
   async function reveal() {
     setErrorMessage("");
-    const endpoint =
-      type === "whatsapp"
-        ? `/api/transactions/${transactionId}/whatsapp-link`
-        : `/api/transactions/${transactionId}/video-url`;
-
-    const response = await fetch(endpoint);
+    const response = await fetch(`/api/transactions/${transactionId}/${endpoint}`);
     const body = await response.json();
 
     if (!response.ok) {
@@ -33,13 +46,13 @@ export function TransactionActions({
       return;
     }
 
-    setLink(body.waLink ?? body.url);
+    setLink(body.waLink ?? body.url ?? body.lienLive);
   }
 
   return (
     <div className="flex flex-col gap-1">
       <button onClick={reveal} className="text-sm underline">
-        {type === "whatsapp" ? "Obtenir le lien WhatsApp" : "Voir ma vidéo"}
+        {REVEAL_LABELS[type]}
       </button>
       {link && (
         <a

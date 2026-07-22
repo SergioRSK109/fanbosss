@@ -6,7 +6,9 @@ export async function GET(request: NextRequest) {
   const supabase = await createSupabaseServerClient();
   const createurId = request.nextUrl.searchParams.get("createurId");
 
-  let query = supabase.from("offres").select("*").eq("actif", true);
+  // Public view (id/type/prix/actif/createur_id only, never `config`) --
+  // see migration 0006.
+  let query = supabase.from("offres_publiques").select("*");
   if (createurId) {
     query = query.eq("createur_id", createurId);
   }
@@ -19,6 +21,12 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ offres: data });
 }
 
+// One offer per (créateur, type) -- brief v3 point 4: the creation UI is
+// now a fixed settings row per type ("Si quelqu'un veut ton numéro
+// WhatsApp... combien lui factures-tu ?"), not a repeatable "create new
+// offer" flow. This is an upsert, enforced at the DB level by
+// unique_offre_type_par_createur (migration 0006) so it holds regardless
+// of which client calls this route.
 export async function POST(request: NextRequest) {
   const supabase = await createSupabaseServerClient();
   const {
@@ -39,18 +47,28 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Application-level check mirrors the DB CHECK constraint
-  // (check_whatsapp_minimum_price on offres.prix) as defense in depth.
-  // The constraint is the real guarantee -- see brief 0.2 -- this just
-  // gives a clean 400 instead of a raw Postgres error.
+  // config is only included when explicitly provided: this route is what
+  // the settings form calls to save a price/toggle, and it must not wipe
+  // out config already set via the separate content-upload-url /
+  // lien_live flow (contenu_debloque's r2_key, evenement_live's
+  // lien_live) just because that particular save didn't mention it.
+  const upsertPayload: Record<string, unknown> = {
+    createur_id: user.id,
+    type: parsed.data.type,
+    prix: parsed.data.prix ?? null,
+  };
+  if (parsed.data.config !== undefined) {
+    upsertPayload.config = parsed.data.config;
+  }
+
+  // Application-level checks mirror the DB constraints
+  // (check_whatsapp_minimum_price, offres_prix_required_unless_don on
+  // offres.prix) as defense in depth. The constraints are the real
+  // guarantee -- see brief 0.2 -- this just gives a clean 400 instead of a
+  // raw Postgres error.
   const { data, error } = await supabase
     .from("offres")
-    .insert({
-      createur_id: user.id,
-      type: parsed.data.type,
-      prix: parsed.data.prix,
-      config: parsed.data.config ?? {},
-    })
+    .upsert(upsertPayload, { onConflict: "createur_id,type" })
     .select()
     .single();
 

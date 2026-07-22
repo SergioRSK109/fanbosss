@@ -6,8 +6,6 @@ export const COMMISSION_PLATEFORME_TAUX = 0.2;
 export const FRAIS_AGREGATEUR_TAUX = 0.03;
 export const TVA_TAUX = 0.16;
 
-export type OffreType = "video" | "don" | "whatsapp";
-
 export function calculerRepartitionPaiement(montant: number) {
   const commissionPlateforme = round2(montant * COMMISSION_PLATEFORME_TAUX);
   const fraisAgregateur = round2(montant * FRAIS_AGREGATEUR_TAUX);

@@ -6,7 +6,7 @@ export default function PaiementRetourPage() {
       <h1 className="text-2xl font-semibold">Merci !</h1>
       <p>
         Votre paiement est en cours de confirmation. Vous retrouverez son
-        statut dans <Link href="/mes-transactions" className="underline">mes transactions</Link>{" "}
+        statut dans <Link href="/dashboard" className="underline">votre espace</Link>{" "}
         dès que CinetPay l&apos;aura validé.
       </p>
     </main>
