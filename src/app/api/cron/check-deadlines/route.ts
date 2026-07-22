@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 
-// Runs hourly (see vercel.json). Brief 0.3: handles BOTH deadline types
+// Runs hourly, triggered by an external scheduler (see README --
+// deployment section) rather than Vercel's built-in crons: the Hobby plan
+// caps those at once per day, which is too slow for brief 0.3's
+// acceptation/livraison deadlines. Brief 0.3: handles BOTH deadline types
 // separately -- (a) en_attente past deadline_acceptation, and (b) validee
 // past deadline_livraison -- via process_transaction_deadlines() in
 // supabase/migrations/0002_functions_triggers.sql, so a créateur who simply

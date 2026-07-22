@@ -27,6 +27,28 @@ projet Supabase (via le SQL editor, ou `supabase db push` avec la CLI
 officielle). Elles créent le schéma, les contraintes, les triggers/fonctions
 métier et activent RLS.
 
+### Déploiement (Vercel Hobby) et cron des deadlines
+
+Le plan Vercel Hobby (gratuit) limite les cron jobs à une exécution par
+jour maximum, ce qui est trop lent pour le brief 0.3 (un fan ne doit pas
+attendre 24h pour être remboursé d'une demande jamais acceptée). Il n'y a
+donc pas de bloc `crons` dans `vercel.json` — la route
+`/api/cron/check-deadlines` existe toujours et vérifie toujours
+`Authorization: Bearer {CRON_SECRET}` exactement comme avant, mais elle
+doit être appelée par un scheduler externe gratuit plutôt que par Vercel.
+
+Une fois l'app déployée, configurer **une seule fois**, manuellement, dans
+le dashboard d'un service comme [cron-job.org](https://cron-job.org) ou
+EasyCron :
+- URL : `https://{NEXT_PUBLIC_APP_URL}/api/cron/check-deadlines`
+- Fréquence : toutes les heures
+- En-tête HTTP : `Authorization: Bearer {CRON_SECRET}`
+
+Rien dans le code n'automatise cette étape ; c'est volontairement une
+configuration à faire une fois dans l'outil externe. Si le projet passe un
+jour sur Vercel Pro, le bloc `crons` de `vercel.json` (voir l'historique
+git) peut être réintroduit et ce scheduler externe désactivé.
+
 ## Tests
 
 ```bash
