@@ -27,6 +27,20 @@ export interface CreateurProfileData {
   };
 }
 
+// `don` always leads the public offre list, regardless of when the
+// créateur set it up relative to their other offres -- the underlying
+// query has no ORDER BY, so without this the position would just follow
+// whatever order Postgres happens to return, which isn't guaranteed and
+// isn't insertion order either once rows are updated. Stable sort:
+// everything else keeps its existing relative order.
+export function sortOffresDonFirst<T extends { type: OffreType }>(offres: T[]): T[] {
+  return [...offres].sort((a, b) => {
+    if (a.type === "don" && b.type !== "don") return -1;
+    if (b.type === "don" && a.type !== "don") return 1;
+    return 0;
+  });
+}
+
 // Shared by /createur/[id] (canonical, internal) and /@pseudo (public
 // alias -- see the [handle] route) so both render the exact same profile.
 export async function getCreateurProfileData(
@@ -80,7 +94,7 @@ export async function getCreateurProfileData(
     bio: profil.bio,
     photoUrl,
     lienReseauSocial: profil.lien_reseau_social,
-    offres: offres ?? [],
+    offres: sortOffresDonFirst(offres ?? []),
     ranks: {
       volume: volumeRow?.rang ?? null,
       reactivite: reactiviteRow?.rang ?? null,
