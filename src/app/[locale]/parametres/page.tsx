@@ -1,4 +1,4 @@
-import { redirect } from "@/i18n/navigation";
+import { redirect, Link } from "@/i18n/navigation";
 import { ParametresForm } from "@/components/ParametresForm";
 import { getSignedDownloadUrl } from "@/lib/r2";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -31,7 +31,10 @@ export default async function ParametresPage({
 
   return (
     <main className="mx-auto max-w-sm p-6">
-      <h1 className="text-2xl font-semibold mb-6">Réglages du profil</h1>
+      <Link href="/dashboard" className="text-sm underline">
+        ← Retour au tableau de bord
+      </Link>
+      <h1 className="text-2xl font-semibold mt-2 mb-6">Réglages du profil</h1>
       <ParametresForm
         pseudo={profil?.pseudo ?? null}
         bio={profil?.bio ?? null}

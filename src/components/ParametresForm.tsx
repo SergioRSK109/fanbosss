@@ -1,7 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+
+const SAVED_MESSAGE_TIMEOUT_MS = 3000;
 
 export function ParametresForm({
   pseudo,
@@ -22,8 +24,30 @@ export function ParametresForm({
   const [lienValue, setLienValue] = useState(lienReseauSocial ?? "");
   const [classementValue, setClassementValue] = useState(classementPublic);
   const [file, setFile] = useState<File | null>(null);
+  // Forces the (uncontrolled) file input to remount and drop its displayed
+  // filename after a successful upload -- browsers don't allow clearing a
+  // file input's value any other way, and without this a second click on
+  // "Enregistrer" would look like it's re-submitting the same file even
+  // though `file` state is already null and no re-upload actually happens.
+  const [fileInputKey, setFileInputKey] = useState(0);
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState("");
+
+  // "Enregistré." shouldn't linger forever: clear it a few seconds after a
+  // successful save, or immediately below when the user edits anything.
+  useEffect(() => {
+    if (status !== "saved") {
+      return;
+    }
+    const timeout = setTimeout(() => setStatus("idle"), SAVED_MESSAGE_TIMEOUT_MS);
+    return () => clearTimeout(timeout);
+  }, [status]);
+
+  function dismissSavedMessage() {
+    if (status === "saved") {
+      setStatus("idle");
+    }
+  }
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -72,6 +96,7 @@ export function ParametresForm({
       }
 
       setFile(null);
+      setFileInputKey((key) => key + 1);
       setStatus("saved");
       router.refresh();
     } catch (err) {
@@ -93,28 +118,41 @@ export function ParametresForm({
           />
         )}
         <input
+          key={fileInputKey}
           type="file"
           accept="image/*"
-          onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+          onChange={(event) => {
+            setFile(event.target.files?.[0] ?? null);
+            dismissSavedMessage();
+          }}
         />
       </label>
 
       <label className="flex flex-col gap-1">
-        <span>Pseudo (fanboss.app/@pseudo)</span>
+        <span>Choisis ton identifiant</span>
         <input
           type="text"
           value={pseudoValue}
-          onChange={(event) => setPseudoValue(event.target.value)}
-          placeholder="3 à 20 caractères, lettres/chiffres/_"
+          onChange={(event) => {
+            setPseudoValue(event.target.value);
+            dismissSavedMessage();
+          }}
+          placeholder="ex: sergio_123, sergioRSK"
           className="border rounded px-3 py-2"
         />
+        <span className="text-sm text-gray-500">
+          Ton lien : fanboss.app/@{pseudoValue || "..."}
+        </span>
       </label>
 
       <label className="flex flex-col gap-1">
         <span>Bio</span>
         <textarea
           value={bioValue}
-          onChange={(event) => setBioValue(event.target.value)}
+          onChange={(event) => {
+            setBioValue(event.target.value);
+            dismissSavedMessage();
+          }}
           maxLength={500}
           rows={3}
           className="border rounded px-3 py-2"
@@ -126,7 +164,10 @@ export function ParametresForm({
         <input
           type="url"
           value={lienValue}
-          onChange={(event) => setLienValue(event.target.value)}
+          onChange={(event) => {
+            setLienValue(event.target.value);
+            dismissSavedMessage();
+          }}
           placeholder="https://instagram.com/..."
           className="border rounded px-3 py-2"
         />
@@ -136,7 +177,10 @@ export function ParametresForm({
         <input
           type="checkbox"
           checked={classementValue}
-          onChange={(event) => setClassementValue(event.target.checked)}
+          onChange={(event) => {
+            setClassementValue(event.target.checked);
+            dismissSavedMessage();
+          }}
         />
         <span>Apparaître dans les classements publics</span>
       </label>
