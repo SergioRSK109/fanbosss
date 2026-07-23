@@ -31,10 +31,13 @@ export default async function ParametresPage({
 
   return (
     <main className="mx-auto max-w-sm p-6">
-      <Link href="/dashboard" className="text-sm underline">
+      <Link
+        href="/dashboard"
+        className="text-sm font-medium text-foreground-muted hover:text-foreground"
+      >
         ← Retour au tableau de bord
       </Link>
-      <h1 className="text-2xl font-semibold mt-2 mb-6">Réglages du profil</h1>
+      <h1 className="mb-6 mt-2 text-2xl font-bold">Réglages du profil</h1>
       <ParametresForm
         pseudo={profil?.pseudo ?? null}
         bio={profil?.bio ?? null}

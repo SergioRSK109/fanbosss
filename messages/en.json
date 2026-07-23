@@ -40,9 +40,9 @@
     "paying": "...",
     "paymentError": "payment failed",
     "socialLink": "View profile",
-    "rankVolume": "🏆 #{rank} volume (30d)",
-    "rankReactivite": "⚡ #{rank} responsiveness (30d)",
-    "rankProgression": "📈 #{rank} rising (30d)",
+    "rankVolume": "#{rank} volume (30d)",
+    "rankReactivite": "#{rank} responsiveness (30d)",
+    "rankProgression": "#{rank} rising (30d)",
     "offerTypes": {
       "video": "Custom video",
       "don": "Free tip",

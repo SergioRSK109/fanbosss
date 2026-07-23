@@ -5,12 +5,13 @@ export default function PaiementRetourPage() {
   const t = useTranslations("PaiementRetour");
 
   return (
-    <main className="mx-auto max-w-sm p-6 flex flex-col gap-4 text-center">
-      <h1 className="text-2xl font-semibold">{t("heading")}</h1>
-      <p>
+    <main className="mx-auto flex min-h-[70dvh] max-w-sm flex-col items-center justify-center gap-4 px-6 text-center">
+      <span className="text-5xl">🎉</span>
+      <h1 className="text-2xl font-bold">{t("heading")}</h1>
+      <p className="text-foreground-muted">
         {t.rich("message", {
           link: (chunks) => (
-            <Link href="/dashboard" className="underline">
+            <Link href="/dashboard" className="font-semibold text-brand-600 dark:text-brand-300">
               {chunks}
             </Link>
           ),

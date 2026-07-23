@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { buttonClass } from "@/components/ui/button-styles";
 import type { OffreType } from "@/lib/validation";
 
 type Demande = {
@@ -23,7 +24,7 @@ export function DemandesEnAttente({ demandes }: { demandes: Demande[] }) {
   }
 
   if (demandes.length === 0) {
-    return <p>Aucune demande en attente.</p>;
+    return <p className="text-sm text-foreground-muted">Aucune demande en attente.</p>;
   }
 
   return (
@@ -31,10 +32,10 @@ export function DemandesEnAttente({ demandes }: { demandes: Demande[] }) {
       {demandes.map((demande) => (
         <li
           key={demande.id}
-          className="border rounded px-3 py-2 flex items-center justify-between gap-4"
+          className="card flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
         >
-          <span>
-            {demande.offres?.type} - {demande.montant}$ - à répondre avant{" "}
+          <span className="text-sm">
+            {demande.offres?.type} · {demande.montant}$ · à répondre avant{" "}
             {demande.deadline_acceptation
               ? new Date(demande.deadline_acceptation).toLocaleString("fr-FR")
               : "-"}
@@ -43,14 +44,14 @@ export function DemandesEnAttente({ demandes }: { demandes: Demande[] }) {
             <button
               disabled={busyId === demande.id}
               onClick={() => respond(demande.id, "accept")}
-              className="bg-green-600 text-white rounded px-3 py-1 text-sm disabled:opacity-50"
+              className={buttonClass("success", "sm")}
             >
               Accepter
             </button>
             <button
               disabled={busyId === demande.id}
               onClick={() => respond(demande.id, "refuse")}
-              className="bg-red-600 text-white rounded px-3 py-1 text-sm disabled:opacity-50"
+              className={buttonClass("danger", "sm")}
             >
               Refuser
             </button>

@@ -1,26 +1,93 @@
 @import "tailwindcss";
 
+/* Palette: violet is the brand identity (matches the PWA theme_color and
+   the existing manifest icons), coral is the one secondary accent used
+   sparingly for energy -- badges, highlights, gradients. Deliberately not
+   red/black: this app is shared by both public creators and things like
+   church donation pages, per the design brief's "stay neutral" guard-rail. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #fffcf8;
+  --surface: #ffffff;
+  --surface-muted: #f6f1ff;
+  --foreground: #211a35;
+  --foreground-muted: #6b6280;
+  --border: #ece3fb;
+
+  --brand-50: #f5f0ff;
+  --brand-100: #ebe0ff;
+  --brand-200: #d7c4ff;
+  --brand-300: #b393ff;
+  --brand-400: #9868ff;
+  --brand-500: #7c3aed;
+  --brand-600: #6a26d9;
+  --brand-700: #551db0;
+
+  --accent-300: #ffbb99;
+  --accent-400: #ff9466;
+  --accent-500: #ff7a45;
+  --accent-600: #e85e28;
+
+  --success-500: #22c55e;
+  --success-600: #16a34a;
+  --danger-500: #f4335e;
+  --danger-600: #d81f49;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-foreground-muted: var(--foreground-muted);
+  --color-border: var(--border);
+
+  --color-brand-50: var(--brand-50);
+  --color-brand-100: var(--brand-100);
+  --color-brand-200: var(--brand-200);
+  --color-brand-300: var(--brand-300);
+  --color-brand-400: var(--brand-400);
+  --color-brand-500: var(--brand-500);
+  --color-brand-600: var(--brand-600);
+  --color-brand-700: var(--brand-700);
+
+  --color-accent-300: var(--accent-300);
+  --color-accent-400: var(--accent-400);
+  --color-accent-500: var(--accent-500);
+  --color-accent-600: var(--accent-600);
+
+  --color-success-500: var(--success-500);
+  --color-success-600: var(--success-600);
+  --color-danger-500: var(--danger-500);
+  --color-danger-600: var(--danger-600);
+
+  --font-sans: var(--font-poppins);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #171225;
+    --surface: #201933;
+    --surface-muted: #251d3a;
+    --foreground: #f5f2fc;
+    --foreground-muted: #b6accf;
+    --border: #362a52;
+
+    --brand-500: #9868ff;
+    --brand-600: #ad84ff;
   }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Small, reused visual primitive -- defined once here rather than
+   repeating the same border/background/radius utility string on every
+   card across five pages. Supports variants (dark:, hover:) like any
+   other Tailwind utility. */
+@utility card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2xl);
 }

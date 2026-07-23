@@ -2,6 +2,7 @@
 
 import { useTranslations } from "next-intl";
 import { useState } from "react";
+import { buttonClass } from "@/components/ui/button-styles";
 import type { OffreType } from "@/lib/validation";
 
 export function CheckoutButton({
@@ -43,23 +44,26 @@ export function CheckoutButton({
   return (
     <div className="flex items-center gap-2">
       {type === "don" && (
-        <input
-          type="number"
-          min={1}
-          step="0.01"
-          value={montant}
-          onChange={(event) => setMontant(event.target.value)}
-          className="border rounded px-2 py-1 w-20"
-        />
+        <div className="flex items-center gap-1 rounded-full border border-border bg-surface-muted px-3 py-2">
+          <span className="text-sm text-foreground-muted">$</span>
+          <input
+            type="number"
+            min={1}
+            step="0.01"
+            value={montant}
+            onChange={(event) => setMontant(event.target.value)}
+            className="w-12 bg-transparent text-sm font-semibold outline-none"
+          />
+        </div>
       )}
       <button
         onClick={handleClick}
         disabled={loading}
-        className="bg-violet-600 text-white rounded px-3 py-2 disabled:opacity-50"
+        className={buttonClass("primary", "sm")}
       >
         {loading ? t("paying") : t("pay")}
       </button>
-      {errorMessage && <p className="text-red-600 text-sm">{errorMessage}</p>}
+      {errorMessage && <p className="text-danger-500 text-xs">{errorMessage}</p>}
     </div>
   );
 }
