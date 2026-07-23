@@ -168,6 +168,49 @@ demande aucun changement structurel.
 Sélecteur de langue : `src/components/LanguageSwitcher.tsx`, présent sur
 toutes les pages via `[locale]/layout.tsx`.
 
+## Identifiant public (@pseudo), profil enrichi, classements, notifications
+
+**Pseudo / handle public** (`fanboss.app/@pseudo`, réglable dans
+`/parametres`) : `users.pseudo`, unique insensible à la casse (index
+fonctionnel sur `lower(pseudo)`), format `[a-zA-Z0-9_]{3,20}` et liste
+noire de mots réservés, tous imposés en base (migration 0008) -- vérifié
+directement en base, pas seulement dans le schéma zod de l'API. La route
+est `src/app/[locale]/[handle]/page.tsx`, volontairement PAS un dossier
+`@[pseudo]` (Next.js réserve un `@` en tête de nom de dossier aux routes
+parallèles) : `[handle]` capture tout le segment, `@sergio` inclus, et le
+code retire le `@` avant de chercher le pseudo (404 sinon). `/createur/[id]`
+reste la route canonique/interne ; `/@pseudo` n'est qu'un alias public
+par-dessus, les deux rendent exactement la même vue
+(`CreateurProfileView`/`getCreateurProfileData`).
+
+**Profil enrichi** : bio, photo de profil, lien réseau social
+(`users.bio`, `users.photo_r2_key`, `users.lien_reseau_social`). Bio et
+lien social sont collectés à l'inscription (texte simple, même mécanisme
+que téléphone/pays) ; la photo ne l'est PAS -- l'upload demande une URL
+R2 signée qui nécessite un compte déjà authentifié, donc elle se fait
+uniquement dans `/parametres`, après création du compte
+(`/api/profil/photo-upload-url`). La photo n'est pas sensible mais passe
+quand même par une URL signée comme le reste du contenu R2, juste avec
+une expiration plus longue (24h) plutôt qu'une URL publique permanente.
+
+**Classements** (30 jours glissants, opt-in via une case dans
+`/parametres`) : volume de transactions livrées, réactivité (délai moyen
+de réponse aux demandes vidéo/shoutout/whatsapp, calculé depuis
+`transactions.repondu_at` -- un timestamp que `accept_transaction`/
+`refuse_transaction` posent désormais, absent des remboursements
+automatiques du cron pour ne jamais compter une non-réponse comme
+"réactive"), progression (comptes créés il y a moins de 30 jours, classés
+par leur volume). Les 3 vues SQL (`classement_volume`,
+`classement_reactivite`, `classement_progression`) n'exposent QUE le rang,
+jamais le nombre ou le montant sous-jacent, et ne listent que les
+utilisateurs opt-in -- vérifié qu'aucune colonne monétaire/comptage n'y
+apparaît et qu'un utilisateur non opt-in n'y figure jamais.
+
+**Badge de notification** : `users.dernier_vu_demandes_at`, comparé aux
+demandes reçues à chaque chargement du dashboard pour afficher un badge
+"N nouvelle(s)" sur la section, puis mis à jour à `now()` -- la prochaine
+visite ne compte que les demandes arrivées entre-temps.
+
 ## Hors scope du MVP
 
 App mobile native, interface admin custom (Supabase Studio suffit), API

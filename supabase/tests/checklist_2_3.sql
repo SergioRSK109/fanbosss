@@ -243,6 +243,109 @@ begin
   raise notice 'PASS: shoutout gets a 24h acceptation deadline just like video (%)', v_deadline;
 end $$;
 
+-- ---------------------------------------------------------------------
+-- Pseudo / public handle: format, case-insensitive uniqueness, reserved
+-- words -- all enforced at the DB level (migration 0008), not just in the
+-- API route's zod schema.
+-- ---------------------------------------------------------------------
+update users set pseudo = 'Sergio_1' where id = '11111111-1111-1111-1111-111111111111';
+
+do $$
+begin
+  begin
+    update users set pseudo = 'sergio_1' where id = '22222222-2222-2222-2222-222222222222';
+    raise exception 'TEST FAILED: case-insensitive pseudo collision accepted';
+  exception when unique_violation then
+    raise notice 'PASS: pseudo uniqueness is case-insensitive at the DB level';
+  end;
+end $$;
+
+do $$
+begin
+  begin
+    update users set pseudo = 'ab' where id = '22222222-2222-2222-2222-222222222222';
+    raise exception 'TEST FAILED: a 2-character pseudo was accepted';
+  exception when check_violation then
+    raise notice 'PASS: pseudo format (length) enforced at the DB level';
+  end;
+end $$;
+
+do $$
+begin
+  begin
+    update users set pseudo = 'Dashboard' where id = '22222222-2222-2222-2222-222222222222';
+    raise exception 'TEST FAILED: a reserved word was accepted as pseudo';
+  exception when check_violation then
+    raise notice 'PASS: reserved-word blacklist enforced case-insensitively at the DB level';
+  end;
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Réactivité tracking + classement views: accept_transaction actually
+-- records when the créateur responded, and the (rank-only, no
+-- underlying counts) classement views only include opted-in users.
+-- ---------------------------------------------------------------------
+update users set classement_public = true where id = '11111111-1111-1111-1111-111111111111';
+
+-- Uses the stub's auth.uid() session variable (app.current_user_id --
+-- see supabase/tests/stub_auth.sql), NOT the real project's
+-- request.jwt.claim.sub, which is a separate convention only the real
+-- Supabase auth.uid() reads.
+select set_config('app.current_user_id', '11111111-1111-1111-1111-111111111111', false);
+select accept_transaction('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+select set_config('app.current_user_id', '', false);
+
+do $$
+declare
+  v_statut text;
+  v_repondu_at timestamptz;
+begin
+  select statut, repondu_at into v_statut, v_repondu_at
+    from transactions where id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+
+  if v_statut != 'validee' then
+    raise exception 'TEST FAILED: accept_transaction did not validate the shoutout transaction (statut=%)', v_statut;
+  end if;
+
+  if v_repondu_at is null then
+    raise exception 'TEST FAILED: accept_transaction did not record repondu_at';
+  end if;
+
+  raise notice 'PASS: accept_transaction records repondu_at (%), used by the réactivité leaderboard', v_repondu_at;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from classement_volume where createur_id = '11111111-1111-1111-1111-111111111111'
+  ) then
+    raise exception 'TEST FAILED: opted-in créateur missing from classement_volume';
+  end if;
+
+  if exists (
+    select 1 from classement_volume where createur_id = '22222222-2222-2222-2222-222222222222'
+  ) then
+    raise exception 'TEST FAILED: non-opted-in fan appeared in classement_volume';
+  end if;
+
+  raise notice 'PASS: classement_volume includes only opted-in users';
+end $$;
+
+do $$
+declare
+  v_columns text;
+begin
+  select string_agg(column_name, ',') into v_columns
+    from information_schema.columns
+    where table_schema = 'public' and table_name = 'classement_volume';
+
+  if v_columns ~ 'montant|prix|count|total' then
+    raise exception 'TEST FAILED: classement_volume exposes a monetary/count column (%), not rank-only', v_columns;
+  end if;
+
+  raise notice 'PASS: classement_volume exposes rank only (%)', v_columns;
+end $$;
+
 do $$
 begin
   raise notice 'ALL SQL CHECKLIST TESTS PASSED';

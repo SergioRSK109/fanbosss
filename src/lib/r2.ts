@@ -45,11 +45,14 @@ export async function getSignedUploadUrl(key: string, contentType: string) {
   return getSignedUrl(client, command, { expiresIn: SIGNED_URL_EXPIRY_SECONDS });
 }
 
-export async function getSignedDownloadUrl(key: string) {
+export async function getSignedDownloadUrl(
+  key: string,
+  expiresInSeconds: number = SIGNED_URL_EXPIRY_SECONDS,
+) {
   const client = getR2Client();
   const command = new GetObjectCommand({
     Bucket: getBucketName(),
     Key: key,
   });
-  return getSignedUrl(client, command, { expiresIn: SIGNED_URL_EXPIRY_SECONDS });
+  return getSignedUrl(client, command, { expiresIn: expiresInSeconds });
 }

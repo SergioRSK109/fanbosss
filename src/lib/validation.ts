@@ -48,3 +48,41 @@ export const modifierOffreSchema = z
     config: z.record(z.string(), z.unknown()).optional(),
   })
   .strict();
+
+// Every top-level route segment the app currently uses -- mirrors the DB
+// constraint users_pseudo_not_reserved (migration 0008) as defense in
+// depth. The constraint is the real guarantee -- see brief 0.2's
+// philosophy -- this just gives a clean 400 instead of a raw Postgres
+// error. Update both places if new top-level routes are added.
+export const PSEUDO_MOTS_RESERVES = [
+  "dashboard",
+  "signup",
+  "login",
+  "api",
+  "auth",
+  "createur",
+  "mes-transactions",
+  "paiement",
+  "parametres",
+];
+
+export const parametresProfilSchema = z
+  .object({
+    pseudo: z
+      .string()
+      .regex(/^[a-zA-Z0-9_]{3,20}$/, "3 à 20 caractères, lettres/chiffres/underscore uniquement")
+      .refine((p) => !PSEUDO_MOTS_RESERVES.includes(p.toLowerCase()), {
+        message: "ce pseudo est réservé",
+      })
+      .nullable()
+      .optional(),
+    bio: z.string().trim().max(500).nullable().optional(),
+    lien_reseau_social: z.string().trim().url().nullable().optional(),
+    classement_public: z.boolean().optional(),
+    // Set after a successful upload via POST /api/profil/photo-upload-url
+    // + PUT to R2 -- never accepted directly from arbitrary client input
+    // without that round-trip, but the schema itself doesn't need to know
+    // that; the upload route is what makes the key meaningful.
+    photo_r2_key: z.string().nullable().optional(),
+  })
+  .strict();
