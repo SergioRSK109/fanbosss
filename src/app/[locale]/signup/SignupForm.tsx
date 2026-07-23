@@ -3,6 +3,8 @@
 import { useTranslations } from "next-intl";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
+import { buttonClass } from "@/components/ui/button-styles";
+import { inputClass, labelClass } from "@/components/ui/field-styles";
 import { COUNTRIES } from "@/lib/countries";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
@@ -62,92 +64,101 @@ export function SignupForm() {
 
   if (status === "sent") {
     return (
-      <main className="mx-auto max-w-sm p-6">
-        <p>{t("confirmationSent")}</p>
+      <main className="mx-auto flex min-h-[70dvh] max-w-sm flex-col justify-center px-5 py-10 text-center">
+        <div className="card flex flex-col items-center gap-3 p-6">
+          <span className="text-4xl">📬</span>
+          <p className="text-foreground">{t("confirmationSent")}</p>
+        </div>
       </main>
     );
   }
 
   return (
-    <main className="mx-auto max-w-sm p-6">
-      <h1 className="text-2xl font-semibold mb-6">{t("heading")}</h1>
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        <label className="flex flex-col gap-1">
-          <span>{t("email")}</span>
-          <input
-            type="email"
-            required
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            className="border rounded px-3 py-2"
-          />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span>{t("phone")}</span>
-          <div className="flex gap-2">
-            <select
-              value={countryCode}
-              onChange={(event) => setCountryCode(event.target.value)}
-              className="border rounded px-2 py-2 max-w-[9.5rem]"
-            >
-              {COUNTRIES.map((c) => (
-                <option key={c.code} value={c.code}>
-                  {c.name} {c.dial && `(${c.dial})`}
-                </option>
-              ))}
-            </select>
+    <main className="mx-auto flex max-w-sm flex-col justify-center px-5 py-10">
+      <div className="card flex flex-col gap-6 p-6 shadow-sm">
+        <div className="flex flex-col items-center gap-2 text-center">
+          <span className="text-4xl">✨</span>
+          <h1 className="text-2xl font-bold">{t("heading")}</h1>
+        </div>
+
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <label className={labelClass}>
+            <span>{t("email")}</span>
             <input
-              type="tel"
-              inputMode="numeric"
-              value={phoneNumber}
-              onChange={(event) => setPhoneNumber(event.target.value)}
-              placeholder={t("phoneNumberPlaceholder")}
-              className="border rounded px-3 py-2 flex-1"
+              type="email"
+              required
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              className={`${inputClass} w-full`}
             />
-          </div>
-        </label>
-        <label className="flex flex-col gap-1">
-          <span>{t("bio")}</span>
-          <textarea
-            value={bio}
-            onChange={(event) => setBio(event.target.value)}
-            maxLength={500}
-            rows={2}
-            className="border rounded px-3 py-2"
-          />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span>{t("socialLinkLabel")}</span>
-          <input
-            type="url"
-            value={lienReseauSocial}
-            onChange={(event) => setLienReseauSocial(event.target.value)}
-            placeholder="https://instagram.com/..."
-            className="border rounded px-3 py-2"
-          />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span>{t("password")}</span>
-          <input
-            type="password"
-            required
-            minLength={8}
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            className="border rounded px-3 py-2"
-          />
-        </label>
-        {status === "error" && (
-          <p className="text-red-600 text-sm">{errorMessage}</p>
-        )}
-        <button
-          type="submit"
-          disabled={status === "loading"}
-          className="bg-violet-600 text-white rounded px-3 py-2 disabled:opacity-50"
-        >
-          {status === "loading" ? t("submitting") : t("submit")}
-        </button>
-      </form>
+          </label>
+          <label className={labelClass}>
+            <span>{t("phone")}</span>
+            <div className="flex gap-2">
+              <select
+                value={countryCode}
+                onChange={(event) => setCountryCode(event.target.value)}
+                className={`${inputClass} w-[8.5rem] min-w-0 px-3`}
+              >
+                {COUNTRIES.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.name} {c.dial && `(${c.dial})`}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="tel"
+                inputMode="numeric"
+                value={phoneNumber}
+                onChange={(event) => setPhoneNumber(event.target.value)}
+                placeholder={t("phoneNumberPlaceholder")}
+                className={`${inputClass} min-w-0 flex-1`}
+              />
+            </div>
+          </label>
+          <label className={labelClass}>
+            <span>{t("bio")}</span>
+            <textarea
+              value={bio}
+              onChange={(event) => setBio(event.target.value)}
+              maxLength={500}
+              rows={2}
+              className={`${inputClass} w-full`}
+            />
+          </label>
+          <label className={labelClass}>
+            <span>{t("socialLinkLabel")}</span>
+            <input
+              type="url"
+              value={lienReseauSocial}
+              onChange={(event) => setLienReseauSocial(event.target.value)}
+              placeholder="https://instagram.com/..."
+              className={`${inputClass} w-full`}
+            />
+          </label>
+          <label className={labelClass}>
+            <span>{t("password")}</span>
+            <input
+              type="password"
+              required
+              minLength={8}
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              className={`${inputClass} w-full`}
+            />
+          </label>
+          {status === "error" && (
+            <p className="text-sm text-danger-600">{errorMessage}</p>
+          )}
+          <button
+            type="submit"
+            disabled={status === "loading"}
+            className={buttonClass("primary", "lg", "mt-2")}
+          >
+            {status === "loading" ? t("submitting") : t("submit")}
+          </button>
+        </form>
+      </div>
     </main>
   );
 }

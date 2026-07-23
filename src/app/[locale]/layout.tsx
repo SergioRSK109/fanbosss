@@ -2,20 +2,20 @@ import type { Metadata, Viewport } from "next";
 import { hasLocale } from "next-intl";
 import { NextIntlClientProvider } from "next-intl";
 import { notFound } from "next/navigation";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Poppins } from "next/font/google";
 import { routing } from "@/i18n/routing";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ServiceWorkerRegistration } from "@/components/ServiceWorkerRegistration";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
+// Rounded, friendly geometric sans -- matches the brief's "moderne,
+// arrondie/friendly" direction. Self-hosted at build time by next/font
+// (no runtime CDN request), subset to just the weights actually used and
+// to latin + latin-ext so French accents (é, à, ç...) render correctly.
+const poppins = Poppins({
+  variable: "--font-poppins",
+  subsets: ["latin", "latin-ext"],
+  weight: ["400", "500", "600", "700"],
 });
 
 export const metadata: Metadata = {
@@ -46,14 +46,11 @@ export default async function LocaleLayout({
   }
 
   return (
-    <html
-      lang={locale}
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-    >
-      <body className="min-h-full flex flex-col">
+    <html lang={locale} className={`${poppins.variable} h-full antialiased`}>
+      <body className="min-h-full flex flex-col font-sans">
         <NextIntlClientProvider>
           <ServiceWorkerRegistration />
-          <div className="flex justify-end p-2">
+          <div className="flex justify-end px-4 py-3">
             <LanguageSwitcher />
           </div>
           {children}

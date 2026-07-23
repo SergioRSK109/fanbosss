@@ -40,9 +40,9 @@
     "paying": "...",
     "paymentError": "paiement impossible",
     "socialLink": "Voir le profil",
-    "rankVolume": "🏆 #{rank} volume (30j)",
-    "rankReactivite": "⚡ #{rank} réactivité (30j)",
-    "rankProgression": "📈 #{rank} progression (30j)",
+    "rankVolume": "#{rank} volume (30j)",
+    "rankReactivite": "#{rank} réactivité (30j)",
+    "rankProgression": "#{rank} progression (30j)",
     "offerTypes": {
       "video": "Vidéo personnalisée",
       "don": "Don libre",

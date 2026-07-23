@@ -2,6 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { buttonClass } from "@/components/ui/button-styles";
+import { inputClass, labelClass } from "@/components/ui/field-styles";
 
 const SAVED_MESSAGE_TIMEOUT_MS = 3000;
 
@@ -107,14 +109,14 @@ export function ParametresForm({
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-      <label className="flex flex-col gap-1">
+      <label className={labelClass}>
         <span>Photo de profil</span>
         {photoUrl && (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={photoUrl}
             alt=""
-            className="w-16 h-16 rounded-full object-cover border mb-1"
+            className="mb-1 h-16 w-16 rounded-full border border-border object-cover"
           />
         )}
         <input
@@ -125,10 +127,11 @@ export function ParametresForm({
             setFile(event.target.files?.[0] ?? null);
             dismissSavedMessage();
           }}
+          className="text-sm text-foreground-muted file:mr-2 file:rounded-full file:border-0 file:bg-brand-50 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-brand-600 dark:file:bg-white/10 dark:file:text-brand-300"
         />
       </label>
 
-      <label className="flex flex-col gap-1">
+      <label className={labelClass}>
         <span>Choisis ton identifiant</span>
         <input
           type="text"
@@ -138,14 +141,14 @@ export function ParametresForm({
             dismissSavedMessage();
           }}
           placeholder="ex: sergio_123, sergioRSK"
-          className="border rounded px-3 py-2"
+          className={`${inputClass} w-full`}
         />
-        <span className="text-sm text-gray-500">
+        <span className="text-sm text-foreground-muted">
           Ton lien : fanboss.app/@{pseudoValue || "..."}
         </span>
       </label>
 
-      <label className="flex flex-col gap-1">
+      <label className={labelClass}>
         <span>Bio</span>
         <textarea
           value={bioValue}
@@ -155,11 +158,11 @@ export function ParametresForm({
           }}
           maxLength={500}
           rows={3}
-          className="border rounded px-3 py-2"
+          className={`${inputClass} w-full`}
         />
       </label>
 
-      <label className="flex flex-col gap-1">
+      <label className={labelClass}>
         <span>Lien réseau social (TikTok, Instagram...)</span>
         <input
           type="url"
@@ -169,11 +172,11 @@ export function ParametresForm({
             dismissSavedMessage();
           }}
           placeholder="https://instagram.com/..."
-          className="border rounded px-3 py-2"
+          className={`${inputClass} w-full`}
         />
       </label>
 
-      <label className="flex items-center gap-2">
+      <label className="flex items-center gap-3">
         <input
           type="checkbox"
           checked={classementValue}
@@ -181,17 +184,18 @@ export function ParametresForm({
             setClassementValue(event.target.checked);
             dismissSavedMessage();
           }}
+          className="h-5 w-5 accent-brand-500"
         />
-        <span>Apparaître dans les classements publics</span>
+        <span className="text-sm">Apparaître dans les classements publics</span>
       </label>
 
-      {status === "error" && <p className="text-red-600 text-sm">{errorMessage}</p>}
-      {status === "saved" && <p className="text-green-600 text-sm">Enregistré.</p>}
+      {status === "error" && <p className="text-sm text-danger-600">{errorMessage}</p>}
+      {status === "saved" && <p className="text-sm text-success-600">Enregistré.</p>}
 
       <button
         type="submit"
         disabled={status === "saving"}
-        className="bg-violet-600 text-white rounded px-3 py-2 disabled:opacity-50"
+        className={buttonClass("primary", "lg", "mt-2")}
       >
         {status === "saving" ? "Enregistrement..." : "Enregistrer"}
       </button>

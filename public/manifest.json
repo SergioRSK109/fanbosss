@@ -4,7 +4,7 @@
   "description": "Monétisez votre relation avec vos fans - vidéos personnalisées, dons, accès WhatsApp premium.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0a0a0a",
+  "background_color": "#171225",
   "theme_color": "#7c3aed",
   "icons": [
     {

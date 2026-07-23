@@ -51,7 +51,10 @@ export function TransactionActions({
 
   return (
     <div className="flex flex-col gap-1">
-      <button onClick={reveal} className="text-sm underline">
+      <button
+        onClick={reveal}
+        className="self-start text-sm font-semibold text-brand-600 dark:text-brand-300"
+      >
         {REVEAL_LABELS[type]}
       </button>
       {link && (
@@ -59,12 +62,12 @@ export function TransactionActions({
           href={link}
           target="_blank"
           rel="noreferrer"
-          className="text-sm text-violet-600"
+          className="self-start rounded-full bg-brand-50 px-3 py-1 text-sm font-medium text-brand-600 dark:bg-white/10 dark:text-brand-300"
         >
-          Ouvrir
+          Ouvrir →
         </a>
       )}
-      {errorMessage && <p className="text-red-600 text-sm">{errorMessage}</p>}
+      {errorMessage && <p className="text-sm text-danger-600">{errorMessage}</p>}
     </div>
   );
 }

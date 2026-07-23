@@ -13,7 +13,7 @@ export function LanguageSwitcher() {
     <select
       value={locale}
       onChange={(event) => router.replace(pathname, { locale: event.target.value })}
-      className="border rounded px-2 py-1 text-sm"
+      className="border border-border bg-surface text-foreground-muted rounded-full px-3 py-1.5 text-xs font-medium"
       aria-label="Language"
     >
       <option value="fr">{t("fr")}</option>

@@ -2,6 +2,7 @@ import { redirect, Link } from "@/i18n/navigation";
 import { DemandesEnAttente } from "@/components/DemandesEnAttente";
 import { OffresManager } from "@/components/OffresManager";
 import { TransactionActions } from "@/components/TransactionActions";
+import { RankBadge } from "@/components/ui/RankBadge";
 import type { OffreType } from "@/lib/validation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -16,6 +17,14 @@ const STATUT_LABELS: Record<string, string> = {
   livree: "livrée",
   remboursee: "remboursée",
   refusee: "refusée",
+};
+
+const STATUT_STYLES: Record<string, string> = {
+  en_attente: "bg-accent-500/15 text-accent-600",
+  validee: "bg-brand-500/15 text-brand-600 dark:text-brand-300",
+  livree: "bg-success-500/15 text-success-600",
+  remboursee: "bg-foreground-muted/15 text-foreground-muted",
+  refusee: "bg-danger-500/15 text-danger-600",
 };
 
 export default async function DashboardPage({
@@ -90,55 +99,50 @@ export default async function DashboardPage({
     .eq("id", user.id);
 
   return (
-    <main className="mx-auto max-w-2xl p-6 flex flex-col gap-10">
+    <main className="mx-auto flex max-w-2xl flex-col gap-8 p-5 pb-16 sm:p-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Mon espace FanBoss</h1>
-        <Link href="/parametres" className="text-sm underline">
-          Réglages
+        <h1 className="text-2xl font-bold">Mon espace FanBoss</h1>
+        <Link
+          href="/parametres"
+          className="rounded-full border border-border px-3 py-1.5 text-sm font-medium text-foreground-muted transition-transform active:scale-95 hover:text-foreground"
+        >
+          ⚙️ Réglages
         </Link>
       </div>
 
-      <p className="text-sm text-gray-500">
-        Votre profil public :{" "}
+      <div className="card px-4 py-3 text-sm">
+        <span className="text-foreground-muted">Votre profil public : </span>
         {profil?.pseudo ? (
-          <Link href={`/@${profil.pseudo}`} className="underline">
+          <Link href={`/@${profil.pseudo}`} className="font-semibold text-brand-600 dark:text-brand-300">
             fanboss.app/@{profil.pseudo}
           </Link>
         ) : (
           <>
-            pas encore de pseudo --{" "}
-            <Link href="/parametres" className="underline">
+            <span className="text-foreground-muted">pas encore de pseudo — </span>
+            <Link href="/parametres" className="font-semibold text-brand-600 dark:text-brand-300">
               en choisir un
             </Link>
           </>
         )}
-      </p>
+      </div>
 
-      {profil?.classement_public && (
+      {profil?.classement_public && (volumeRow || reactiviteRow || progressionRow) && (
         <div className="flex flex-wrap gap-2">
-          {volumeRow && (
-            <span className="text-sm border rounded-full px-3 py-1">
-              🏆 #{volumeRow.rang} volume (30j)
-            </span>
-          )}
+          {volumeRow && <RankBadge kind="volume" label={`#${volumeRow.rang} volume (30j)`} />}
           {reactiviteRow && (
-            <span className="text-sm border rounded-full px-3 py-1">
-              ⚡ #{reactiviteRow.rang} réactivité (30j)
-            </span>
+            <RankBadge kind="reactivite" label={`#${reactiviteRow.rang} réactivité (30j)`} />
           )}
           {progressionRow && (
-            <span className="text-sm border rounded-full px-3 py-1">
-              📈 #{progressionRow.rang} progression (30j)
-            </span>
+            <RankBadge kind="progression" label={`#${progressionRow.rang} progression (30j)`} />
           )}
         </div>
       )}
 
       <section>
-        <h2 className="text-lg font-medium mb-3 flex items-center gap-2">
+        <h2 className="mb-3 flex items-center gap-2 text-lg font-bold">
           Demandes en attente de votre réponse
           {nouvellesDemandes > 0 && (
-            <span className="bg-red-600 text-white text-xs rounded-full px-2 py-0.5">
+            <span className="rounded-full bg-accent-500 px-2 py-0.5 text-xs font-bold text-white">
               {nouvellesDemandes} nouvelle{nouvellesDemandes > 1 ? "s" : ""}
             </span>
           )}
@@ -161,7 +165,7 @@ export default async function DashboardPage({
       </section>
 
       <section>
-        <h2 className="text-lg font-medium mb-3">Vos offres</h2>
+        <h2 className="mb-3 text-lg font-bold">Vos offres</h2>
         <OffresManager
           offres={
             (offres ?? []) as {
@@ -177,7 +181,7 @@ export default async function DashboardPage({
       </section>
 
       <section>
-        <h2 className="text-lg font-medium mb-3">
+        <h2 className="mb-3 text-lg font-bold">
           Paiements envoyés à d&apos;autres créateurs
         </h2>
         <ul className="flex flex-col gap-3">
@@ -189,12 +193,20 @@ export default async function DashboardPage({
             return (
               <li
                 key={transaction.id}
-                className="border rounded px-4 py-3 flex items-center justify-between"
+                className="card flex flex-col gap-2 px-4 py-3"
               >
-                <span>
-                  {offre?.type} - {transaction.montant}$ -{" "}
-                  {STATUT_LABELS[transaction.statut] ?? transaction.statut}
-                </span>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm font-medium">
+                    {offre?.type} · {transaction.montant}$
+                  </span>
+                  <span
+                    className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${
+                      STATUT_STYLES[transaction.statut] ?? "bg-foreground-muted/15 text-foreground-muted"
+                    }`}
+                  >
+                    {STATUT_LABELS[transaction.statut] ?? transaction.statut}
+                  </span>
+                </div>
                 {offre?.type && (
                   <TransactionActions
                     transactionId={transaction.id}
@@ -205,7 +217,9 @@ export default async function DashboardPage({
               </li>
             );
           })}
-          {(envoyees ?? []).length === 0 && <p>Aucun paiement envoyé.</p>}
+          {(envoyees ?? []).length === 0 && (
+            <p className="text-sm text-foreground-muted">Aucun paiement envoyé.</p>
+          )}
         </ul>
       </section>
     </main>

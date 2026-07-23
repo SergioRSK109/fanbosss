@@ -2,6 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { buttonClass } from "@/components/ui/button-styles";
+import { inputClass } from "@/components/ui/field-styles";
 import { WHATSAPP_PRIX_MINIMUM, type OffreType } from "@/lib/validation";
 
 type Offre = {
@@ -97,7 +99,7 @@ function VideoOffresList({
 
   return (
     <div className="flex flex-col gap-2">
-      <p className="font-medium">
+      <p className="text-sm font-semibold">
         Si quelqu&apos;un te demande une vidéo personnalisée (anniversaire,
         félicitations, encouragement...), combien lui factures-tu ?
       </p>
@@ -117,7 +119,7 @@ function VideoOffresList({
       <button
         type="button"
         onClick={addDraft}
-        className="self-start text-sm underline"
+        className="self-start text-sm font-semibold text-brand-600 dark:text-brand-300"
       >
         + Ajouter un type de vidéo
       </button>
@@ -179,7 +181,7 @@ function VideoOffreRow({
         event.preventDefault();
         void submit(true);
       }}
-      className="border rounded px-4 py-3 flex flex-col gap-2"
+      className="card flex flex-col gap-3 p-4"
     >
       <div className="flex flex-wrap items-center gap-2">
         <input
@@ -189,7 +191,7 @@ function VideoOffreRow({
           placeholder="Ex : Anniversaire"
           value={libelle}
           onChange={(event) => setLibelle(event.target.value)}
-          className="border rounded px-2 py-1 flex-1 min-w-[10rem]"
+          className={`${inputClass} flex-1 min-w-[10rem]`}
         />
         <input
           type="number"
@@ -198,14 +200,14 @@ function VideoOffreRow({
           required
           value={prix}
           onChange={(event) => setPrix(event.target.value)}
-          className="border rounded px-2 py-1 w-24"
+          className={`${inputClass} w-24`}
         />
         <span>$</span>
 
         <button
           type="submit"
           disabled={status === "saving"}
-          className="ml-auto bg-violet-600 text-white rounded px-3 py-1 text-sm disabled:opacity-50"
+          className={buttonClass("primary", "sm", "ml-auto")}
         >
           {status === "saving" ? "..." : existing ? "Mettre à jour" : "Ajouter"}
         </button>
@@ -215,13 +217,13 @@ function VideoOffreRow({
             type="button"
             disabled={status === "saving"}
             onClick={() => submit(!existing.actif)}
-            className="text-sm underline"
+            className="text-sm text-foreground-muted hover:text-foreground"
           >
             {existing.actif ? "désactiver" : "réactiver"}
           </button>
         )}
       </div>
-      {errorMessage && <p className="text-red-600 text-sm">{errorMessage}</p>}
+      {errorMessage && <p className="text-sm text-danger-600">{errorMessage}</p>}
     </form>
   );
 }
@@ -320,21 +322,22 @@ function OffreRow({
           event.preventDefault();
           void submitOffre(donActif);
         }}
-        className="border rounded px-4 py-3 flex flex-col gap-2"
+        className="card flex flex-col gap-3 p-4"
       >
-        <label className="flex items-center gap-2">
+        <label className="flex items-center gap-3">
           <input
             type="checkbox"
             checked={donActif}
             onChange={(event) => setDonActif(event.target.checked)}
+            className="h-5 w-5 accent-brand-500"
           />
-          <span>{question.question}</span>
+          <span className="text-sm">{question.question}</span>
         </label>
-        {errorMessage && <p className="text-red-600 text-sm">{errorMessage}</p>}
+        {errorMessage && <p className="text-sm text-danger-600">{errorMessage}</p>}
         <button
           type="submit"
           disabled={status === "saving"}
-          className="self-start bg-violet-600 text-white rounded px-3 py-1 text-sm disabled:opacity-50"
+          className={buttonClass("primary", "sm", "self-start")}
         >
           {status === "saving" ? "..." : "Enregistrer"}
         </button>
@@ -348,9 +351,9 @@ function OffreRow({
         event.preventDefault();
         void submitOffre(true);
       }}
-      className="border rounded px-4 py-3 flex flex-col gap-2"
+      className="card flex flex-col gap-3 p-4"
     >
-      <p>{question.question}</p>
+      <p className="text-sm">{question.question}</p>
       <div className="flex flex-wrap items-center gap-2">
         <input
           type="number"
@@ -359,7 +362,7 @@ function OffreRow({
           required
           value={prix}
           onChange={(event) => setPrix(event.target.value)}
-          className="border rounded px-2 py-1 w-24"
+          className={`${inputClass} w-24`}
         />
         <span>$</span>
 
@@ -368,10 +371,10 @@ function OffreRow({
             <input
               type="file"
               onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-              className="text-sm"
+              className="text-sm text-foreground-muted file:mr-2 file:rounded-full file:border-0 file:bg-brand-50 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-brand-600 dark:file:bg-white/10 dark:file:text-brand-300"
             />
             {hasContent && !file && (
-              <span className="text-sm text-gray-500">contenu déjà téléversé</span>
+              <span className="text-sm text-foreground-muted">contenu déjà téléversé</span>
             )}
           </>
         )}
@@ -383,14 +386,14 @@ function OffreRow({
             placeholder="https://youtube.com/..."
             value={lienLive}
             onChange={(event) => setLienLive(event.target.value)}
-            className="border rounded px-2 py-1 flex-1 min-w-[12rem]"
+            className={`${inputClass} flex-1 min-w-[12rem]`}
           />
         )}
 
         <button
           type="submit"
           disabled={status === "saving"}
-          className="ml-auto bg-violet-600 text-white rounded px-3 py-1 text-sm disabled:opacity-50"
+          className={buttonClass("primary", "sm", "ml-auto")}
         >
           {status === "saving" ? "..." : existing ? "Mettre à jour" : "Activer"}
         </button>
@@ -400,13 +403,13 @@ function OffreRow({
             type="button"
             disabled={status === "saving"}
             onClick={() => submitOffre(!existing.actif)}
-            className="text-sm underline"
+            className="text-sm text-foreground-muted hover:text-foreground"
           >
             {existing.actif ? "désactiver" : "réactiver"}
           </button>
         )}
       </div>
-      {errorMessage && <p className="text-red-600 text-sm">{errorMessage}</p>}
+      {errorMessage && <p className="text-sm text-danger-600">{errorMessage}</p>}
     </form>
   );
 }
