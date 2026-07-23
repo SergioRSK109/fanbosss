@@ -21,7 +21,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "FanBoss",
   description:
-    "Monétisez votre relation avec vos fans : vidéos personnalisées, dons, accès WhatsApp premium.",
+    "Monétisez votre relation avec vos fans : vidéos personnalisées, dons, WhatsApp.",
   manifest: "/manifest.json",
 };
 

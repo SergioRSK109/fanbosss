@@ -5,7 +5,7 @@
   },
   "Home": {
     "title": "FanBoss",
-    "tagline": "Monétisez votre relation avec vos fans : vidéos personnalisées, dons, accès WhatsApp premium, et plus.",
+    "tagline": "Monétisez votre relation avec vos fans : vidéos personnalisées, dons, WhatsApp, et plus.",
     "signup": "Créer un compte",
     "login": "Se connecter"
   },
@@ -46,10 +46,17 @@
     "offerTypes": {
       "video": "Vidéo personnalisée",
       "don": "Don libre",
-      "whatsapp": "Accès WhatsApp premium",
+      "whatsapp": "Révéler son WhatsApp",
       "shoutout": "Mention (shoutout)",
-      "contenu_debloque": "Contenu à débloquer",
+      "contenu_debloque": "Contenu exclusif",
       "evenement_live": "Accès live privé"
+    },
+    "reassurance": {
+      "whatsapp": "Remboursé automatiquement si le créateur n'accepte pas ta demande sous 48h.",
+      "videoShoutout": "Remboursé automatiquement si le créateur n'accepte pas ta demande sous 24h, ou ne livre pas sous 48h après acceptation.",
+      "don": "Don direct, sans obligation de retour de la part du créateur.",
+      "contenu_debloque": "Accès débloqué immédiatement après paiement.",
+      "evenement_live": "Lien d'accès envoyé immédiatement après paiement."
     }
   },
   "PaiementRetour": {

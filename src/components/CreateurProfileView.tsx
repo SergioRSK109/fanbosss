@@ -2,6 +2,21 @@ import { useTranslations } from "next-intl";
 import { CheckoutButton } from "@/components/CheckoutButton";
 import { ReportButton } from "@/components/ReportButton";
 import type { CreateurProfileData } from "@/lib/profil";
+import type { OffreType } from "@/lib/validation";
+
+// video/shoutout share the same reassurance copy (identical accept/deliver
+// mechanics); don has no reassurance.whatsapp/contenu_debloque/etc key of
+// its own to reuse, so this map is what ties each offer type to its
+// message key rather than duplicating the video/shoutout string twice in
+// the message files.
+const REASSURANCE_KEYS: Partial<Record<OffreType, string>> = {
+  whatsapp: "reassurance.whatsapp",
+  video: "reassurance.videoShoutout",
+  shoutout: "reassurance.videoShoutout",
+  don: "reassurance.don",
+  contenu_debloque: "reassurance.contenu_debloque",
+  evenement_live: "reassurance.evenement_live",
+};
 
 export function CreateurProfileView({ profile }: { profile: CreateurProfileData }) {
   const t = useTranslations("CreateurProfile");
@@ -71,16 +86,20 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
 
       <ul className="flex flex-col gap-3">
         {offres.map((offre) => (
-          <li
-            key={offre.id}
-            className="border rounded px-4 py-3 flex items-center justify-between"
-          >
-            <span>
-              {labels[offre.type] ?? offre.type}
-              {offre.libelle && ` (${offre.libelle})`}
-              {offre.prix !== null && ` - ${offre.prix}$`}
-            </span>
-            <CheckoutButton offreId={offre.id} type={offre.type} />
+          <li key={offre.id} className="border rounded px-4 py-3 flex flex-col gap-1">
+            <div className="flex items-center justify-between">
+              <span>
+                {labels[offre.type] ?? offre.type}
+                {offre.libelle && ` (${offre.libelle})`}
+                {offre.prix !== null && ` - ${offre.prix}$`}
+              </span>
+              <CheckoutButton offreId={offre.id} type={offre.type} />
+            </div>
+            {/* Always-visible, not a hover tooltip: most visitors are on
+                mobile, where hover states aren't reachable at all. */}
+            {REASSURANCE_KEYS[offre.type] && (
+              <p className="text-xs text-gray-400">{t(REASSURANCE_KEYS[offre.type]!)}</p>
+            )}
           </li>
         ))}
         {offres.length === 0 && <p>{t("noActiveOffers")}</p>}

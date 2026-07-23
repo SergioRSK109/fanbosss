@@ -5,7 +5,7 @@
   },
   "Home": {
     "title": "FanBoss",
-    "tagline": "Monetize your relationship with your fans: custom videos, tips, premium WhatsApp access, and more.",
+    "tagline": "Monetize your relationship with your fans: custom videos, tips, WhatsApp, and more.",
     "signup": "Create an account",
     "login": "Log in"
   },
@@ -46,10 +46,17 @@
     "offerTypes": {
       "video": "Custom video",
       "don": "Free tip",
-      "whatsapp": "Premium WhatsApp access",
+      "whatsapp": "Reveal WhatsApp",
       "shoutout": "Shoutout",
-      "contenu_debloque": "Unlockable content",
+      "contenu_debloque": "Exclusive content",
       "evenement_live": "Private live access"
+    },
+    "reassurance": {
+      "whatsapp": "Automatically refunded if the creator doesn't accept your request within 48h.",
+      "videoShoutout": "Automatically refunded if the creator doesn't accept your request within 24h, or doesn't deliver within 48h after accepting.",
+      "don": "Direct tip, with no obligation for the creator to respond.",
+      "contenu_debloque": "Access unlocked immediately after payment.",
+      "evenement_live": "Access link sent immediately after payment."
     }
   },
   "PaiementRetour": {
