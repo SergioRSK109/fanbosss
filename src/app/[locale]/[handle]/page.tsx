@@ -19,7 +19,14 @@ export default async function HandlePage({
 }: {
   params: Promise<{ handle: string }>;
 }) {
-  const { handle } = await params;
+  const { handle: rawHandle } = await params;
+
+  // params values are NOT auto-decoded here: a literal "@" in the URL
+  // arrives as the percent-encoded "%40" in this field (confirmed
+  // empirically against a real dev server -- both /@sergio and
+  // /en/@sergio produced handle === "%40sergio", identically in both
+  // locales, which is what made this 404 regardless of language).
+  const handle = decodeURIComponent(rawHandle);
 
   if (!handle.startsWith("@")) {
     notFound();
