@@ -33,7 +33,9 @@ export async function PATCH(request: NextRequest) {
     .from("users")
     .update(parsed.data)
     .eq("id", user.id)
-    .select("id, pseudo, bio, lien_reseau_social, classement_public")
+    .select(
+      "id, nom_affichage, pseudo, bio, lien_reseau_social, classement_public, masque_exploration",
+    )
     .single();
 
   if (error) {

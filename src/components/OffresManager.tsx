@@ -2,9 +2,12 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { Link } from "@/i18n/navigation";
 import { buttonClass } from "@/components/ui/button-styles";
 import { inputClass } from "@/components/ui/field-styles";
 import { WHATSAPP_PRIX_MINIMUM, type OffreType } from "@/lib/validation";
+
+type SavedOptions = { isFirstOffre?: boolean };
 
 type Offre = {
   id: string;
@@ -57,19 +60,53 @@ export function OffresManager({ offres }: { offres: Offre[] }) {
   const router = useRouter();
   const byType = new Map(offres.map((offre) => [offre.type, offre]));
   const videoOffres = offres.filter((offre) => offre.type === "video");
+  // "une seule fois" (product brief): naturally self-limiting without a
+  // persisted flag -- offres are never deleted in this app, so the API's
+  // isFirstOffre can only be true on the very first successful creation,
+  // ever, for a given créateur.
+  const [showFirstOffreNotice, setShowFirstOffreNotice] = useState(false);
+
+  function handleSaved(opts?: SavedOptions) {
+    if (opts?.isFirstOffre) {
+      setShowFirstOffreNotice(true);
+    }
+    router.refresh();
+  }
 
   return (
     <section className="flex flex-col gap-4">
-      <VideoOffresList
-        videoOffres={videoOffres}
-        onSaved={() => router.refresh()}
-      />
+      {showFirstOffreNotice && (
+        <div className="card flex items-start gap-3 border-brand-200 bg-brand-50 p-4 dark:border-brand-500/30 dark:bg-brand-500/10">
+          <span aria-hidden className="text-xl">
+            👀
+          </span>
+          <div className="flex-1 text-sm">
+            <p>
+              Ton profil sera visible dans l&apos;exploration publique -- tu
+              peux changer ça dans les{" "}
+              <Link href="/parametres" className="font-semibold underline">
+                réglages
+              </Link>
+              .
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowFirstOffreNotice(false)}
+            aria-label="Fermer"
+            className="text-foreground-muted hover:text-foreground"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+      <VideoOffresList videoOffres={videoOffres} onSaved={handleSaved} />
       {QUESTIONS.map((question) => (
         <OffreRow
           key={question.type}
           question={question}
           existing={byType.get(question.type)}
-          onSaved={() => router.refresh()}
+          onSaved={handleSaved}
         />
       ))}
     </section>
@@ -85,7 +122,7 @@ function VideoOffresList({
   onSaved,
 }: {
   videoOffres: Offre[];
-  onSaved: () => void;
+  onSaved: (opts?: SavedOptions) => void;
 }) {
   const [draftIds, setDraftIds] = useState<string[]>([]);
 
@@ -110,9 +147,9 @@ function VideoOffresList({
         <VideoOffreRow
           key={draftId}
           existing={undefined}
-          onSaved={() => {
+          onSaved={(opts) => {
             removeDraft(draftId);
-            onSaved();
+            onSaved(opts);
           }}
         />
       ))}
@@ -137,7 +174,7 @@ function VideoOffreRow({
   onSaved,
 }: {
   existing: Offre | undefined;
-  onSaved: () => void;
+  onSaved: (opts?: SavedOptions) => void;
 }) {
   const [libelle, setLibelle] = useState(existing?.libelle ?? "");
   const [prix, setPrix] = useState(existing?.prix?.toString() ?? "");
@@ -168,7 +205,7 @@ function VideoOffreRow({
       }
 
       setStatus("idle");
-      onSaved();
+      onSaved({ isFirstOffre: body.isFirstOffre });
     } catch (err) {
       setStatus("error");
       setErrorMessage(err instanceof Error ? err.message : "erreur inconnue");
@@ -235,7 +272,7 @@ function OffreRow({
 }: {
   question: (typeof QUESTIONS)[number];
   existing: Offre | undefined;
-  onSaved: () => void;
+  onSaved: (opts?: SavedOptions) => void;
 }) {
   const [prix, setPrix] = useState(existing?.prix?.toString() ?? "");
   const [donActif, setDonActif] = useState(existing?.actif ?? false);
@@ -308,7 +345,7 @@ function OffreRow({
 
       setStatus("idle");
       setFile(null);
-      onSaved();
+      onSaved({ isFirstOffre: body.isFirstOffre });
     } catch (err) {
       setStatus("error");
       setErrorMessage(err instanceof Error ? err.message : "erreur inconnue");

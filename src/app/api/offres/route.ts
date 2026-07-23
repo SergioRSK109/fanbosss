@@ -50,6 +50,19 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Checked before the upsert below so a creation vs. an update of an
+  // existing offre can be told apart: a créateur's first-ever offre also
+  // makes their profile visible in /explorer by default (migration 0009),
+  // so the client shows a one-time transparency notice about that. Since
+  // offres are never deleted in this app, "zero rows before this call" can
+  // only be true once per créateur, ever -- no separate "already shown"
+  // flag needed.
+  const { count: existingOffresCount } = await supabase
+    .from("offres")
+    .select("id", { count: "exact", head: true })
+    .eq("createur_id", user.id);
+  const isFirstOffre = (existingOffresCount ?? 0) === 0;
+
   // config is only included when explicitly provided: this route is what
   // the settings form calls to save a price/toggle, and it must not wipe
   // out config already set via the separate content-upload-url /
@@ -80,5 +93,5 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
 
-  return NextResponse.json({ offre: data }, { status: 201 });
+  return NextResponse.json({ offre: data, isFirstOffre }, { status: 201 });
 }

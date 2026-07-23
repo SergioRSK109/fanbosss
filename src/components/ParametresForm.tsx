@@ -8,23 +8,29 @@ import { inputClass, labelClass } from "@/components/ui/field-styles";
 const SAVED_MESSAGE_TIMEOUT_MS = 3000;
 
 export function ParametresForm({
+  nomAffichage,
   pseudo,
   bio,
   lienReseauSocial,
   classementPublic,
+  masqueExploration,
   photoUrl,
 }: {
+  nomAffichage: string | null;
   pseudo: string | null;
   bio: string | null;
   lienReseauSocial: string | null;
   classementPublic: boolean;
+  masqueExploration: boolean;
   photoUrl: string | null;
 }) {
   const router = useRouter();
+  const [nomAffichageValue, setNomAffichageValue] = useState(nomAffichage ?? "");
   const [pseudoValue, setPseudoValue] = useState(pseudo ?? "");
   const [bioValue, setBioValue] = useState(bio ?? "");
   const [lienValue, setLienValue] = useState(lienReseauSocial ?? "");
   const [classementValue, setClassementValue] = useState(classementPublic);
+  const [masqueExplorationValue, setMasqueExplorationValue] = useState(masqueExploration);
   const [file, setFile] = useState<File | null>(null);
   // Forces the (uncontrolled) file input to remount and drop its displayed
   // filename after a successful upload -- browsers don't allow clearing a
@@ -58,10 +64,12 @@ export function ParametresForm({
 
     try {
       const payload: Record<string, unknown> = {
+        nom_affichage: nomAffichageValue.trim() || null,
         pseudo: pseudoValue.trim() || null,
         bio: bioValue.trim() || null,
         lien_reseau_social: lienValue.trim() || null,
         classement_public: classementValue,
+        masque_exploration: masqueExplorationValue,
       };
 
       if (file) {
@@ -132,6 +140,25 @@ export function ParametresForm({
       </label>
 
       <label className={labelClass}>
+        <span>Nom d&apos;affichage</span>
+        <input
+          type="text"
+          value={nomAffichageValue}
+          onChange={(event) => {
+            setNomAffichageValue(event.target.value);
+            dismissSavedMessage();
+          }}
+          placeholder="ex : Sergio, DJ Sergio..."
+          maxLength={60}
+          className={`${inputClass} w-full`}
+        />
+        <span className="text-sm text-foreground-muted">
+          Le nom affiché sur ton profil public -- distinct de ton identifiant
+          technique ci-dessous.
+        </span>
+      </label>
+
+      <label className={labelClass}>
         <span>Choisis ton identifiant</span>
         <input
           type="text"
@@ -187,6 +214,19 @@ export function ParametresForm({
           className="h-5 w-5 accent-brand-500"
         />
         <span className="text-sm">Apparaître dans les classements publics</span>
+      </label>
+
+      <label className="flex items-center gap-3">
+        <input
+          type="checkbox"
+          checked={masqueExplorationValue}
+          onChange={(event) => {
+            setMasqueExplorationValue(event.target.checked);
+            dismissSavedMessage();
+          }}
+          className="h-5 w-5 accent-brand-500"
+        />
+        <span className="text-sm">Ne pas apparaître dans l&apos;exploration</span>
       </label>
 
       {status === "error" && <p className="text-sm text-danger-600">{errorMessage}</p>}

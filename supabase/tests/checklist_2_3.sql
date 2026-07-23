@@ -346,6 +346,98 @@ begin
   raise notice 'PASS: classement_volume exposes rank only (%)', v_columns;
 end $$;
 
+-- ---------------------------------------------------------------------
+-- nom_affichage / explorer (migration 0009): display name, the reserved-
+-- word list picking up the new /explorer route, and profils_explorables
+-- computing "has an active offre AND not masque_exploration" without
+-- ever exposing masque_exploration itself.
+-- ---------------------------------------------------------------------
+do $$
+begin
+  begin
+    update users set nom_affichage = repeat('x', 61)
+      where id = '11111111-1111-1111-1111-111111111111';
+    raise exception 'TEST FAILED: a 61-character nom_affichage was accepted';
+  exception when check_violation then
+    raise notice 'PASS: nom_affichage max length enforced at the DB level';
+  end;
+end $$;
+
+do $$
+begin
+  begin
+    update users set pseudo = 'explorer' where id = '22222222-2222-2222-2222-222222222222';
+    raise exception 'TEST FAILED: the new "explorer" route name was accepted as a pseudo';
+  exception when check_violation then
+    raise notice 'PASS: "explorer" is rejected as a pseudo (reserved-word list kept in sync with the new route)';
+  end;
+end $$;
+
+update users set nom_affichage = 'Sergio le Créateur'
+  where id = '11111111-1111-1111-1111-111111111111';
+
+do $$
+declare
+  v_nom text;
+begin
+  select nom_affichage into v_nom from profils_publics
+    where id = '11111111-1111-1111-1111-111111111111';
+  if v_nom != 'Sergio le Créateur' then
+    raise exception 'TEST FAILED: profils_publics did not expose nom_affichage (got %)', v_nom;
+  end if;
+  raise notice 'PASS: profils_publics exposes nom_affichage';
+end $$;
+
+do $$
+begin
+  -- '11111111' has several active offres inserted earlier in this file
+  -- (shoutout/contenu_debloque/evenement_live/don/video) and defaults to
+  -- masque_exploration = false -- it must appear.
+  if not exists (
+    select 1 from profils_explorables where id = '11111111-1111-1111-1111-111111111111'
+  ) then
+    raise exception 'TEST FAILED: créateur with an active offre missing from profils_explorables';
+  end if;
+
+  -- '22222222' has never created an offre in this file -- it must not
+  -- appear, regardless of masque_exploration.
+  if exists (
+    select 1 from profils_explorables where id = '22222222-2222-2222-2222-222222222222'
+  ) then
+    raise exception 'TEST FAILED: créateur with zero active offres appeared in profils_explorables';
+  end if;
+
+  raise notice 'PASS: profils_explorables includes only créateurs with at least one active offre';
+end $$;
+
+update users set masque_exploration = true
+  where id = '11111111-1111-1111-1111-111111111111';
+
+do $$
+begin
+  if exists (
+    select 1 from profils_explorables where id = '11111111-1111-1111-1111-111111111111'
+  ) then
+    raise exception 'TEST FAILED: masque_exploration=true créateur still appeared in profils_explorables';
+  end if;
+  raise notice 'PASS: masque_exploration opts a créateur out of profils_explorables even with active offres';
+end $$;
+
+do $$
+declare
+  v_columns text;
+begin
+  select string_agg(column_name, ',') into v_columns
+    from information_schema.columns
+    where table_schema = 'public' and table_name = 'profils_explorables';
+
+  if v_columns ~ 'masque_exploration' then
+    raise exception 'TEST FAILED: profils_explorables exposes masque_exploration itself (%)', v_columns;
+  end if;
+
+  raise notice 'PASS: profils_explorables never exposes masque_exploration (%)', v_columns;
+end $$;
+
 do $$
 begin
   raise notice 'ALL SQL CHECKLIST TESTS PASSED';

@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { CreateurProfileView } from "@/components/CreateurProfileView";
 import { getCreateurProfileData } from "@/lib/profil";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { escapeIlike } from "@/lib/validation";
 
 // Public handle alias: fanboss.app/@pseudo. Deliberately NOT a folder
 // named "@[pseudo]" -- Next.js reserves a leading "@" in a folder name for
@@ -39,7 +40,7 @@ export default async function HandlePage({
   // character (format: [a-zA-Z0-9_]{3,20}) -- an unescaped ilike("pseudo",
   // "test_1") would match "testX1", "test01", etc, not just "test_1".
   // Escape before matching so the case-insensitive lookup is exact.
-  const escapedPseudo = pseudo.replace(/[\\%_]/g, (char) => `\\${char}`);
+  const escapedPseudo = escapeIlike(pseudo);
 
   const { data: match } = await supabase
     .from("profils_publics")

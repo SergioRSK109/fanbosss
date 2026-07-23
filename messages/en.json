@@ -3,6 +3,21 @@
     "fr": "Français",
     "en": "English"
   },
+  "Nav": {
+    "explorer": "Explore"
+  },
+  "Explorer": {
+    "heading": "Discover creators",
+    "subheading": "Browse public profiles and find a creator to support.",
+    "searchPlaceholder": "Search a handle or a bio...",
+    "filterAll": "All offer types",
+    "searchButton": "Search",
+    "empty": "No creator found.",
+    "anonymous": "FanBoss creator",
+    "previous": "Previous",
+    "next": "Next",
+    "pageIndicator": "Page {page} of {total}"
+  },
   "Home": {
     "title": "FanBoss",
     "tagline": "Monetize your relationship with your fans: custom videos, tips, WhatsApp, and more.",

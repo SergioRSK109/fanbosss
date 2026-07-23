@@ -21,7 +21,9 @@ export default async function ParametresPage({
 
   const { data: profil } = await supabase
     .from("users")
-    .select("pseudo, bio, lien_reseau_social, classement_public, photo_r2_key")
+    .select(
+      "nom_affichage, pseudo, bio, lien_reseau_social, classement_public, masque_exploration, photo_r2_key",
+    )
     .eq("id", user.id)
     .single();
 
@@ -39,10 +41,12 @@ export default async function ParametresPage({
       </Link>
       <h1 className="mb-6 mt-2 text-2xl font-bold">Réglages du profil</h1>
       <ParametresForm
+        nomAffichage={profil?.nom_affichage ?? null}
         pseudo={profil?.pseudo ?? null}
         bio={profil?.bio ?? null}
         lienReseauSocial={profil?.lien_reseau_social ?? null}
         classementPublic={profil?.classement_public ?? false}
+        masqueExploration={profil?.masque_exploration ?? false}
         photoUrl={photoUrl}
       />
     </main>
