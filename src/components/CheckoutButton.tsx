@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { useState } from "react";
 import type { OffreType } from "@/lib/validation";
 
@@ -10,6 +11,7 @@ export function CheckoutButton({
   offreId: string;
   type: OffreType;
 }) {
+  const t = useTranslations("CreateurProfile");
   const [montant, setMontant] = useState("3");
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -31,7 +33,7 @@ export function CheckoutButton({
     setLoading(false);
 
     if (!response.ok) {
-      setErrorMessage(body.error ?? "paiement impossible");
+      setErrorMessage(body.error ?? t("paymentError"));
       return;
     }
 
@@ -55,7 +57,7 @@ export function CheckoutButton({
         disabled={loading}
         className="bg-violet-600 text-white rounded px-3 py-2 disabled:opacity-50"
       >
-        {loading ? "..." : "Payer"}
+        {loading ? t("paying") : t("pay")}
       </button>
       {errorMessage && <p className="text-red-600 text-sm">{errorMessage}</p>}
     </div>

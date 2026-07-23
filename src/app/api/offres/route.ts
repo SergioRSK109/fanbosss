@@ -21,11 +21,14 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ offres: data });
 }
 
-// One offer per (créateur, type) -- brief v3 point 4: the creation UI is
-// now a fixed settings row per type ("Si quelqu'un veut ton numéro
-// WhatsApp... combien lui factures-tu ?"), not a repeatable "create new
-// offer" flow. This is an upsert, enforced at the DB level by
-// unique_offre_type_par_createur (migration 0006) so it holds regardless
+// One offer per (créateur, type, libelle) -- brief v3 point 4: the
+// creation UI is a fixed settings row per type ("Si quelqu'un veut ton
+// numéro WhatsApp... combien lui factures-tu ?"), not a repeatable
+// "create new offer" flow -- EXCEPT for `video`, which allows several
+// distinctly-labeled rows ("Anniversaire" at 10$, "Danse" at 15$). This is
+// an upsert, enforced at the DB level by unique_offre_type_par_createur
+// (migrations 0006/0007, NULLS NOT DISTINCT so the one-row rule still
+// holds for every type whose libelle stays null) so it holds regardless
 // of which client calls this route.
 export async function POST(request: NextRequest) {
   const supabase = await createSupabaseServerClient();
@@ -56,6 +59,7 @@ export async function POST(request: NextRequest) {
     createur_id: user.id,
     type: parsed.data.type,
     prix: parsed.data.prix ?? null,
+    libelle: parsed.data.libelle ?? null,
   };
   if (parsed.data.config !== undefined) {
     upsertPayload.config = parsed.data.config;
@@ -68,7 +72,7 @@ export async function POST(request: NextRequest) {
   // raw Postgres error.
   const { data, error } = await supabase
     .from("offres")
-    .upsert(upsertPayload, { onConflict: "createur_id,type" })
+    .upsert(upsertPayload, { onConflict: "createur_id,type,libelle" })
     .select()
     .single();
 

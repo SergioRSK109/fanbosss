@@ -1,8 +1,10 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { useState } from "react";
 
 export function ReportButton({ createurId }: { createurId: string }) {
+  const t = useTranslations("CreateurProfile");
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<"idle" | "sent">("idle");
 
@@ -17,7 +19,7 @@ export function ReportButton({ createurId }: { createurId: string }) {
   }
 
   if (status === "sent") {
-    return <p className="text-sm text-gray-500">Signalement envoyé.</p>;
+    return <p className="text-sm text-gray-500">{t("reportSent")}</p>;
   }
 
   return (
@@ -26,7 +28,7 @@ export function ReportButton({ createurId }: { createurId: string }) {
         onClick={() => setOpen((value) => !value)}
         className="text-sm text-red-600 underline"
       >
-        Signaler / bloquer
+        {t("reportOrBlock")}
       </button>
       {open && (
         <div className="absolute z-10 mt-1 border rounded bg-white shadow p-2 flex flex-col gap-1">
@@ -34,13 +36,13 @@ export function ReportButton({ createurId }: { createurId: string }) {
             onClick={() => submit("signalement")}
             className="text-sm text-left px-2 py-1 hover:bg-gray-100"
           >
-            Signaler ce créateur
+            {t("reportUser")}
           </button>
           <button
             onClick={() => submit("blocage")}
             className="text-sm text-left px-2 py-1 hover:bg-gray-100"
           >
-            Bloquer ce créateur
+            {t("blockUser")}
           </button>
         </div>
       )}

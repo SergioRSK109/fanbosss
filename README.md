@@ -74,13 +74,17 @@ prouve concrètement (pas juste "en théorie") :
   `deadline_livraison` dépassée ;
 - que les 4 nouveaux types d'offres sont acceptés, qu'un `don` peut avoir
   un `prix` nul (et lui seul), et qu'un créateur ne peut pas avoir deux
-  offres du même type (`unique_offre_type_par_createur`).
+  offres du même type (`unique_offre_type_par_createur`) ;
+- que `video` fait exception à cette règle : deux offres vidéo avec des
+  libellés différents ("Anniversaire", "Danse") passent, mais un second
+  `video` avec le MÊME libellé (ou un second `whatsapp`/`don`/etc., dont le
+  libellé reste toujours `null`) est toujours rejeté.
 
 ## Offres disponibles (brief v3 point 2)
 
 | Type | Cycle de vie | Prix |
 |---|---|---|
-| `video` | Acceptation créateur (24h) puis livraison (48h) via URL R2 signée | fixé par le créateur |
+| `video` | Acceptation créateur (24h) puis livraison (48h) via URL R2 signée. Seul type qui n'est PAS limité à une offre par créateur : plusieurs vidéos avec des libellés différents ("Anniversaire" à 10$, "Danse" à 15$) peuvent coexister (`unique(createur_id, type, libelle)`, `NULLS NOT DISTINCT` pour que les autres types restent strictement à une offre) | fixé par le créateur, par libellé |
 | `shoutout` | Identique à `video` (mêmes délais, même mécanisme de livraison) | fixé par le créateur |
 | `whatsapp` | Acceptation créateur (48h) ; l'acceptation EST la livraison (numéro révélé) | ≥ 20$, imposé en base |
 | `don` | Validation/livraison immédiates au paiement, aucun remboursement possible | libre, choisi par le fan |
@@ -139,6 +143,30 @@ elles-mêmes revérifié `fan_id = auth.uid()` et `statut = 'livree'`. Vérifié
 en interrogeant directement `users`/`offres` en tant qu'utilisateur
 authentifié tiers (0 ligne retournée) puis via les vues (données publiques
 correctement retournées).
+
+## Internationalisation (next-intl)
+
+Français par défaut (`localePrefix: "as-needed"` : le français n'a pas de
+préfixe d'URL -- `/`, `/signup`, `/createur/x` -- seul l'anglais est
+préfixé -- `/en`, `/en/signup`, `/en/createur/x`). Toutes les pages vivent
+sous `src/app/[locale]/...` (structure standard next-intl pour l'App
+Router) ; `src/proxy.ts` compose le middleware next-intl avec le
+rafraîchissement de session Supabase existant (les cookies de session
+s'écrivent sur la même réponse que celle produite par next-intl -- voir le
+commentaire dans le fichier). Les routes `src/app/api/**` et
+`src/app/auth/callback` restent délibérément HORS de `[locale]` : ce ne
+sont pas des pages, et un `rewrite` next-intl dessus les ferait 404.
+
+Traduit intégralement (fr + en), par priorité de ce que rencontre un
+visiteur étranger en premier : accueil (`/`), inscription, connexion, page
+créateur/paiement, retour de paiement. Le tableau de bord et les futurs
+emails restent en français pour l'instant (contenu non traduit,
+volontairement, moins prioritaire pour ce MVP) -- ajouter leurs clés dans
+`messages/fr.json`/`messages/en.json` le jour où ils doivent l'être ne
+demande aucun changement structurel.
+
+Sélecteur de langue : `src/components/LanguageSwitcher.tsx`, présent sur
+toutes les pages via `[locale]/layout.tsx`.
 
 ## Hors scope du MVP
 

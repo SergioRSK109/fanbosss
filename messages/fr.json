@@ -1,0 +1,53 @@
+{
+  "LanguageSwitcher": {
+    "fr": "Français",
+    "en": "English"
+  },
+  "Home": {
+    "title": "FanBoss",
+    "tagline": "Monétisez votre relation avec vos fans : vidéos personnalisées, dons, accès WhatsApp premium, et plus.",
+    "signup": "Créer un compte",
+    "login": "Se connecter"
+  },
+  "Signup": {
+    "heading": "Créer un compte FanBoss",
+    "email": "Email",
+    "phone": "Téléphone (WhatsApp)",
+    "phoneNumberPlaceholder": "900000000",
+    "password": "Mot de passe",
+    "submit": "Créer mon compte",
+    "submitting": "Création...",
+    "confirmationSent": "Vérifiez votre boîte mail pour confirmer votre inscription."
+  },
+  "Login": {
+    "heading": "Connexion",
+    "email": "Email",
+    "password": "Mot de passe",
+    "submit": "Se connecter",
+    "submitting": "Connexion...",
+    "callbackError": "La confirmation de votre compte a échoué : {error}. Merci de vous connecter à nouveau."
+  },
+  "CreateurProfile": {
+    "heading": "Profil créateur",
+    "reportOrBlock": "Signaler / bloquer",
+    "reportSent": "Signalement envoyé.",
+    "reportUser": "Signaler ce créateur",
+    "blockUser": "Bloquer ce créateur",
+    "noActiveOffers": "Aucune offre active.",
+    "pay": "Payer",
+    "paying": "...",
+    "paymentError": "paiement impossible",
+    "offerTypes": {
+      "video": "Vidéo personnalisée",
+      "don": "Don libre",
+      "whatsapp": "Accès WhatsApp premium",
+      "shoutout": "Mention (shoutout)",
+      "contenu_debloque": "Contenu à débloquer",
+      "evenement_live": "Accès live privé"
+    }
+  },
+  "PaiementRetour": {
+    "heading": "Merci !",
+    "message": "Votre paiement est en cours de confirmation. Vous retrouverez son statut dans <link>votre espace</link> dès que CinetPay l'aura validé."
+  }
+}

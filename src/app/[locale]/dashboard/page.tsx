@@ -1,4 +1,4 @@
-import { redirect } from "next/navigation";
+import { redirect } from "@/i18n/navigation";
 import { DemandesEnAttente } from "@/components/DemandesEnAttente";
 import { OffresManager } from "@/components/OffresManager";
 import { TransactionActions } from "@/components/TransactionActions";
@@ -18,21 +18,27 @@ const STATUT_LABELS: Record<string, string> = {
   refusee: "refusée",
 };
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  params,
+}: {
+  params: Promise<{ locale: string }>;
+}) {
+  const { locale } = await params;
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
   if (!user) {
-    redirect("/login");
+    redirect({ href: "/login", locale });
+    return;
   }
 
   const [{ data: offres }, { data: demandes }, { data: envoyees }] =
     await Promise.all([
       supabase
         .from("offres")
-        .select("id, type, prix, actif, config")
+        .select("id, type, prix, libelle, actif, config")
         .eq("createur_id", user.id),
       supabase
         .from("transactions")
@@ -80,6 +86,7 @@ export default async function DashboardPage() {
               id: string;
               type: OffreType;
               prix: number | null;
+              libelle: string | null;
               actif: boolean;
               config: Record<string, unknown>;
             }[]

@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { COUNTRIES } from "@/lib/countries";
@@ -8,6 +9,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 const DEFAULT_COUNTRY = COUNTRIES[0];
 
 export function SignupForm() {
+  const t = useTranslations("Signup");
   const searchParams = useSearchParams();
   const parrainId = searchParams.get("ref");
 
@@ -57,17 +59,17 @@ export function SignupForm() {
   if (status === "sent") {
     return (
       <main className="mx-auto max-w-sm p-6">
-        <p>Vérifiez votre boîte mail pour confirmer votre inscription.</p>
+        <p>{t("confirmationSent")}</p>
       </main>
     );
   }
 
   return (
     <main className="mx-auto max-w-sm p-6">
-      <h1 className="text-2xl font-semibold mb-6">Créer un compte FanBoss</h1>
+      <h1 className="text-2xl font-semibold mb-6">{t("heading")}</h1>
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <label className="flex flex-col gap-1">
-          <span>Email</span>
+          <span>{t("email")}</span>
           <input
             type="email"
             required
@@ -77,7 +79,7 @@ export function SignupForm() {
           />
         </label>
         <label className="flex flex-col gap-1">
-          <span>Téléphone (WhatsApp)</span>
+          <span>{t("phone")}</span>
           <div className="flex gap-2">
             <select
               value={countryCode}
@@ -95,13 +97,13 @@ export function SignupForm() {
               inputMode="numeric"
               value={phoneNumber}
               onChange={(event) => setPhoneNumber(event.target.value)}
-              placeholder="900000000"
+              placeholder={t("phoneNumberPlaceholder")}
               className="border rounded px-3 py-2 flex-1"
             />
           </div>
         </label>
         <label className="flex flex-col gap-1">
-          <span>Mot de passe</span>
+          <span>{t("password")}</span>
           <input
             type="password"
             required
@@ -119,7 +121,7 @@ export function SignupForm() {
           disabled={status === "loading"}
           className="bg-violet-600 text-white rounded px-3 py-2 disabled:opacity-50"
         >
-          {status === "loading" ? "Création..." : "Créer mon compte"}
+          {status === "loading" ? t("submitting") : t("submit")}
         </button>
       </form>
     </main>

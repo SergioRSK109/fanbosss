@@ -1,0 +1,53 @@
+{
+  "LanguageSwitcher": {
+    "fr": "Français",
+    "en": "English"
+  },
+  "Home": {
+    "title": "FanBoss",
+    "tagline": "Monetize your relationship with your fans: custom videos, tips, premium WhatsApp access, and more.",
+    "signup": "Create an account",
+    "login": "Log in"
+  },
+  "Signup": {
+    "heading": "Create a FanBoss account",
+    "email": "Email",
+    "phone": "Phone (WhatsApp)",
+    "phoneNumberPlaceholder": "900000000",
+    "password": "Password",
+    "submit": "Create my account",
+    "submitting": "Creating...",
+    "confirmationSent": "Check your inbox to confirm your signup."
+  },
+  "Login": {
+    "heading": "Log in",
+    "email": "Email",
+    "password": "Password",
+    "submit": "Log in",
+    "submitting": "Logging in...",
+    "callbackError": "Account confirmation failed: {error}. Please log in again."
+  },
+  "CreateurProfile": {
+    "heading": "Creator profile",
+    "reportOrBlock": "Report / block",
+    "reportSent": "Report sent.",
+    "reportUser": "Report this creator",
+    "blockUser": "Block this creator",
+    "noActiveOffers": "No active offers.",
+    "pay": "Pay",
+    "paying": "...",
+    "paymentError": "payment failed",
+    "offerTypes": {
+      "video": "Custom video",
+      "don": "Free tip",
+      "whatsapp": "Premium WhatsApp access",
+      "shoutout": "Shoutout",
+      "contenu_debloque": "Unlockable content",
+      "evenement_live": "Private live access"
+    }
+  },
+  "PaiementRetour": {
+    "heading": "Thank you!",
+    "message": "Your payment is being confirmed. You'll see its status in <link>your dashboard</link> as soon as CinetPay has validated it."
+  }
+}

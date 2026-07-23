@@ -8,6 +8,7 @@ type Offre = {
   id: string;
   type: OffreType;
   prix: number | null;
+  libelle: string | null;
   actif: boolean;
   config: Record<string, unknown>;
 };
@@ -15,21 +16,16 @@ type Offre = {
 // One settings row per offer type (brief v3 point 4): each type is its own
 // conversational question with its own field, rather than a repeatable
 // "create offer" form with a type dropdown. A créateur only activates the
-// ones they're interested in.
+// ones they're interested in. `video` is the one exception -- see
+// VideoOffresList below -- it's a repeatable list, not a single row.
 const QUESTIONS: {
-  type: OffreType;
+  type: Exclude<OffreType, "video">;
   question: string;
   kind: "prix" | "don" | "contenu" | "live";
 }[] = [
   {
     type: "whatsapp",
     question: `Si quelqu'un veut ton numéro WhatsApp pour te contacter directement, combien lui factures-tu ? (minimum ${WHATSAPP_PRIX_MINIMUM}$)`,
-    kind: "prix",
-  },
-  {
-    type: "video",
-    question:
-      "Si quelqu'un te demande une vidéo personnalisée (anniversaire, félicitations, encouragement...), combien lui factures-tu ?",
     kind: "prix",
   },
   {
@@ -58,9 +54,14 @@ const QUESTIONS: {
 export function OffresManager({ offres }: { offres: Offre[] }) {
   const router = useRouter();
   const byType = new Map(offres.map((offre) => [offre.type, offre]));
+  const videoOffres = offres.filter((offre) => offre.type === "video");
 
   return (
     <section className="flex flex-col gap-4">
+      <VideoOffresList
+        videoOffres={videoOffres}
+        onSaved={() => router.refresh()}
+      />
       {QUESTIONS.map((question) => (
         <OffreRow
           key={question.type}
@@ -70,6 +71,158 @@ export function OffresManager({ offres }: { offres: Offre[] }) {
         />
       ))}
     </section>
+  );
+}
+
+// Suggestions pré-remplies pour le libellé, mais le champ reste libre --
+// un <datalist> propose sans forcer.
+const LIBELLE_SUGGESTIONS = ["Anniversaire", "Félicitations", "Danse", "Autre"];
+
+function VideoOffresList({
+  videoOffres,
+  onSaved,
+}: {
+  videoOffres: Offre[];
+  onSaved: () => void;
+}) {
+  const [draftIds, setDraftIds] = useState<string[]>([]);
+
+  function addDraft() {
+    setDraftIds((ids) => [...ids, `draft-${Date.now()}-${ids.length}`]);
+  }
+
+  function removeDraft(draftId: string) {
+    setDraftIds((ids) => ids.filter((id) => id !== draftId));
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="font-medium">
+        Si quelqu&apos;un te demande une vidéo personnalisée (anniversaire,
+        félicitations, encouragement...), combien lui factures-tu ?
+      </p>
+      {videoOffres.map((offre) => (
+        <VideoOffreRow key={offre.id} existing={offre} onSaved={onSaved} />
+      ))}
+      {draftIds.map((draftId) => (
+        <VideoOffreRow
+          key={draftId}
+          existing={undefined}
+          onSaved={() => {
+            removeDraft(draftId);
+            onSaved();
+          }}
+        />
+      ))}
+      <button
+        type="button"
+        onClick={addDraft}
+        className="self-start text-sm underline"
+      >
+        + Ajouter un type de vidéo
+      </button>
+      <datalist id="video-libelle-suggestions">
+        {LIBELLE_SUGGESTIONS.map((suggestion) => (
+          <option key={suggestion} value={suggestion} />
+        ))}
+      </datalist>
+    </div>
+  );
+}
+
+function VideoOffreRow({
+  existing,
+  onSaved,
+}: {
+  existing: Offre | undefined;
+  onSaved: () => void;
+}) {
+  const [libelle, setLibelle] = useState(existing?.libelle ?? "");
+  const [prix, setPrix] = useState(existing?.prix?.toString() ?? "");
+  const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
+  const [errorMessage, setErrorMessage] = useState("");
+
+  async function submit(nextActif: boolean) {
+    setStatus("saving");
+    setErrorMessage("");
+
+    try {
+      const response = await fetch("/api/offres", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "video",
+          prix: Number(prix),
+          libelle,
+          actif: nextActif,
+        }),
+      });
+      const body = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          typeof body.error === "string" ? body.error : "enregistrement impossible",
+        );
+      }
+
+      setStatus("idle");
+      onSaved();
+    } catch (err) {
+      setStatus("error");
+      setErrorMessage(err instanceof Error ? err.message : "erreur inconnue");
+    }
+  }
+
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit(true);
+      }}
+      className="border rounded px-4 py-3 flex flex-col gap-2"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          type="text"
+          list="video-libelle-suggestions"
+          required
+          placeholder="Ex : Anniversaire"
+          value={libelle}
+          onChange={(event) => setLibelle(event.target.value)}
+          className="border rounded px-2 py-1 flex-1 min-w-[10rem]"
+        />
+        <input
+          type="number"
+          min={1}
+          step="0.01"
+          required
+          value={prix}
+          onChange={(event) => setPrix(event.target.value)}
+          className="border rounded px-2 py-1 w-24"
+        />
+        <span>$</span>
+
+        <button
+          type="submit"
+          disabled={status === "saving"}
+          className="ml-auto bg-violet-600 text-white rounded px-3 py-1 text-sm disabled:opacity-50"
+        >
+          {status === "saving" ? "..." : existing ? "Mettre à jour" : "Ajouter"}
+        </button>
+
+        {existing && (
+          <button
+            type="button"
+            disabled={status === "saving"}
+            onClick={() => submit(!existing.actif)}
+            className="text-sm underline"
+          >
+            {existing.actif ? "désactiver" : "réactiver"}
+          </button>
+        )}
+      </div>
+      {errorMessage && <p className="text-red-600 text-sm">{errorMessage}</p>}
+    </form>
   );
 }
 

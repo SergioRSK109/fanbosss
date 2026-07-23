@@ -1,10 +1,13 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
+import { useTranslations } from "next-intl";
+import { useSearchParams } from "next/navigation";
 import { useState } from "react";
+import { useRouter } from "@/i18n/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 export function LoginForm() {
+  const t = useTranslations("Login");
   const router = useRouter();
   const searchParams = useSearchParams();
   const callbackError = searchParams.get("error");
@@ -34,16 +37,15 @@ export function LoginForm() {
 
   return (
     <main className="mx-auto max-w-sm p-6">
-      <h1 className="text-2xl font-semibold mb-6">Connexion</h1>
+      <h1 className="text-2xl font-semibold mb-6">{t("heading")}</h1>
       {callbackError && status !== "error" && (
         <p className="text-red-600 text-sm mb-4">
-          La confirmation de votre compte a échoué : {callbackError}. Merci de
-          vous connecter à nouveau.
+          {t("callbackError", { error: callbackError })}
         </p>
       )}
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <label className="flex flex-col gap-1">
-          <span>Email</span>
+          <span>{t("email")}</span>
           <input
             type="email"
             required
@@ -53,7 +55,7 @@ export function LoginForm() {
           />
         </label>
         <label className="flex flex-col gap-1">
-          <span>Mot de passe</span>
+          <span>{t("password")}</span>
           <input
             type="password"
             required
@@ -70,7 +72,7 @@ export function LoginForm() {
           disabled={status === "loading"}
           className="bg-violet-600 text-white rounded px-3 py-2 disabled:opacity-50"
         >
-          {status === "loading" ? "Connexion..." : "Se connecter"}
+          {status === "loading" ? t("submitting") : t("submit")}
         </button>
       </form>
     </main>

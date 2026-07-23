@@ -41,4 +41,29 @@ describe("creerOffreSchema", () => {
       expect(creerOffreSchema.safeParse({ type, prix: 5 }).success).toBe(true);
     }
   });
+
+  it("accepts a video offer with a libelle", () => {
+    const result = creerOffreSchema.safeParse({
+      type: "video",
+      prix: 15,
+      libelle: "Danse",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.libelle).toBe("Danse");
+    }
+  });
+
+  it("rejects an all-whitespace libelle (trimmed to empty)", () => {
+    expect(
+      creerOffreSchema.safeParse({ type: "video", prix: 15, libelle: "   " })
+        .success,
+    ).toBe(false);
+  });
+
+  it("allows a video offer with no libelle at all (still optional)", () => {
+    expect(
+      creerOffreSchema.safeParse({ type: "video", prix: 15 }).success,
+    ).toBe(true);
+  });
 });

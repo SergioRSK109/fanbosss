@@ -21,6 +21,10 @@ export const creerOffreSchema = z
   .object({
     type: z.enum(OFFRE_TYPES),
     prix: z.number().positive().optional(),
+    // Only meaningful for `video`: several video offers can coexist for the
+    // same créateur, distinguished by libelle ("Anniversaire", "Danse",
+    // ...). Every other type keeps a single row with libelle left null.
+    libelle: z.string().trim().min(1).optional(),
     config: z.record(z.string(), z.unknown()).optional(),
   })
   .refine((offre) => offre.type === "don" || offre.prix !== undefined, {

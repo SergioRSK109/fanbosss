@@ -122,6 +122,35 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------
+-- Brief v3 follow-up: `video` is exempt from the one-offer-per-type rule
+-- -- a créateur can list several video offers with different labels/
+-- prices ("Anniversaire" at 10$, "Danse" at 15$) -- but every other type
+-- (whatsapp/don/contenu_debloque/evenement_live) still strictly enforces
+-- one row per type, even though `libelle` is now part of the same
+-- constraint (NULLS NOT DISTINCT is what makes that hold for a null
+-- libelle, rather than every NULL being treated as unique).
+-- ---------------------------------------------------------------------
+insert into offres (createur_id, type, prix, libelle) values
+  ('11111111-1111-1111-1111-111111111111', 'video', 15, 'Danse');
+
+do $$
+begin
+  raise notice 'PASS: a second video offre with a distinct libelle is accepted';
+end $$;
+
+do $$
+begin
+  begin
+    insert into offres (createur_id, type, prix, libelle)
+      values ('11111111-1111-1111-1111-111111111111', 'video', 12, 'Danse');
+    raise exception 'TEST FAILED: a second video offre with the SAME libelle was accepted';
+  exception when unique_violation then
+    raise notice 'PASS: two video offres with the same (créateur, libelle) still conflict';
+  end;
+end $$;
+
+
+-- ---------------------------------------------------------------------
 -- Checklist item 3: a video transaction the créateur never accepts is
 -- auto-refunded once deadline_acceptation passes, with no fan action.
 -- ---------------------------------------------------------------------
