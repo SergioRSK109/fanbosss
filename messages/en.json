@@ -46,7 +46,25 @@
     "password": "Password",
     "submit": "Log in",
     "submitting": "Logging in...",
+    "forgotPassword": "Forgot password?",
     "callbackError": "Account confirmation failed: {error}. Please log in again."
+  },
+  "MotDePasseOublie": {
+    "heading": "Forgot password",
+    "instructions": "Enter your email and we'll send you a link to reset your password.",
+    "email": "Email",
+    "submit": "Send link",
+    "submitting": "Sending...",
+    "emailSent": "If an account exists for that email, a reset link was just sent."
+  },
+  "ReinitialiserMotDePasse": {
+    "heading": "New password",
+    "newPassword": "New password",
+    "confirmPassword": "Confirm password",
+    "passwordMismatch": "Passwords don't match.",
+    "submit": "Save",
+    "submitting": "Saving...",
+    "success": "Password updated. Redirecting..."
   },
   "CreateurProfile": {
     "heading": "Creator profile",
