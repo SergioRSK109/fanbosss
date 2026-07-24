@@ -1,5 +1,36 @@
 import { describe, expect, it } from "vitest";
-import { creerOffreSchema, WHATSAPP_PRIX_MINIMUM } from "@/lib/validation";
+import {
+  creerOffreSchema,
+  pseudoLockedUntil,
+  PSEUDO_COOLDOWN_MS,
+  WHATSAPP_PRIX_MINIMUM,
+} from "@/lib/validation";
+
+describe("pseudoLockedUntil", () => {
+  it("is not locked when the pseudo was never changed", () => {
+    expect(pseudoLockedUntil(null)).toBeNull();
+  });
+
+  it("is locked just after a change, with the unlock date 30 days out", () => {
+    const changedAt = new Date().toISOString();
+    const locked = pseudoLockedUntil(changedAt);
+    expect(locked).not.toBeNull();
+    expect(new Date(locked!).getTime()).toBeCloseTo(
+      new Date(changedAt).getTime() + PSEUDO_COOLDOWN_MS,
+      -2,
+    );
+  });
+
+  it("is unlocked once 30 days have fully elapsed", () => {
+    const changedAt = new Date(Date.now() - PSEUDO_COOLDOWN_MS - 1000).toISOString();
+    expect(pseudoLockedUntil(changedAt)).toBeNull();
+  });
+
+  it("is still locked one second before the 30-day mark", () => {
+    const changedAt = new Date(Date.now() - PSEUDO_COOLDOWN_MS + 1000).toISOString();
+    expect(pseudoLockedUntil(changedAt)).not.toBeNull();
+  });
+});
 
 describe("creerOffreSchema", () => {
   it("accepts a whatsapp offer at exactly the $20 floor", () => {
@@ -65,5 +96,32 @@ describe("creerOffreSchema", () => {
     expect(
       creerOffreSchema.safeParse({ type: "video", prix: 15 }).success,
     ).toBe(true);
+  });
+
+  // Regression: actif used to be entirely absent from this schema, so
+  // POST /api/offres silently dropped it and the désactiver/réactiver
+  // toggle never actually took effect. Assert it survives parsing in both
+  // directions, not just that the schema accepts the request.
+  it("keeps actif=false through parsing (désactiver)", () => {
+    const result = creerOffreSchema.safeParse({
+      type: "don",
+      actif: false,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.actif).toBe(false);
+    }
+  });
+
+  it("keeps actif=true through parsing (réactiver)", () => {
+    const result = creerOffreSchema.safeParse({
+      type: "whatsapp",
+      prix: 20,
+      actif: true,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.actif).toBe(true);
+    }
   });
 });

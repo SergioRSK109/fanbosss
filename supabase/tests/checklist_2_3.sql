@@ -438,6 +438,96 @@ begin
   raise notice 'PASS: profils_explorables never exposes masque_exploration (%)', v_columns;
 end $$;
 
+-- ---------------------------------------------------------------------
+-- Pseudo change cool-down (migration 0010): a real change starts the
+-- 30-day clock, a repeat change within that window is blocked even
+-- though the underlying users_update_self RLS policy would otherwise let
+-- an authenticated user write pseudo_modifie_at directly.
+-- ---------------------------------------------------------------------
+do $$
+begin
+  begin
+    -- '11111111' had its pseudo set for the first time earlier in this
+    -- file (line ~251, 'Sergio_1'), so pseudo_modifie_at is now "recent" --
+    -- well within 30 days.
+    update users set pseudo = 'Sergio_2' where id = '11111111-1111-1111-1111-111111111111';
+    raise exception 'TEST FAILED: pseudo changed again within the 30-day cooldown';
+  exception when sqlstate 'FB001' then
+    raise notice 'PASS: a second pseudo change within 30 days of the first is rejected at the DB level';
+  end;
+end $$;
+
+do $$
+declare
+  v_pseudo text;
+begin
+  select pseudo into v_pseudo from users where id = '11111111-1111-1111-1111-111111111111';
+  if v_pseudo != 'Sergio_1' then
+    raise exception 'TEST FAILED: pseudo was mutated to % despite the rejected UPDATE', v_pseudo;
+  end if;
+  raise notice 'PASS: pseudo is untouched (still Sergio_1) after the rejected cooldown UPDATE';
+end $$;
+
+do $$
+begin
+  begin
+    -- Attempting to backdate pseudo_modifie_at directly (without also
+    -- changing pseudo) must not be able to manufacture an early unlock --
+    -- the trigger forces it back to its previous value regardless.
+    update users set pseudo_modifie_at = now() - interval '31 days'
+      where id = '11111111-1111-1111-1111-111111111111';
+
+    update users set pseudo = 'Sergio_3' where id = '11111111-1111-1111-1111-111111111111';
+    raise exception 'TEST FAILED: backdating pseudo_modifie_at directly bypassed the cooldown';
+  exception when sqlstate 'FB001' then
+    raise notice 'PASS: directly writing pseudo_modifie_at cannot be used to bypass the cooldown';
+  end;
+end $$;
+
+-- '22222222' has never had a pseudo set (every earlier attempt in this
+-- file failed and rolled back) -- the very first real change must be
+-- allowed immediately, with no prior pseudo_modifie_at to compare against.
+update users set pseudo = 'marie_first' where id = '22222222-2222-2222-2222-222222222222';
+
+do $$
+declare
+  v_pseudo text;
+  v_modifie_at timestamptz;
+begin
+  select pseudo, pseudo_modifie_at into v_pseudo, v_modifie_at
+    from users where id = '22222222-2222-2222-2222-222222222222';
+
+  if v_pseudo != 'marie_first' then
+    raise exception 'TEST FAILED: first-ever pseudo change was rejected';
+  end if;
+  if v_modifie_at is null then
+    raise exception 'TEST FAILED: pseudo_modifie_at was not set on the first real pseudo change';
+  end if;
+
+  raise notice 'PASS: a créateur''s first-ever pseudo change is allowed immediately and starts the cooldown';
+end $$;
+
+-- Simulate 31 days having passed since the last change (as the test
+-- harness, not as a user -- see the bypass-attempt test above for why a
+-- normal UPDATE can't do this) and confirm the cooldown has cleared.
+alter table users disable trigger trg_enforce_pseudo_cooldown;
+update users set pseudo_modifie_at = now() - interval '31 days'
+  where id = '11111111-1111-1111-1111-111111111111';
+alter table users enable trigger trg_enforce_pseudo_cooldown;
+
+update users set pseudo = 'Sergio_4' where id = '11111111-1111-1111-1111-111111111111';
+
+do $$
+declare
+  v_pseudo text;
+begin
+  select pseudo into v_pseudo from users where id = '11111111-1111-1111-1111-111111111111';
+  if v_pseudo != 'Sergio_4' then
+    raise exception 'TEST FAILED: pseudo change was still blocked once 30 days had elapsed (got %)', v_pseudo;
+  end if;
+  raise notice 'PASS: pseudo change is allowed again once 30 days have elapsed';
+end $$;
+
 do $$
 begin
   raise notice 'ALL SQL CHECKLIST TESTS PASSED';

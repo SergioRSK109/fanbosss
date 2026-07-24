@@ -2,6 +2,22 @@ import { z } from "zod";
 
 export const WHATSAPP_PRIX_MINIMUM = 20;
 
+// Mirrors the DB trigger's `interval '30 days'` (migration 0010) exactly
+// -- shared by /api/profil (server-side enforcement) and the réglages
+// page (telling the user when they'll be able to change it again) so the
+// two never drift out of sync.
+export const PSEUDO_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000;
+
+// Null means "not locked": either the pseudo was never changed, or the
+// cool-down has already elapsed.
+export function pseudoLockedUntil(pseudoModifieAt: string | null): string | null {
+  if (!pseudoModifieAt) {
+    return null;
+  }
+  const unlockAt = new Date(pseudoModifieAt).getTime() + PSEUDO_COOLDOWN_MS;
+  return unlockAt > Date.now() ? new Date(unlockAt).toISOString() : null;
+}
+
 export const OFFRE_TYPES = [
   "video",
   "don",
@@ -26,6 +42,12 @@ export const creerOffreSchema = z
     // ...). Every other type keeps a single row with libelle left null.
     libelle: z.string().trim().min(1).optional(),
     config: z.record(z.string(), z.unknown()).optional(),
+    // Was missing entirely until this field was added, which meant the
+    // désactiver/réactiver toggle in OffresManager silently never took
+    // effect: the POST /api/offres route only ever wrote the columns zod
+    // let through, so every offre stayed at the table's actif=true
+    // default forever regardless of what the client sent.
+    actif: z.boolean().optional(),
   })
   .refine((offre) => offre.type === "don" || offre.prix !== undefined, {
     message: "le prix est requis pour ce type d'offre",

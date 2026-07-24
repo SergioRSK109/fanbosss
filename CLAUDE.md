@@ -4,7 +4,7 @@
 
 This section is a working reference for picking this project back up in a
 new session without re-deriving context. It reflects the schema and code
-as of migration `0009` plus the follow-up fixes after it. When it and the
+as of migration `0010` plus the follow-up fixes after it. When it and the
 actual code disagree, the code is correct — update this file, don't trust
 it blindly.
 
@@ -35,9 +35,9 @@ Env vars: see `.env.example` for the full list (Supabase URL/anon/service
 keys, CinetPay API key + site id + **secret key** used for HMAC, R2
 account/access/secret/bucket, `CRON_SECRET`, `NEXT_PUBLIC_APP_URL`).
 
-## Database schema (current, post-migration 0009)
+## Database schema (current, post-migration 0010)
 
-Migrations are strictly incremental (`supabase/migrations/0001`...`0009`)
+Migrations are strictly incremental (`supabase/migrations/0001`...`0010`)
 — never rewritten, never a `DROP`/recreate. Each one has been applied and
 verified against both an empty DB and one seeded with pre-existing data
 before being considered done (see "Testing" below for how).
@@ -61,6 +61,27 @@ before being considered done (see "Testing" below for how).
   `lower(pseudo)`**, because a plain UNIQUE constraint on `pseudo` is
   case-sensitive and would let "Sergio"/"sergio" coexist. NULLs are
   allowed and non-conflicting (default btree unique-index behavior).
+- `pseudo_modifie_at timestamptz` — added in `0010`. Null until the first
+  real pseudo change. **Enforced by a trigger
+  (`enforce_pseudo_cooldown`), not just app code**: a pseudo can only be
+  changed again 30 days after this timestamp, and the trigger
+  force-overwrites `NEW.pseudo_modifie_at` on every UPDATE (to `now()` on
+  an actual pseudo change within the allowed window, or back to
+  `OLD.pseudo_modifie_at` otherwise) regardless of what the caller sent
+  for that column. This closes a real gap: `users_update_self` (RLS)
+  lets an authenticated user PATCH their own row's *any* column directly
+  via the Supabase REST API, bypassing `/api/profil` entirely — an
+  app-only check could be defeated by backdating `pseudo_modifie_at` in
+  the same request that changes `pseudo`. Verified in `checklist_2_3.sql`
+  that this exact bypass attempt is rejected. The trigger raises with a
+  custom SQLSTATE (`FB001`) specifically so callers (including the SQL
+  tests) can distinguish "blocked by cooldown" from any other exception.
+  `src/lib/validation.ts#pseudoLockedUntil(pseudoModifieAt)` computes the
+  same 30-day window in JS (`PSEUDO_COOLDOWN_MS`) — used by both
+  `/api/profil` (a clean 403 with the unlock date, before ever hitting
+  the trigger) and `/parametres` (telling the user when they can change
+  it again). The DB trigger is what actually guarantees it; the JS check
+  is only there for a good error message.
 - `bio text` — max 500 chars (`users_bio_max_length`), collected at
   signup (optional) or edited later
 - `photo_r2_key text` — nullable; only ever settable through the
@@ -106,7 +127,18 @@ paiement, parametres, explorer`.
   (was 500 in the original brief, lowered to 20 later — this constraint
   is on the billed `prix` column itself, never on `config`, precisely so
   no application code path can accidentally bypass it)
-- `actif boolean default true`
+- `actif boolean default true` — **was silently unwritable via the API
+  until a real bug fix**: `creerOffreSchema` (POST `/api/offres`, which
+  `OffresManager`'s désactiver/réactiver toggle calls) didn't declare
+  `actif` at all, so zod's default non-strict parsing quietly dropped it
+  from every request body and the upsert never included it in its SET
+  list — every offre stayed at the table default (`true`) forever
+  regardless of what the client sent. Fixed by adding `actif:
+  z.boolean().optional()` to the schema and threading it into
+  `upsertPayload` the same way `config` already was. Covered by a
+  regression test in `validation.test.ts` asserting `actif` survives
+  parsing in both directions — the schema accepting the request was never
+  the problem, silently losing the field afterward was.
 - `config jsonb default '{}'` — holds type-specific data:
   `contenu_debloque` → `{r2_key}` (uploaded once, at the offer level, not
   per-transaction — every paying fan unlocks the *same* file);
@@ -368,6 +400,28 @@ since the two are separate views with no PostgREST-embeddable
 relationship. Cards link to `/@pseudo` when the créateur has one, else
 fall back to `/createur/[id]`.
 
+## Réglages (`/parametres`, `ParametresForm.tsx`)
+
+Pseudo and bio are both **read-only by default with a "Modifier" button
+to unlock** (protection against accidental edits), but only pseudo has a
+real cooldown behind it — bio's lock is pure UX, never blocked. Both
+start already unlocked if the field has never been set (`useState(!pseudo)`
+/ `useState(!bio)`): there's nothing accidental to protect on a first-time
+value. The pseudo "Modifier" button itself is `disabled` while
+`pseudoLockedUntil` (server-computed prop, see above) is non-null — the
+UI can't even attempt an edit during the cooldown, though the real
+enforcement is server-side regardless (`enforce_pseudo_cooldown` trigger
++ the `/api/profil` pre-check), never trust the disabled button alone.
+
+Profile photo: clicking the photo **zooms it** (a simple `position:
+fixed` overlay, click-outside or ✕ to close) rather than opening the file
+picker — that used to be the accidental behavior, because the `<img>` sat
+inside the same `<label>` as the file `<input>`, and clicking anywhere in
+a label associated with a control activates that control. Fixed by
+pulling the file input out into its own hidden (`className="hidden"`)
+element, triggered only by a separate "Modifier la photo de profil"
+button via `fileInputRef.current?.click()`.
+
 ## i18n (next-intl)
 
 Locales `fr` (default, unprefixed) / `en` (prefixed `/en`),
@@ -410,8 +464,16 @@ always get picked up by control-flow analysis the same way `next/navigation`'s d
   uniqueness/reserved words, `repondu_at` tracking, that the
   classement views are rank-only and opt-in-only, `nom_affichage`'s
   length constraint, `'explorer'` landing in the reserved-pseudo list,
-  and `profils_explorables`'s exact visibility rule (has an active offre,
-  not masked, and never leaks `masque_exploration` itself). **This is the real
+  `profils_explorables`'s exact visibility rule (has an active offre,
+  not masked, and never leaks `masque_exploration` itself), and the
+  pseudo cooldown trigger — including the two failure modes that matter
+  most: a repeat change inside the 30-day window is rejected, and
+  directly backdating `pseudo_modifie_at` in the same request (the RLS
+  bypass an app-only check couldn't stop) still doesn't unlock it. The
+  cooldown's "time has passed" case is tested by disabling the trigger
+  as the test harness (`alter table users disable/enable trigger
+  trg_enforce_pseudo_cooldown`) to backdate the timestamp, since the
+  trigger itself refuses to let a normal UPDATE do that. **This is the real
   proof that constraints hold — always extend this file rather than just
   describing new DB behavior in prose.**
 - `supabase/tests/stub_auth.sql` fakes just enough of Supabase's `auth`

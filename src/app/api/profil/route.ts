@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { parametresProfilSchema } from "@/lib/validation";
+import { parametresProfilSchema, pseudoLockedUntil } from "@/lib/validation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 // Settings: pseudo (public handle), bio, social link, classement opt-in.
@@ -29,12 +29,38 @@ export async function PATCH(request: NextRequest) {
     );
   }
 
+  // Pseudo cool-down (30 days): the trigger enforce_pseudo_cooldown
+  // (migration 0010) is the real guarantee -- it fires even on a direct
+  // Supabase REST call that skips this route entirely. This pre-check
+  // only exists to return a clean 403 with the unlock date instead of a
+  // raw Postgres exception, and to avoid a wasted write attempt.
+  if (parsed.data.pseudo !== undefined) {
+    const { data: current } = await supabase
+      .from("users")
+      .select("pseudo, pseudo_modifie_at")
+      .eq("id", user.id)
+      .single();
+
+    if (current && current.pseudo !== parsed.data.pseudo) {
+      const lockedUntil = pseudoLockedUntil(current.pseudo_modifie_at);
+      if (lockedUntil) {
+        return NextResponse.json(
+          {
+            error: "pseudo change is locked for 30 days after the last change",
+            pseudoLockedUntil: lockedUntil,
+          },
+          { status: 403 },
+        );
+      }
+    }
+  }
+
   const { data, error } = await supabase
     .from("users")
     .update(parsed.data)
     .eq("id", user.id)
     .select(
-      "id, nom_affichage, pseudo, bio, lien_reseau_social, classement_public, masque_exploration",
+      "id, nom_affichage, pseudo, pseudo_modifie_at, bio, lien_reseau_social, classement_public, masque_exploration",
     )
     .single();
 

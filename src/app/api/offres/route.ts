@@ -77,6 +77,9 @@ export async function POST(request: NextRequest) {
   if (parsed.data.config !== undefined) {
     upsertPayload.config = parsed.data.config;
   }
+  if (parsed.data.actif !== undefined) {
+    upsertPayload.actif = parsed.data.actif;
+  }
 
   // Application-level checks mirror the DB constraints
   // (check_whatsapp_minimum_price, offres_prix_required_unless_don on
