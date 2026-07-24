@@ -129,8 +129,21 @@ export function ParametresForm({
   // though `file` state is already null and no re-upload actually happens.
   const [fileInputKey, setFileInputKey] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Local object URL of the just-cropped blob -- shown in place of the
+  // saved photoUrl immediately on crop confirmation (Instagram-style),
+  // before "Enregistrer" is ever clicked. Revoked whenever replaced or on
+  // unmount by the effect below.
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  useEffect(() => {
+    return () => {
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
+  }, [previewUrl]);
 
   const mainSave = useSaveStatus();
+  const isUploadingPhoto = mainSave.status === "saving" && Boolean(file);
 
   // Pseudo -------------------------------------------------------------
   const pseudoSave = useSaveStatus();
@@ -218,6 +231,10 @@ export function ParametresForm({
     if (result) {
       setFile(null);
       setFileInputKey((key) => key + 1);
+      // The just-saved photoUrl prop will reflect the real uploaded photo
+      // once router.refresh() (inside mainSave.run) re-renders this from
+      // the server -- the local preview has done its job.
+      setPreviewUrl(null);
     }
   }
 
@@ -227,6 +244,10 @@ export function ParametresForm({
   }
 
   function handleCropConfirm(blob: Blob) {
+    // Instagram-style: show the new photo immediately, before
+    // "Enregistrer" is even clicked, instead of a silent change once the
+    // upload finishes.
+    setPreviewUrl(URL.createObjectURL(blob));
     setFile(new File([blob], "profil.jpg", { type: "image/jpeg" }));
     setCropFile(null);
     setFileInputKey((key) => key + 1);
@@ -243,12 +264,24 @@ export function ParametresForm({
         <div className="flex flex-col gap-1.5">
           <span className="text-sm font-medium text-foreground">Photo de profil</span>
           <div className="flex items-center gap-3">
-            {photoUrl ? (
-              <ZoomablePhoto
-                src={photoUrl}
-                ariaLabel="Agrandir la photo de profil"
-                thumbnailClassName="h-16 w-16 rounded-full border border-border object-cover"
-              />
+            {previewUrl ?? photoUrl ? (
+              <div className="relative shrink-0">
+                <ZoomablePhoto
+                  src={(previewUrl ?? photoUrl)!}
+                  ariaLabel="Agrandir la photo de profil"
+                  thumbnailClassName={`h-16 w-16 rounded-full border border-border object-cover transition-opacity ${
+                    isUploadingPhoto ? "opacity-40" : ""
+                  }`}
+                />
+                {isUploadingPhoto && (
+                  <div
+                    aria-hidden
+                    className="pointer-events-none absolute inset-0 flex items-center justify-center"
+                  >
+                    <span className="h-6 w-6 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" />
+                  </div>
+                )}
+              </div>
             ) : (
               <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-surface-muted text-2xl">
                 🙂
@@ -257,12 +290,20 @@ export function ParametresForm({
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
+              disabled={isUploadingPhoto}
               className={buttonClass("outline", "sm")}
             >
               Modifier la photo de profil
             </button>
           </div>
-          {file && <span className="text-sm text-foreground-muted">Nouvelle photo prête à enregistrer.</span>}
+          {file && !isUploadingPhoto && (
+            <span className="text-sm text-foreground-muted">
+              Nouvelle photo prête à enregistrer.
+            </span>
+          )}
+          {isUploadingPhoto && (
+            <span className="text-sm text-foreground-muted">Envoi de la photo...</span>
+          )}
           <input
             ref={fileInputRef}
             key={fileInputKey}

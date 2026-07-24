@@ -431,6 +431,28 @@ mobile file size — are both gone by construction. If the bug turns out to
 still reproduce on a real device after this, the fix above means it'll at
 least surface a real, specific error message instead of failing silently.
 
+**Instant local preview + upload loading indicator**: confirming the crop
+(`handleCropConfirm`) shows the new photo immediately — swapped in via
+`URL.createObjectURL(blob)`, stored in a `previewUrl` state, rendered in
+place of `photoUrl` (`previewUrl ?? photoUrl`) — so the créateur sees the
+result the moment they confirm the crop, before ever touching
+"Enregistrer" (Instagram-style, per explicit instruction). The blob URL is
+revoked (`URL.revokeObjectURL`) on unmount/replacement via a `useEffect`
+cleanup, since nothing else releases it. Clicking "Enregistrer" then goes
+through the real upload; while that's in flight
+(`mainSave.status === "saving" && Boolean(file)`, exposed as
+`isUploadingPhoto`), the photo thumbnail dims (`opacity-40`) with a
+spinner overlaid on top and a "Envoi de la photo..." caption replaces the
+"Nouvelle photo prête à enregistrer." one — so the transition from
+"picked" to "actually saved" stays visibly progressive instead of a
+silent jump. `previewUrl` is cleared back to `null` only once the main
+submit actually succeeds (alongside the existing `file`/file-input reset),
+so a failed upload leaves the local preview in place rather than
+reverting to the old photo. Verified end-to-end with a Playwright script
+driving a real crop → confirm → save flow against a mocked upload
+pipeline with artificial delays, confirming both the instant-preview text
+and the mid-upload spinner/caption appear at the right moments.
+
 ## Public handle (`/@pseudo`)
 
 Route is `src/app/[locale]/[handle]/page.tsx` — **deliberately not** a
@@ -567,7 +589,69 @@ Two separate artifacts, deliberately not the same thing:
 
 Rendered in `src/app/[locale]/layout.tsx`'s nav bar, wrapped in a
 locale-aware `Link` to `/`, on the opposite side from the Explorer
-link + language switcher (grouped together on the right).
+link + language switcher (grouped together on the right). Explorer is
+only rendered there for an already-authenticated visitor (`layout.tsx`
+calls `createSupabaseServerClient().auth.getUser()` itself) — a
+logged-out visitor on `/signup`/`/login` shouldn't see it pulling them
+away from finishing that flow.
+
+## Logo-click "logout" bug — investigated and fixed
+
+A report came in that clicking the logo (→ `/`) logged the user out,
+landing back on a password prompt, and that this touched every page
+since the logo is in the shared layout. **This turned out not to be a
+session bug at all** — proven, not assumed, by actually logging in and
+tracing it (see below), which is why this section exists: so nobody
+"fixes" `proxy.ts` or the cookie relay again based on the same plausible
+but wrong assumption.
+
+**How it was actually traced**, since this sandbox has no real Supabase
+project to log into: a ~120-line mock of just the two Auth REST
+endpoints the flow needs (`POST /auth/v1/token`, `GET /auth/v1/user`)
+was stood up on a local port, with `NEXT_PUBLIC_SUPABASE_URL` pointed at
+it. Everything *except* that network boundary was the real, unmodified
+`@supabase/ssr`/`@supabase/supabase-js` code — real cookie writing, real
+`getUser()` revalidation, run against both `next dev` and a genuine
+`next build && next start`. A real login (email/password → session
+cookie) was driven with Playwright, then the logo was actually clicked,
+with temporary logging added to `proxy.ts` to print incoming cookies and
+`getUser()`'s result on every request.
+
+**Result: the session cookie was never touched.** `getUser()` succeeded
+on every single request, before and after clicking the logo, across dev
+mode, a production build, and both locales. Directly revisiting
+`/dashboard` after clicking the logo worked with no redirect to
+`/login`, proving the session was intact throughout.
+
+**The real cause**: neither Home (`/`) nor `/login` acknowledged an
+existing session.
+- Home rendered "Créer un compte"/"Se connecter" unconditionally,
+  regardless of whether the visitor was logged in — so a genuinely
+  logged-in user clicking the logo landed on a page that looked exactly
+  like the logged-out state.
+- `/login` rendered the password form unconditionally too, with no
+  check for an already-authenticated visitor.
+
+A confused user, seeing what looks like a logged-out homepage, naturally
+clicks "Se connecter" — landing on a *real* password prompt. Nothing was
+ever destroyed; the app just never told them they were still logged in.
+
+**The fix** (`src/app/[locale]/page.tsx`, `login/page.tsx`,
+`signup/page.tsx`): all three now call
+`createSupabaseServerClient().auth.getUser()` themselves. Home shows a
+single "Accéder à mon espace" → `/dashboard` CTA instead of
+signup/login when a user is present; `/login` and `/signup` `redirect()`
+an already-authenticated visitor straight to `/dashboard`, the same
+locale-aware `redirect({ href, locale })` pattern `/dashboard` and
+`/parametres` already use in the other direction. This makes the
+reported symptom — a password prompt appearing for someone who's still
+logged in — structurally impossible rather than just less likely.
+
+Regression tests: `page.test.ts` under `login/__tests__`,
+`signup/__tests__`, and `[locale]/__tests__` mock
+`createSupabaseServerClient` and assert the redirect/CTA branch taken for
+both an authenticated and a logged-out caller, without needing a browser
+or a real Supabase project.
 
 ## i18n (next-intl)
 

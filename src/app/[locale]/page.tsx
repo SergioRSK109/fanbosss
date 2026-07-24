@@ -1,9 +1,24 @@
-import { useTranslations } from "next-intl";
+import { getTranslations } from "next-intl/server";
 import { Link } from "@/i18n/navigation";
 import { buttonClass } from "@/components/ui/button-styles";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 
-export default function Home() {
-  const t = useTranslations("Home");
+// Shows a different CTA for an already-authenticated visitor (product
+// bug fix: this page used to show "Créer un compte"/"Se connecter"
+// unconditionally, which is what made clicking the logo while logged in
+// look like a logout -- see CLAUDE.md "Logo-click 'logout' bug" for the
+// real trace behind this).
+export default async function Home({
+  params,
+}: {
+  params: Promise<{ locale: string }>;
+}) {
+  const { locale } = await params;
+  const t = await getTranslations({ locale, namespace: "Home" });
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
   return (
     <main className="relative flex flex-1 flex-col items-center justify-center gap-10 overflow-hidden px-6 py-12 text-center">
@@ -27,12 +42,20 @@ export default function Home() {
       </div>
 
       <div className="relative flex w-full max-w-xs flex-col gap-3">
-        <Link href="/signup" className={buttonClass("primary", "lg")}>
-          {t("signup")}
-        </Link>
-        <Link href="/login" className={buttonClass("outline", "lg")}>
-          {t("login")}
-        </Link>
+        {user ? (
+          <Link href="/dashboard" className={buttonClass("primary", "lg")}>
+            {t("dashboard")}
+          </Link>
+        ) : (
+          <>
+            <Link href="/signup" className={buttonClass("primary", "lg")}>
+              {t("signup")}
+            </Link>
+            <Link href="/login" className={buttonClass("outline", "lg")}>
+              {t("login")}
+            </Link>
+          </>
+        )}
       </div>
     </main>
   );
