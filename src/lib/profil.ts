@@ -17,7 +17,16 @@ export interface CreateurProfileData {
   displayName: string | null;
   bio: string | null;
   photoUrl: string | null;
+  // The original signup-time link, kept for manual identity verification
+  // only -- deliberately not rendered on the public profile anymore (see
+  // socialLinks below, migration 0011).
   lienReseauSocial: string | null;
+  socialLinks: {
+    tiktok: string | null;
+    instagram: string | null;
+    youtube: string | null;
+    autre: string | null;
+  };
   offres: {
     id: string;
     type: OffreType;
@@ -73,7 +82,9 @@ export async function getCreateurProfileData(
   ] = await Promise.all([
     supabase
       .from("profils_publics")
-      .select("id, bio, photo_r2_key, lien_reseau_social, pseudo, nom_affichage")
+      .select(
+        "id, bio, photo_r2_key, lien_reseau_social, pseudo, nom_affichage, lien_tiktok, lien_instagram, lien_youtube, lien_autre",
+      )
       .eq("id", createurId)
       .single(),
     supabase
@@ -111,6 +122,12 @@ export async function getCreateurProfileData(
     bio: profil.bio,
     photoUrl,
     lienReseauSocial: profil.lien_reseau_social,
+    socialLinks: {
+      tiktok: profil.lien_tiktok,
+      instagram: profil.lien_instagram,
+      youtube: profil.lien_youtube,
+      autre: profil.lien_autre,
+    },
     offres: sortOffresDonFirst(offres ?? []),
     ranks: {
       volume: volumeRow?.rang ?? null,

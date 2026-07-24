@@ -23,7 +23,7 @@ export default async function ParametresPage({
   const { data: profil } = await supabase
     .from("users")
     .select(
-      "nom_affichage, pseudo, pseudo_modifie_at, bio, lien_reseau_social, classement_public, masque_exploration, photo_r2_key",
+      "nom_affichage, pseudo, pseudo_modifie_at, bio, lien_tiktok, lien_instagram, lien_youtube, lien_autre, classement_public, masque_exploration, photo_r2_key",
     )
     .eq("id", user.id)
     .single();
@@ -46,7 +46,10 @@ export default async function ParametresPage({
         pseudo={profil?.pseudo ?? null}
         pseudoLockedUntil={pseudoLockedUntil(profil?.pseudo_modifie_at ?? null)}
         bio={profil?.bio ?? null}
-        lienReseauSocial={profil?.lien_reseau_social ?? null}
+        lienTiktok={profil?.lien_tiktok ?? null}
+        lienInstagram={profil?.lien_instagram ?? null}
+        lienYoutube={profil?.lien_youtube ?? null}
+        lienAutre={profil?.lien_autre ?? null}
         classementPublic={profil?.classement_public ?? false}
         masqueExploration={profil?.masque_exploration ?? false}
         photoUrl={photoUrl}
