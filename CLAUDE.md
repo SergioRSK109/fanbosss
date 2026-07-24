@@ -484,6 +484,27 @@ nom_affichage/checkboxes/photo — unlike pseudo/bio they have no
 lock/unlock UX, nothing accidental to protect against for a plain
 optional URL field.
 
+## Logo
+
+Two separate artifacts, deliberately not the same thing:
+- `public/fanboss-logo.svg` — the static brand asset, hardcoded colors
+  (`#7c3aed`/`#ff6b5e`/white), for contexts that need a real standalone
+  file (social previews, email, sharing outside the app).
+- `src/components/Logo.tsx` — the nav logo, same mark/wordmark but
+  **inline SVG** using `var(--color-brand-500)`/`var(--color-accent-500)`
+  for its fills. An externally-referenced `<img src="...">` can't inherit
+  the host page's CSS custom properties, so it's the only way for the
+  logo to follow `--color-brand-500`'s dark-mode override automatically
+  -- rendering the static file via `<img>` would have frozen it at the
+  light-mode color forever. Uses `useId()` for its gradient's `<linearGradient
+  id>` so it stays collision-safe if ever rendered more than once on a
+  page; that's also why it's a client component (`"use client"`) despite
+  having no interactivity -- Server Components can't call hooks.
+
+Rendered in `src/app/[locale]/layout.tsx`'s nav bar, wrapped in a
+locale-aware `Link` to `/`, on the opposite side from the Explorer
+link + language switcher (grouped together on the right).
+
 ## i18n (next-intl)
 
 Locales `fr` (default, unprefixed) / `en` (prefixed `/en`),
