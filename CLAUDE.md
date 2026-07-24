@@ -4,7 +4,7 @@
 
 This section is a working reference for picking this project back up in a
 new session without re-deriving context. It reflects the schema and code
-as of migration `0011` plus the follow-up fixes after it. When it and the
+as of migration `0012` plus the follow-up fixes after it. When it and the
 actual code disagree, the code is correct — update this file, don't trust
 it blindly.
 
@@ -37,7 +37,7 @@ account/access/secret/bucket, `CRON_SECRET`, `NEXT_PUBLIC_APP_URL`).
 
 ## Database schema (current, post-migration 0011)
 
-Migrations are strictly incremental (`supabase/migrations/0001`...`0011`)
+Migrations are strictly incremental (`supabase/migrations/0001`...`0012`)
 — never rewritten, never a `DROP`/recreate. Each one has been applied and
 verified against both an empty DB and one seeded with pre-existing data
 before being considered done (see "Testing" below for how).
@@ -51,6 +51,17 @@ before being considered done (see "Testing" below for how).
   (`src/lib/countries.ts`), concatenated before being sent
 - `pays text default 'RDC'` — now set from the signup country selector,
   not hardcoded
+- `province text` — added in `0012`, nullable/optional. Set from a
+  signup dropdown (`src/lib/states.ts`, see "Province/ville" below),
+  dependent on the selected country the same way the phone country
+  selector already is. Stored as the province's display name (matching
+  how `pays` stores the country's full name, not an ISO code) — no other
+  table joins on it, so a normalized foreign key would add nothing.
+  `users_province_max_length` caps it at 100 chars, same pattern as
+  `bio`/`nom_affichage`.
+- `ville text` — added in `0012`, nullable/optional. Plain free text (too
+  many cities worldwide for a usable dropdown), capped at 100 chars via
+  `users_ville_max_length`.
 - `devise text default 'USD'`
 - `parrain_id uuid references users(id)` — referral relationship
 - `date_creation timestamptz`
@@ -511,6 +522,63 @@ since the two are separate views with no PostgREST-embeddable
 relationship. Cards link to `/@pseudo` when the créateur has one, else
 fall back to `/createur/[id]`.
 
+## Signup: province/ville + password confirmation (migration `0012`)
+
+**Province** is a dropdown dependent on the selected country, backed by
+`src/lib/states.ts` / `src/lib/data/states.json`. That JSON is a
+generated, filtered slice of the [Countries States Cities
+Database](https://github.com/dr5hn/countries-states-cities-database)
+(ODbL-licensed — attribution in `CREDITS.md`, per the license's
+requirement): the full upstream dataset also carries cities and
+postcodes for ~250 countries (states.json alone is ~6.4MB upstream);
+this repo only keeps the states/provinces for the 38 real countries in
+`COUNTRIES` (`lib/countries.ts`), pre-filtered and stripped down to
+`{code, name}` at generation time (~45KB) — not fetched at runtime, so
+signup has no third-party network dependency. French names are used
+where the upstream `translations.fr` field has one (all 26 RDC
+provinces do), falling back to the dataset's default (English) name
+otherwise. `getStatesForCountry(code)` returns `[]` for a country with
+no entry (only `"OTHER"` in practice — verified in
+`states.test.ts`, which also asserts every real `COUNTRIES` entry has
+at least one province, so a future country added there without
+regenerating the dataset fails a test instead of silently showing an
+empty dropdown).
+
+`SignupForm.tsx`'s province `<select>` only renders when
+`getStatesForCountry(countryCode)` is non-empty, and changing the
+country (`handleCountryChange`) resets the selected province back to
+`""` — otherwise a previously chosen province code could silently point
+at the wrong region (or nothing at all) once the underlying list swaps
+out. **Ville** is plain free text, capped at 100 chars client-side
+(`maxLength`) — there's no usable finite list of cities worldwide, so no
+dropdown was attempted.
+
+Both are optional and sent through `raw_user_meta_data` the exact same
+way `telephone`/`pays` already are — signup calls
+`supabase.auth.signUp()` directly from the browser (there's still no
+`/api/signup` route, see `handle_new_auth_user` below), and the trigger
+was extended to pick up `province`/`ville` from the metadata the same
+way it already reads `telephone`/`pays`/`bio`. Verified end-to-end with
+the SQL checklist: a stub `auth.users` insert carrying `province`/`ville`
+in its metadata results in a `users` row with both columns set, and a
+second insert omitting them leaves both `null`.
+
+**Password confirmation is client-side only, deliberately** — flagging
+this rather than silently doing it, since the request that added this
+asked for server-side enforcement "if the signup logic already checks
+other rules there" (project discipline: invariants shouldn't rely on the
+client alone). It doesn't apply here: signup has no server route in
+front of it at all — the browser calls Supabase Auth's `signUp()`
+directly, and only the one `password` value the user typed is ever
+transmitted anywhere. The confirmation field is never sent; it exists
+purely to catch a typo before the request goes out, so there is no
+second copy of the password for a server to compare against, and
+nothing a mismatched confirmation could bypass (unlike, say, the pseudo
+cooldown, which really can be attacked by a direct REST call skipping
+the app's client code entirely). `handleSubmit` checks
+`password !== confirmPassword` and blocks the request with a translated
+error (`t("passwordMismatch")`) before ever calling `signUp()`.
+
 ## Réglages (`/parametres`, `ParametresForm.tsx`)
 
 Pseudo and bio are both **read-only by default with a "Modifier" button
@@ -728,7 +796,12 @@ always get picked up by control-flow analysis the same way `next/navigation`'s d
   not), signed-URL delivery routes (auth/ownership/status checks before
   minting a URL), the `[handle]` route's percent-decoding, zod schemas,
   the photo-crop geometry (`imageCrop.test.ts` — covers scaling, the
-  90°/270° effective-dimension swap, and pan clamping on both axes).
+  90°/270° effective-dimension swap, and pan clamping on both axes),
+  `signOutAndRedirect` (`LogoutButton.test.ts` — signOut() resolves
+  before navigation), and the generated province dataset
+  (`states.test.ts` — RDC's provinces resolve correctly, an
+  unknown/`"OTHER"` code returns `[]`, no duplicate codes within a
+  country, and every real `COUNTRIES` entry has at least one province).
 - `npm run test:sql` (`supabase/tests/run_sql_tests.sh` +
   `checklist_2_3.sql`): creates a throwaway Postgres database (via
   `sudo -u postgres psql`, **not** Docker — Docker's daemon isn't running
@@ -751,7 +824,11 @@ always get picked up by control-flow analysis the same way `next/navigation`'s d
   trg_enforce_pseudo_cooldown`) to backdate the timestamp, since the
   trigger itself refuses to let a normal UPDATE do that. **This is the real
   proof that constraints hold — always extend this file rather than just
-  describing new DB behavior in prose.**
+  describing new DB behavior in prose.** Also covers `province`/`ville`'s
+  max-length constraints and, by inserting directly into the stubbed
+  `auth.users` with a `raw_user_meta_data` payload, that
+  `handle_new_auth_user` actually picks both up from signup metadata (and
+  correctly leaves both `null` when they're omitted).
 - `supabase/tests/stub_auth.sql` fakes just enough of Supabase's `auth`
   schema (an `auth.uid()` reading `app.current_user_id`, plus the
   `authenticated`/`anon`/`service_role` roles) for the real migrations to

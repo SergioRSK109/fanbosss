@@ -528,6 +528,82 @@ begin
   raise notice 'PASS: pseudo change is allowed again once 30 days have elapsed';
 end $$;
 
+-- ---------------------------------------------------------------------
+-- Province/ville (migration 0012): both optional, max-length enforced at
+-- the DB level (there's no server API route in front of signup to check
+-- this in first -- signup calls supabase.auth.signUp() directly from the
+-- browser), and handle_new_auth_user actually picks both up from
+-- raw_user_meta_data the same way it already does for telephone/pays.
+-- ---------------------------------------------------------------------
+do $$
+begin
+  begin
+    update users set province = repeat('x', 101)
+      where id = '11111111-1111-1111-1111-111111111111';
+    raise exception 'TEST FAILED: a 101-character province was accepted';
+  exception when check_violation then
+    raise notice 'PASS: province max length enforced at the DB level';
+  end;
+end $$;
+
+do $$
+begin
+  begin
+    update users set ville = repeat('x', 101)
+      where id = '11111111-1111-1111-1111-111111111111';
+    raise exception 'TEST FAILED: a 101-character ville was accepted';
+  exception when check_violation then
+    raise notice 'PASS: ville max length enforced at the DB level';
+  end;
+end $$;
+
+insert into auth.users (id, raw_user_meta_data)
+values (
+  '99999999-9999-9999-9999-999999999999',
+  jsonb_build_object(
+    'telephone', '+243900000099',
+    'pays', 'RD Congo',
+    'province', 'Kinshasa',
+    'ville', 'Gombe'
+  )
+);
+
+do $$
+declare
+  v_province text;
+  v_ville text;
+begin
+  select province, ville into v_province, v_ville from users
+    where id = '99999999-9999-9999-9999-999999999999';
+  if v_province != 'Kinshasa' or v_ville != 'Gombe' then
+    raise exception
+      'TEST FAILED: handle_new_auth_user did not pick up province/ville from raw_user_meta_data (got province=%, ville=%)',
+      v_province, v_ville;
+  end if;
+  raise notice 'PASS: handle_new_auth_user stores province and ville from signup metadata';
+end $$;
+
+insert into auth.users (id, raw_user_meta_data)
+values (
+  '88888888-8888-8888-8888-888888888888',
+  jsonb_build_object('telephone', '+243900000088', 'pays', 'RD Congo')
+);
+
+do $$
+declare
+  v_province text;
+  v_ville text;
+begin
+  select province, ville into v_province, v_ville from users
+    where id = '88888888-8888-8888-8888-888888888888';
+  if v_province is not null or v_ville is not null then
+    raise exception
+      'TEST FAILED: province/ville should default to null when omitted from signup metadata (got province=%, ville=%)',
+      v_province, v_ville;
+  end if;
+  raise notice 'PASS: province and ville are optional -- omitting them at signup leaves both null';
+end $$;
+
 do $$
 begin
   raise notice 'ALL SQL CHECKLIST TESTS PASSED';
