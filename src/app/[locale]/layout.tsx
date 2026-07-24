@@ -9,6 +9,7 @@ import { Link } from "@/i18n/navigation";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { Logo } from "@/components/Logo";
 import { ServiceWorkerRegistration } from "@/components/ServiceWorkerRegistration";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 import "./globals.css";
 
 // Rounded, friendly geometric sans -- matches the brief's "moderne,
@@ -50,6 +51,14 @@ export default async function LocaleLayout({
 
   const t = await getTranslations({ locale, namespace: "Nav" });
 
+  // Explorer is only shown to an already-authenticated visitor (product
+  // decision) -- a logged-out visitor on signup/login shouldn't see it
+  // pulling them away from finishing that flow.
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
   return (
     <html lang={locale} className={`${poppins.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col font-sans">
@@ -60,12 +69,14 @@ export default async function LocaleLayout({
               <Logo className="h-7 w-auto sm:h-8" />
             </Link>
             <div className="flex items-center gap-3">
-              <Link
-                href="/explorer"
-                className="text-sm font-semibold text-brand-600 dark:text-brand-300"
-              >
-                🔎 {t("explorer")}
-              </Link>
+              {user && (
+                <Link
+                  href="/explorer"
+                  className="text-sm font-semibold text-brand-600 dark:text-brand-300"
+                >
+                  🔎 {t("explorer")}
+                </Link>
+              )}
               <LanguageSwitcher />
             </div>
           </div>

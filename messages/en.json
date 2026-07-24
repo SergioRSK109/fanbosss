@@ -22,7 +22,8 @@
     "title": "FanBoss",
     "tagline": "Monetize your relationship with your fans: custom videos, tips, WhatsApp, and more.",
     "signup": "Create an account",
-    "login": "Log in"
+    "login": "Log in",
+    "dashboard": "Go to my dashboard"
   },
   "Signup": {
     "heading": "Create a FanBoss account",

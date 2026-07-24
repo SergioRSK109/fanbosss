@@ -22,7 +22,8 @@
     "title": "FanBoss",
     "tagline": "Monétisez votre relation avec vos fans : vidéos personnalisées, dons, WhatsApp, et plus.",
     "signup": "Créer un compte",
-    "login": "Se connecter"
+    "login": "Se connecter",
+    "dashboard": "Accéder à mon espace"
   },
   "Signup": {
     "heading": "Créer un compte FanBoss",
