@@ -60,7 +60,7 @@ export async function PATCH(request: NextRequest) {
     .update(parsed.data)
     .eq("id", user.id)
     .select(
-      "id, nom_affichage, pseudo, pseudo_modifie_at, bio, lien_reseau_social, classement_public, masque_exploration",
+      "id, nom_affichage, pseudo, pseudo_modifie_at, bio, lien_reseau_social, lien_tiktok, lien_instagram, lien_youtube, lien_autre, classement_public, masque_exploration",
     )
     .single();
 

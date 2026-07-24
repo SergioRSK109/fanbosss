@@ -113,7 +113,14 @@ export const parametresProfilSchema = z
     // constraint beyond a sane length -- it's never used for routing.
     nom_affichage: z.string().trim().max(60).nullable().optional(),
     bio: z.string().trim().max(500).nullable().optional(),
-    lien_reseau_social: z.string().trim().url().nullable().optional(),
+    // Simple links (no OAuth/account linking), shown on the public
+    // profile -- distinct from the original lien_reseau_social collected
+    // at signup, which stays editable only there, for manual identity
+    // verification, and is deliberately absent from this schema.
+    lien_tiktok: z.string().trim().url().nullable().optional(),
+    lien_instagram: z.string().trim().url().nullable().optional(),
+    lien_youtube: z.string().trim().url().nullable().optional(),
+    lien_autre: z.string().trim().url().nullable().optional(),
     classement_public: z.boolean().optional(),
     // Opt-out, independent of classement_public -- see migration 0009:
     // exploration visibility defaults ON once a créateur has an active

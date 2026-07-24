@@ -4,7 +4,7 @@
 
 This section is a working reference for picking this project back up in a
 new session without re-deriving context. It reflects the schema and code
-as of migration `0010` plus the follow-up fixes after it. When it and the
+as of migration `0011` plus the follow-up fixes after it. When it and the
 actual code disagree, the code is correct — update this file, don't trust
 it blindly.
 
@@ -35,9 +35,9 @@ Env vars: see `.env.example` for the full list (Supabase URL/anon/service
 keys, CinetPay API key + site id + **secret key** used for HMAC, R2
 account/access/secret/bucket, `CRON_SECRET`, `NEXT_PUBLIC_APP_URL`).
 
-## Database schema (current, post-migration 0010)
+## Database schema (current, post-migration 0011)
 
-Migrations are strictly incremental (`supabase/migrations/0001`...`0010`)
+Migrations are strictly incremental (`supabase/migrations/0001`...`0011`)
 — never rewritten, never a `DROP`/recreate. Each one has been applied and
 verified against both an empty DB and one seeded with pre-existing data
 before being considered done (see "Testing" below for how).
@@ -88,9 +88,18 @@ before being considered done (see "Testing" below for how).
   authenticated upload flow (`/api/profil/photo-upload-url` → PUT to R2 →
   PATCH `/api/profil`), **never collected at signup** (no authenticated
   session yet at that point to key an R2 object against)
-- `lien_reseau_social text` — TikTok/Instagram/etc. link, collected at
-  signup (optional) or edited later, `zod .url()` validated at the API
-  layer
+- `lien_reseau_social text` — single link collected at signup (optional),
+  `zod .url()` validated at the API layer. **Since migration `0011`, this
+  is manual-identity-verification-only** — it's no longer editable from
+  `/parametres` and no longer rendered on the public profile. What the
+  profile shows instead is the four columns below.
+- `lien_tiktok text`, `lien_instagram text`, `lien_youtube text`,
+  `lien_autre text` — added in `0011`. Simple links (no OAuth, no
+  official account linking), each optional, editable in `/parametres`,
+  rendered as icon chips on the public profile
+  (`CreateurProfileView`/`SOCIAL_LINK_ICONS`) when set. No DB format
+  constraint, same as `lien_reseau_social` before it — validated
+  app-side only (`zod .url()` in `parametresProfilSchema`).
 - `classement_public boolean not null default false` — opt-in for the
   leaderboards
 - `dernier_vu_demandes_at timestamptz` — null means "never viewed"; used
@@ -218,9 +227,12 @@ creation flow, so hiding them by default didn't make sense; flip to
 
 ### Public views (never expose the raw tables for cross-user reads)
 - `profils_publics`: `id, pays, devise, date_creation, pseudo, bio,
-  photo_r2_key, lien_reseau_social, nom_affichage` — deliberately
-  excludes `telephone` and (transitively, since it's a separate table)
-  any monetary data.
+  photo_r2_key, lien_reseau_social, nom_affichage, lien_tiktok,
+  lien_instagram, lien_youtube, lien_autre` — deliberately excludes
+  `telephone` and (transitively, since it's a separate table) any
+  monetary data. `lien_reseau_social` is still exposed here for now
+  (unchanged) even though nothing public renders it anymore — see the
+  `lien_reseau_social` entry above.
 - `offres_publiques`: `id, createur_id, type, prix, actif, created_at,
   libelle` — deliberately excludes `config` (which can hold
   `evenement_live`'s pre-payment secret link).
@@ -382,6 +394,19 @@ entry point. The header shown there is `displayName ?? t("heading")` —
 again in the component; the generic translated "Profil créateur" heading
 is only a last-resort fallback for a créateur with neither set.
 
+Profile photo, when set, uses the same `ZoomablePhoto` component
+(`src/components/ui/ZoomablePhoto.tsx`) as `/parametres` — click to open
+a simple full-screen preview, click-outside or ✕ to close. Shared rather
+than duplicated so both surfaces stay in sync; see "Réglages" below for
+why `/parametres` needed this component in the first place.
+
+Social links: `socialLinks` (`{ tiktok, instagram, youtube, autre }`,
+all nullable) renders as a row of icon chips (`SOCIAL_LINK_ICONS`,
+emoji — no icon library), one per platform that's actually set. This is
+distinct from `lienReseauSocial`, which the view still returns but
+`CreateurProfileView` no longer renders anywhere — see the
+`lien_reseau_social` schema entry above for why.
+
 ## Explorer (`/[locale]/explorer`, added `0009`)
 
 Public créateur directory — reverses an earlier "no browse page" decision
@@ -413,14 +438,51 @@ UI can't even attempt an edit during the cooldown, though the real
 enforcement is server-side regardless (`enforce_pseudo_cooldown` trigger
 + the `/api/profil` pre-check), never trust the disabled button alone.
 
-Profile photo: clicking the photo **zooms it** (a simple `position:
-fixed` overlay, click-outside or ✕ to close) rather than opening the file
-picker — that used to be the accidental behavior, because the `<img>` sat
-inside the same `<label>` as the file `<input>`, and clicking anywhere in
-a label associated with a control activates that control. Fixed by
-pulling the file input out into its own hidden (`className="hidden"`)
-element, triggered only by a separate "Modifier la photo de profil"
-button via `fileInputRef.current?.click()`.
+Profile photo: clicking the photo **zooms it** (`ZoomablePhoto`, see
+"Public handle" above) rather than opening the file picker — that used
+to be the accidental behavior, because the `<img>` sat inside the same
+`<label>` as the file `<input>`, and clicking anywhere in a label
+associated with a control activates that control. Fixed by pulling the
+file input out into its own hidden (`className="hidden"`) element,
+triggered only by a separate "Modifier la photo de profil" button via
+`fileInputRef.current?.click()`.
+
+**Pseudo and bio each save independently**, via their own "Enregistrer"
+button that only appears once unlocked — not as part of the main form's
+submit. This lives outside `<form onSubmit={handleMainSubmit}>` entirely
+(two standalone blocks below it, each with its own button calling
+`patchProfil({ pseudo: ... })` / `patchProfil({ bio: ... })` directly)
+specifically so saving one can never touch the other, or nom_affichage/
+the social links/the checkboxes/the photo in the main form. All three
+save paths (main form, pseudo, bio) share `useSaveStatus()`, a small
+hook factory in `ParametresForm.tsx` wrapping "run this async action,
+track saving/saved/error, auto-clear the saved message after 3s" — each
+call site gets its own independent status. The main form's action is a
+multi-step closure (optionally upload the photo, then PATCH) passed into
+`run()`, so an upload failure still surfaces through the same error path
+as a plain PATCH failure.
+
+A successful pseudo save immediately: (a) re-locks the field
+(`pseudoUnlocked → false`), (b) shows a one-time notice — "Pseudo
+enregistré. Tu pourras le remodifier à partir du [date]." — computed
+client-side as `now + PSEUDO_COOLDOWN_MS` (the same constant the server
+just used to actually set `pseudo_modifie_at`), not re-fetched from the
+server. This is deliberately a different message from the persistent
+"Modifiable à nouveau à partir du..." hint that shows whenever the field
+is locked for any reason — the notice is specifically about *this* save
+having started a new 30-day window, so the créateur understands the
+stakes of getting it right the first time, not just when they later try
+to change it again. Bio has no such notice (no cooldown to explain), just
+a plain "Bio enregistrée."
+
+Bio's textarea is `resize-none` — the native resize handle looked
+unpolished; `rows={4}` gives it a fixed, reasonable height instead.
+
+Social links: four plain URL inputs (TikTok/Instagram/YouTube/Autre,
+migration `0011`) inside the main form, saved together with
+nom_affichage/checkboxes/photo — unlike pseudo/bio they have no
+lock/unlock UX, nothing accidental to protect against for a plain
+optional URL field.
 
 ## i18n (next-intl)
 

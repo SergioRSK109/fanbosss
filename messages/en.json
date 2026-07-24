@@ -54,7 +54,12 @@
     "pay": "Pay",
     "paying": "...",
     "paymentError": "payment failed",
-    "socialLink": "View profile",
+    "socialLinks": {
+      "tiktok": "TikTok",
+      "instagram": "Instagram",
+      "youtube": "YouTube",
+      "autre": "View profile"
+    },
     "rankVolume": "#{rank} volume (30d)",
     "rankReactivite": "#{rank} responsiveness (30d)",
     "rankProgression": "#{rank} rising (30d)",

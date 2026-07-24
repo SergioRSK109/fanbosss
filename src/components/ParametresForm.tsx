@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { buttonClass } from "@/components/ui/button-styles";
 import { inputClass, labelClass } from "@/components/ui/field-styles";
+import { ZoomablePhoto } from "@/components/ui/ZoomablePhoto";
+import { PSEUDO_COOLDOWN_MS } from "@/lib/validation";
 
 const SAVED_MESSAGE_TIMEOUT_MS = 3000;
 
@@ -15,12 +17,78 @@ function formatDate(iso: string): string {
   });
 }
 
+async function patchProfil(payload: Record<string, unknown>) {
+  const response = await fetch("/api/profil", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await response.json();
+
+  if (!response.ok) {
+    throw new Error(typeof body.error === "string" ? body.error : "enregistrement impossible");
+  }
+
+  return body as { profil: Record<string, unknown> };
+}
+
+// Pseudo and bio each save independently of the rest of the form (and of
+// each other) -- product brief: unlocking one field via its own
+// "Modifier" button must not risk touching any other field. A plain hook
+// factory rather than a bigger shared component: the three call sites
+// (main form, pseudo, bio) need their own status/error state, but share
+// the same "run an async action, track saving/saved/error, auto-clear
+// the saved message" shape. `run` takes the action itself (rather than
+// always doing a single PATCH internally) so the main form's multi-step
+// flow (upload photo, then PATCH) reports into the same error path as
+// pseudo/bio's single PATCH.
+function useSaveStatus() {
+  const router = useRouter();
+  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [errorMessage, setErrorMessage] = useState("");
+
+  useEffect(() => {
+    if (status !== "saved") {
+      return;
+    }
+    const timeout = setTimeout(() => setStatus("idle"), SAVED_MESSAGE_TIMEOUT_MS);
+    return () => clearTimeout(timeout);
+  }, [status]);
+
+  function dismiss() {
+    if (status === "saved") {
+      setStatus("idle");
+    }
+  }
+
+  async function run<T>(action: () => Promise<T>): Promise<T | null> {
+    setStatus("saving");
+    setErrorMessage("");
+
+    try {
+      const result = await action();
+      setStatus("saved");
+      router.refresh();
+      return result;
+    } catch (err) {
+      setStatus("error");
+      setErrorMessage(err instanceof Error ? err.message : "erreur inconnue");
+      return null;
+    }
+  }
+
+  return { status, errorMessage, run, dismiss };
+}
+
 export function ParametresForm({
   nomAffichage,
   pseudo,
   pseudoLockedUntil,
   bio,
-  lienReseauSocial,
+  lienTiktok,
+  lienInstagram,
+  lienYoutube,
+  lienAutre,
   classementPublic,
   masqueExploration,
   photoUrl,
@@ -32,16 +100,19 @@ export function ParametresForm({
   // trigger + the /api/profil pre-check.
   pseudoLockedUntil: string | null;
   bio: string | null;
-  lienReseauSocial: string | null;
+  lienTiktok: string | null;
+  lienInstagram: string | null;
+  lienYoutube: string | null;
+  lienAutre: string | null;
   classementPublic: boolean;
   masqueExploration: boolean;
   photoUrl: string | null;
 }) {
-  const router = useRouter();
   const [nomAffichageValue, setNomAffichageValue] = useState(nomAffichage ?? "");
-  const [pseudoValue, setPseudoValue] = useState(pseudo ?? "");
-  const [bioValue, setBioValue] = useState(bio ?? "");
-  const [lienValue, setLienValue] = useState(lienReseauSocial ?? "");
+  const [lienTiktokValue, setLienTiktokValue] = useState(lienTiktok ?? "");
+  const [lienInstagramValue, setLienInstagramValue] = useState(lienInstagram ?? "");
+  const [lienYoutubeValue, setLienYoutubeValue] = useState(lienYoutube ?? "");
+  const [lienAutreValue, setLienAutreValue] = useState(lienAutre ?? "");
   const [classementValue, setClassementValue] = useState(classementPublic);
   const [masqueExplorationValue, setMasqueExplorationValue] = useState(masqueExploration);
   const [file, setFile] = useState<File | null>(null);
@@ -52,42 +123,53 @@ export function ParametresForm({
   // though `file` state is already null and no re-upload actually happens.
   const [fileInputKey, setFileInputKey] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [showPhotoZoom, setShowPhotoZoom] = useState(false);
+
+  const mainSave = useSaveStatus();
+
+  // Pseudo -------------------------------------------------------------
+  const pseudoSave = useSaveStatus();
+  const [pseudoValue, setPseudoValue] = useState(pseudo ?? "");
   // Read-only-by-default protection against accidental edits (product
   // brief): if there's nothing set yet, there's nothing accidental to
   // protect, so start unlocked straight into the first-time-setup flow.
   const [pseudoUnlocked, setPseudoUnlocked] = useState(!pseudo);
-  const [bioUnlocked, setBioUnlocked] = useState(!bio);
-  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const [errorMessage, setErrorMessage] = useState("");
+  const [pseudoLockedUntilValue, setPseudoLockedUntilValue] = useState(pseudoLockedUntil);
+  const [pseudoJustSavedUntil, setPseudoJustSavedUntil] = useState<string | null>(null);
 
-  // "Enregistré." shouldn't linger forever: clear it a few seconds after a
-  // successful save, or immediately below when the user edits anything.
-  useEffect(() => {
-    if (status !== "saved") {
-      return;
-    }
-    const timeout = setTimeout(() => setStatus("idle"), SAVED_MESSAGE_TIMEOUT_MS);
-    return () => clearTimeout(timeout);
-  }, [status]);
-
-  function dismissSavedMessage() {
-    if (status === "saved") {
-      setStatus("idle");
+  async function handlePseudoSave() {
+    const result = await pseudoSave.run(() =>
+      patchProfil({ pseudo: pseudoValue.trim() || null }),
+    );
+    if (result) {
+      const unlockAt = new Date(Date.now() + PSEUDO_COOLDOWN_MS).toISOString();
+      setPseudoLockedUntilValue(unlockAt);
+      setPseudoJustSavedUntil(unlockAt);
+      setPseudoUnlocked(false);
     }
   }
 
-  async function handleSubmit(event: React.FormEvent) {
-    event.preventDefault();
-    setStatus("saving");
-    setErrorMessage("");
+  // Bio ------------------------------------------------------------------
+  const bioSave = useSaveStatus();
+  const [bioValue, setBioValue] = useState(bio ?? "");
+  const [bioUnlocked, setBioUnlocked] = useState(!bio);
 
-    try {
+  async function handleBioSave() {
+    const result = await bioSave.run(() => patchProfil({ bio: bioValue.trim() || null }));
+    if (result) {
+      setBioUnlocked(false);
+    }
+  }
+
+  async function handleMainSubmit(event: React.FormEvent) {
+    event.preventDefault();
+
+    const result = await mainSave.run(async () => {
       const payload: Record<string, unknown> = {
         nom_affichage: nomAffichageValue.trim() || null,
-        pseudo: pseudoValue.trim() || null,
-        bio: bioValue.trim() || null,
-        lien_reseau_social: lienValue.trim() || null,
+        lien_tiktok: lienTiktokValue.trim() || null,
+        lien_instagram: lienInstagramValue.trim() || null,
+        lien_youtube: lienYoutubeValue.trim() || null,
+        lien_autre: lienAutreValue.trim() || null,
         classement_public: classementValue,
         masque_exploration: masqueExplorationValue,
       };
@@ -112,49 +194,27 @@ export function ParametresForm({
         payload.photo_r2_key = uploadUrlBody.r2Key;
       }
 
-      const response = await fetch("/api/profil", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const body = await response.json();
+      return patchProfil(payload);
+    });
 
-      if (!response.ok) {
-        throw new Error(
-          typeof body.error === "string" ? body.error : "enregistrement impossible",
-        );
-      }
-
+    if (result) {
       setFile(null);
       setFileInputKey((key) => key + 1);
-      setStatus("saved");
-      router.refresh();
-    } catch (err) {
-      setStatus("error");
-      setErrorMessage(err instanceof Error ? err.message : "erreur inconnue");
     }
   }
 
   return (
     <>
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      <form onSubmit={handleMainSubmit} className="flex flex-col gap-4">
         <div className="flex flex-col gap-1.5">
           <span className="text-sm font-medium text-foreground">Photo de profil</span>
           <div className="flex items-center gap-3">
             {photoUrl ? (
-              <button
-                type="button"
-                onClick={() => setShowPhotoZoom(true)}
-                aria-label="Agrandir la photo de profil"
-                className="shrink-0 rounded-full transition-transform active:scale-95"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={photoUrl}
-                  alt=""
-                  className="h-16 w-16 rounded-full border border-border object-cover"
-                />
-              </button>
+              <ZoomablePhoto
+                src={photoUrl}
+                ariaLabel="Agrandir la photo de profil"
+                thumbnailClassName="h-16 w-16 rounded-full border border-border object-cover"
+              />
             ) : (
               <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-surface-muted text-2xl">
                 🙂
@@ -176,7 +236,7 @@ export function ParametresForm({
             accept="image/*"
             onChange={(event) => {
               setFile(event.target.files?.[0] ?? null);
-              dismissSavedMessage();
+              mainSave.dismiss();
             }}
             className="hidden"
           />
@@ -189,7 +249,7 @@ export function ParametresForm({
             value={nomAffichageValue}
             onChange={(event) => {
               setNomAffichageValue(event.target.value);
-              dismissSavedMessage();
+              mainSave.dismiss();
             }}
             placeholder="ex : Sergio, DJ Sergio..."
             maxLength={60}
@@ -201,82 +261,49 @@ export function ParametresForm({
           </span>
         </label>
 
-        <label className={labelClass}>
-          <span>Choisis ton identifiant</span>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={pseudoValue}
-              readOnly={!pseudoUnlocked}
-              onChange={(event) => {
-                setPseudoValue(event.target.value);
-                dismissSavedMessage();
-              }}
-              placeholder="ex: sergio_123, sergioRSK"
-              className={`${inputClass} w-full flex-1 ${
-                pseudoUnlocked ? "" : "bg-surface-muted text-foreground-muted"
-              }`}
-            />
-            {!pseudoUnlocked && (
-              <button
-                type="button"
-                disabled={Boolean(pseudoLockedUntil)}
-                onClick={() => setPseudoUnlocked(true)}
-                className={buttonClass("outline", "sm")}
-              >
-                Modifier
-              </button>
-            )}
-          </div>
-          <span className="text-sm text-foreground-muted">
-            Ton lien : fanboss.app/@{pseudoValue || "..."}
-          </span>
-          {pseudoLockedUntil && (
-            <span className="text-sm text-accent-600">
-              Modifiable à nouveau à partir du {formatDate(pseudoLockedUntil)}.
-            </span>
-          )}
-        </label>
-
-        <label className={labelClass}>
-          <span>Bio</span>
-          <textarea
-            value={bioValue}
-            readOnly={!bioUnlocked}
-            onChange={(event) => {
-              setBioValue(event.target.value);
-              dismissSavedMessage();
-            }}
-            maxLength={500}
-            rows={3}
-            className={`${inputClass} w-full ${
-              bioUnlocked ? "" : "bg-surface-muted text-foreground-muted"
-            }`}
-          />
-          {!bioUnlocked && (
-            <button
-              type="button"
-              onClick={() => setBioUnlocked(true)}
-              className={`${buttonClass("outline", "sm")} self-start`}
-            >
-              Modifier
-            </button>
-          )}
-        </label>
-
-        <label className={labelClass}>
-          <span>Lien réseau social (TikTok, Instagram...)</span>
+        <div className={labelClass}>
+          <span>Liens réseaux sociaux (facultatifs)</span>
           <input
             type="url"
-            value={lienValue}
+            value={lienTiktokValue}
             onChange={(event) => {
-              setLienValue(event.target.value);
-              dismissSavedMessage();
+              setLienTiktokValue(event.target.value);
+              mainSave.dismiss();
             }}
-            placeholder="https://instagram.com/..."
+            placeholder="TikTok -- https://tiktok.com/@..."
             className={`${inputClass} w-full`}
           />
-        </label>
+          <input
+            type="url"
+            value={lienInstagramValue}
+            onChange={(event) => {
+              setLienInstagramValue(event.target.value);
+              mainSave.dismiss();
+            }}
+            placeholder="Instagram -- https://instagram.com/..."
+            className={`${inputClass} w-full`}
+          />
+          <input
+            type="url"
+            value={lienYoutubeValue}
+            onChange={(event) => {
+              setLienYoutubeValue(event.target.value);
+              mainSave.dismiss();
+            }}
+            placeholder="YouTube -- https://youtube.com/@..."
+            className={`${inputClass} w-full`}
+          />
+          <input
+            type="url"
+            value={lienAutreValue}
+            onChange={(event) => {
+              setLienAutreValue(event.target.value);
+              mainSave.dismiss();
+            }}
+            placeholder="Autre lien -- https://..."
+            className={`${inputClass} w-full`}
+          />
+        </div>
 
         <label className="flex items-center gap-3">
           <input
@@ -284,7 +311,7 @@ export function ParametresForm({
             checked={classementValue}
             onChange={(event) => {
               setClassementValue(event.target.checked);
-              dismissSavedMessage();
+              mainSave.dismiss();
             }}
             className="h-5 w-5 accent-brand-500"
           />
@@ -297,50 +324,129 @@ export function ParametresForm({
             checked={masqueExplorationValue}
             onChange={(event) => {
               setMasqueExplorationValue(event.target.checked);
-              dismissSavedMessage();
+              mainSave.dismiss();
             }}
             className="h-5 w-5 accent-brand-500"
           />
           <span className="text-sm">Ne pas apparaître dans l&apos;exploration</span>
         </label>
 
-        {status === "error" && <p className="text-sm text-danger-600">{errorMessage}</p>}
-        {status === "saved" && <p className="text-sm text-success-600">Enregistré.</p>}
+        {mainSave.status === "error" && (
+          <p className="text-sm text-danger-600">{mainSave.errorMessage}</p>
+        )}
+        {mainSave.status === "saved" && (
+          <p className="text-sm text-success-600">Enregistré.</p>
+        )}
 
         <button
           type="submit"
-          disabled={status === "saving"}
+          disabled={mainSave.status === "saving"}
           className={buttonClass("primary", "lg", "mt-2")}
         >
-          {status === "saving" ? "Enregistrement..." : "Enregistrer"}
+          {mainSave.status === "saving" ? "Enregistrement..." : "Enregistrer"}
         </button>
       </form>
 
-      {showPhotoZoom && photoUrl && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Photo de profil agrandie"
-          onClick={() => setShowPhotoZoom(false)}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6"
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={photoUrl}
-            alt=""
-            onClick={(event) => event.stopPropagation()}
-            className="max-h-[80vh] max-w-full rounded-2xl object-contain shadow-2xl"
+      {/* Pseudo and bio live outside the main form on purpose: each saves
+          independently via its own "Enregistrer" button (product brief),
+          not as part of the global submit above. */}
+      <div className={`${labelClass} mt-4`}>
+        <span>Choisis ton identifiant</span>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={pseudoValue}
+            readOnly={!pseudoUnlocked}
+            onChange={(event) => {
+              setPseudoValue(event.target.value);
+              pseudoSave.dismiss();
+            }}
+            placeholder="ex: sergio_123, sergioRSK"
+            className={`${inputClass} w-full flex-1 ${
+              pseudoUnlocked ? "" : "bg-surface-muted text-foreground-muted"
+            }`}
           />
+          {!pseudoUnlocked && (
+            <button
+              type="button"
+              disabled={Boolean(pseudoLockedUntilValue)}
+              onClick={() => setPseudoUnlocked(true)}
+              className={buttonClass("outline", "sm")}
+            >
+              Modifier
+            </button>
+          )}
+        </div>
+        <span className="text-sm text-foreground-muted">
+          Ton lien : fanboss.app/@{pseudoValue || "..."}
+        </span>
+        {pseudoLockedUntilValue && (
+          <span className="text-sm text-accent-600">
+            Modifiable à nouveau à partir du {formatDate(pseudoLockedUntilValue)}.
+          </span>
+        )}
+        {pseudoUnlocked && (
           <button
             type="button"
-            onClick={() => setShowPhotoZoom(false)}
-            aria-label="Fermer"
-            className="absolute right-5 top-5 flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-white backdrop-blur-sm hover:bg-white/25"
+            disabled={pseudoSave.status === "saving"}
+            onClick={handlePseudoSave}
+            className={buttonClass("primary", "sm", "self-start")}
           >
-            ✕
+            {pseudoSave.status === "saving" ? "Enregistrement..." : "Enregistrer"}
           </button>
-        </div>
-      )}
+        )}
+        {pseudoSave.status === "error" && (
+          <p className="text-sm text-danger-600">{pseudoSave.errorMessage}</p>
+        )}
+        {pseudoSave.status === "saved" && pseudoJustSavedUntil && (
+          <p className="text-sm text-success-600">
+            Pseudo enregistré. Tu pourras le remodifier à partir du{" "}
+            {formatDate(pseudoJustSavedUntil)}.
+          </p>
+        )}
+      </div>
+
+      <div className={`${labelClass} mt-4`}>
+        <span>Bio</span>
+        <textarea
+          value={bioValue}
+          readOnly={!bioUnlocked}
+          onChange={(event) => {
+            setBioValue(event.target.value);
+            bioSave.dismiss();
+          }}
+          maxLength={500}
+          rows={4}
+          className={`${inputClass} w-full resize-none ${
+            bioUnlocked ? "" : "bg-surface-muted text-foreground-muted"
+          }`}
+        />
+        {!bioUnlocked && (
+          <button
+            type="button"
+            onClick={() => setBioUnlocked(true)}
+            className={`${buttonClass("outline", "sm")} self-start`}
+          >
+            Modifier
+          </button>
+        )}
+        {bioUnlocked && (
+          <button
+            type="button"
+            disabled={bioSave.status === "saving"}
+            onClick={handleBioSave}
+            className={buttonClass("primary", "sm", "self-start")}
+          >
+            {bioSave.status === "saving" ? "Enregistrement..." : "Enregistrer"}
+          </button>
+        )}
+        {bioSave.status === "error" && (
+          <p className="text-sm text-danger-600">{bioSave.errorMessage}</p>
+        )}
+        {bioSave.status === "saved" && (
+          <p className="text-sm text-success-600">Bio enregistrée.</p>
+        )}
+      </div>
     </>
   );
 }

@@ -2,6 +2,7 @@ import { useTranslations } from "next-intl";
 import { CheckoutButton } from "@/components/CheckoutButton";
 import { ReportButton } from "@/components/ReportButton";
 import { RankBadge } from "@/components/ui/RankBadge";
+import { ZoomablePhoto } from "@/components/ui/ZoomablePhoto";
 import type { CreateurProfileData } from "@/lib/profil";
 import type { OffreType } from "@/lib/validation";
 
@@ -30,6 +31,15 @@ const OFFER_ICONS: Record<OffreType, string> = {
   evenement_live: "🎥",
 };
 
+// Simple links (no OAuth/account linking, migration 0011) -- one emoji
+// per platform, same "no icon library" reasoning as OFFER_ICONS above.
+const SOCIAL_LINK_ICONS = {
+  tiktok: "🎵",
+  instagram: "📸",
+  youtube: "▶️",
+  autre: "🔗",
+} as const;
+
 export function CreateurProfileView({ profile }: { profile: CreateurProfileData }) {
   const t = useTranslations("CreateurProfile");
   const labels: Record<string, string> = {
@@ -41,8 +51,8 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
     evenement_live: t("offerTypes.evenement_live"),
   };
 
-  const { createurId, displayName, bio, photoUrl, lienReseauSocial, offres, ranks } =
-    profile;
+  const { createurId, displayName, bio, photoUrl, socialLinks, offres, ranks } = profile;
+  const hasSocialLinks = Object.values(socialLinks).some(Boolean);
   const hasRanks =
     ranks.volume !== null || ranks.reactivite !== null || ranks.progression !== null;
 
@@ -55,12 +65,10 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
 
         <div className="mt-1 flex flex-col items-center gap-3 text-center">
           {photoUrl ? (
-            // Signed R2 URL, not a static/optimizable asset Next's Image can cache.
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
+            <ZoomablePhoto
               src={photoUrl}
-              alt=""
-              className="h-24 w-24 rounded-full object-cover ring-4 ring-white/80 shadow-lg"
+              ariaLabel="Agrandir la photo de profil"
+              thumbnailClassName="h-24 w-24 rounded-full object-cover ring-4 ring-white/80 shadow-lg"
             />
           ) : (
             <div className="flex h-24 w-24 items-center justify-center rounded-full bg-white/15 text-4xl ring-4 ring-white/40 shadow-lg">
@@ -74,15 +82,28 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
             <p className="max-w-xs text-sm leading-relaxed text-white/95">{bio}</p>
           )}
 
-          {lienReseauSocial && (
-            <a
-              href={lienReseauSocial}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-4 py-1.5 text-sm font-medium text-white backdrop-blur-sm transition-transform active:scale-95 hover:bg-white/25"
-            >
-              🔗 {t("socialLink")}
-            </a>
+          {hasSocialLinks && (
+            <div className="flex flex-wrap justify-center gap-2">
+              {(Object.keys(SOCIAL_LINK_ICONS) as (keyof typeof SOCIAL_LINK_ICONS)[]).map(
+                (platform) => {
+                  const href = socialLinks[platform];
+                  if (!href) {
+                    return null;
+                  }
+                  return (
+                    <a
+                      key={platform}
+                      href={href}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-4 py-1.5 text-sm font-medium text-white backdrop-blur-sm transition-transform active:scale-95 hover:bg-white/25"
+                    >
+                      {SOCIAL_LINK_ICONS[platform]} {t(`socialLinks.${platform}`)}
+                    </a>
+                  );
+                },
+              )}
+            </div>
           )}
         </div>
       </div>
