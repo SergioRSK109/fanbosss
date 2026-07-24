@@ -1,5 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { sortOffresDonFirst } from "@/lib/profil";
+import { resolveDisplayName, sortOffresDonFirst } from "@/lib/profil";
+
+describe("resolveDisplayName", () => {
+  it("prefers nom_affichage when set", () => {
+    expect(resolveDisplayName("Sergio le Créateur", "sergio_123")).toBe(
+      "Sergio le Créateur",
+    );
+  });
+
+  it("falls back to pseudo when nom_affichage is null", () => {
+    expect(resolveDisplayName(null, "sergio_123")).toBe("sergio_123");
+  });
+
+  it("falls back to pseudo when nom_affichage is blank", () => {
+    expect(resolveDisplayName("   ", "sergio_123")).toBe("sergio_123");
+  });
+
+  it("returns null when neither is set", () => {
+    expect(resolveDisplayName(null, null)).toBeNull();
+  });
+});
 
 describe("sortOffresDonFirst", () => {
   it("moves don first even when it was configured after the other offres", () => {

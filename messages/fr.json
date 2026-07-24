@@ -3,6 +3,21 @@
     "fr": "Français",
     "en": "English"
   },
+  "Nav": {
+    "explorer": "Explorer"
+  },
+  "Explorer": {
+    "heading": "Découvrir des créateurs",
+    "subheading": "Parcours les profils publics et trouve un créateur à soutenir.",
+    "searchPlaceholder": "Rechercher un pseudo ou une bio...",
+    "filterAll": "Tous les types d'offre",
+    "searchButton": "Rechercher",
+    "empty": "Aucun créateur trouvé.",
+    "anonymous": "Créateur FanBoss",
+    "previous": "Précédent",
+    "next": "Suivant",
+    "pageIndicator": "Page {page} sur {total}"
+  },
   "Home": {
     "title": "FanBoss",
     "tagline": "Monétisez votre relation avec vos fans : vidéos personnalisées, dons, WhatsApp, et plus.",

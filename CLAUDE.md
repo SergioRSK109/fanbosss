@@ -4,7 +4,7 @@
 
 This section is a working reference for picking this project back up in a
 new session without re-deriving context. It reflects the schema and code
-as of migration `0008` plus the follow-up fixes after it. When it and the
+as of migration `0010` plus the follow-up fixes after it. When it and the
 actual code disagree, the code is correct — update this file, don't trust
 it blindly.
 
@@ -35,9 +35,9 @@ Env vars: see `.env.example` for the full list (Supabase URL/anon/service
 keys, CinetPay API key + site id + **secret key** used for HMAC, R2
 account/access/secret/bucket, `CRON_SECRET`, `NEXT_PUBLIC_APP_URL`).
 
-## Database schema (current, post-migration 0008)
+## Database schema (current, post-migration 0010)
 
-Migrations are strictly incremental (`supabase/migrations/0001`...`0008`)
+Migrations are strictly incremental (`supabase/migrations/0001`...`0010`)
 — never rewritten, never a `DROP`/recreate. Each one has been applied and
 verified against both an empty DB and one seeded with pre-existing data
 before being considered done (see "Testing" below for how).
@@ -61,6 +61,27 @@ before being considered done (see "Testing" below for how).
   `lower(pseudo)`**, because a plain UNIQUE constraint on `pseudo` is
   case-sensitive and would let "Sergio"/"sergio" coexist. NULLs are
   allowed and non-conflicting (default btree unique-index behavior).
+- `pseudo_modifie_at timestamptz` — added in `0010`. Null until the first
+  real pseudo change. **Enforced by a trigger
+  (`enforce_pseudo_cooldown`), not just app code**: a pseudo can only be
+  changed again 30 days after this timestamp, and the trigger
+  force-overwrites `NEW.pseudo_modifie_at` on every UPDATE (to `now()` on
+  an actual pseudo change within the allowed window, or back to
+  `OLD.pseudo_modifie_at` otherwise) regardless of what the caller sent
+  for that column. This closes a real gap: `users_update_self` (RLS)
+  lets an authenticated user PATCH their own row's *any* column directly
+  via the Supabase REST API, bypassing `/api/profil` entirely — an
+  app-only check could be defeated by backdating `pseudo_modifie_at` in
+  the same request that changes `pseudo`. Verified in `checklist_2_3.sql`
+  that this exact bypass attempt is rejected. The trigger raises with a
+  custom SQLSTATE (`FB001`) specifically so callers (including the SQL
+  tests) can distinguish "blocked by cooldown" from any other exception.
+  `src/lib/validation.ts#pseudoLockedUntil(pseudoModifieAt)` computes the
+  same 30-day window in JS (`PSEUDO_COOLDOWN_MS`) — used by both
+  `/api/profil` (a clean 403 with the unlock date, before ever hitting
+  the trigger) and `/parametres` (telling the user when they can change
+  it again). The DB trigger is what actually guarantees it; the JS check
+  is only there for a good error message.
 - `bio text` — max 500 chars (`users_bio_max_length`), collected at
   signup (optional) or edited later
 - `photo_r2_key text` — nullable; only ever settable through the
@@ -74,12 +95,27 @@ before being considered done (see "Testing" below for how).
   leaderboards
 - `dernier_vu_demandes_at timestamptz` — null means "never viewed"; used
   for the "N nouvelles demandes" badge on the dashboard
+- `nom_affichage text` — added in `0009`. Freeform public display name,
+  distinct from `pseudo` (the URL-safe technical handle): no format or
+  uniqueness constraint, just `users_nom_affichage_max_length` (≤60
+  chars). Wherever a créateur profile is shown publicly, resolve it via
+  `resolveDisplayName(nomAffichage, pseudo)` in `src/lib/profil.ts`
+  (nom_affichage → pseudo → `null`, with callers falling back to a
+  generic translated label) — **don't re-implement this fallback chain
+  inline**, every public-facing surface (profile header, `/explorer`
+  cards) shares it.
+- `masque_exploration boolean not null default false` — added in `0009`.
+  Opt-*out* of `/explorer`, deliberately the opposite default direction
+  from `classement_public`'s opt-*in*: a créateur becomes explorable the
+  moment they have one active offre, unless they flip this. See "Product
+  judgment calls" below for why, and the first-offre transparency notice
+  that makes sure this default is never silent.
 
 Reserved pseudo words (kept in sync in **two** places — the DB CHECK
-constraint in `0008` and `PSEUDO_MOTS_RESERVES` in `src/lib/validation.ts`
+constraint in `0009` and `PSEUDO_MOTS_RESERVES` in `src/lib/validation.ts`
 — update both if new top-level routes are added):
 `dashboard, signup, login, api, auth, createur, mes-transactions,
-paiement, parametres`.
+paiement, parametres, explorer`.
 
 ### `offres`
 - `id uuid` PK, `createur_id uuid references users(id)`
@@ -91,7 +127,18 @@ paiement, parametres`.
   (was 500 in the original brief, lowered to 20 later — this constraint
   is on the billed `prix` column itself, never on `config`, precisely so
   no application code path can accidentally bypass it)
-- `actif boolean default true`
+- `actif boolean default true` — **was silently unwritable via the API
+  until a real bug fix**: `creerOffreSchema` (POST `/api/offres`, which
+  `OffresManager`'s désactiver/réactiver toggle calls) didn't declare
+  `actif` at all, so zod's default non-strict parsing quietly dropped it
+  from every request body and the upsert never included it in its SET
+  list — every offre stayed at the table default (`true`) forever
+  regardless of what the client sent. Fixed by adding `actif:
+  z.boolean().optional()` to the schema and threading it into
+  `upsertPayload` the same way `config` already was. Covered by a
+  regression test in `validation.test.ts` asserting `actif` survives
+  parsing in both directions — the schema accepting the request was never
+  the problem, silently losing the field afterward was.
 - `config jsonb default '{}'` — holds type-specific data:
   `contenu_debloque` → `{r2_key}` (uploaded once, at the offer level, not
   per-transaction — every paying fan unlocks the *same* file);
@@ -171,11 +218,22 @@ creation flow, so hiding them by default didn't make sense; flip to
 
 ### Public views (never expose the raw tables for cross-user reads)
 - `profils_publics`: `id, pays, devise, date_creation, pseudo, bio,
-  photo_r2_key, lien_reseau_social` — deliberately excludes `telephone`
-  and (transitively, since it's a separate table) any monetary data.
+  photo_r2_key, lien_reseau_social, nom_affichage` — deliberately
+  excludes `telephone` and (transitively, since it's a separate table)
+  any monetary data.
 - `offres_publiques`: `id, createur_id, type, prix, actif, created_at,
   libelle` — deliberately excludes `config` (which can hold
   `evenement_live`'s pre-payment secret link).
+- `profils_explorables` (added `0009`): same public columns as
+  `profils_publics`, filtered to `masque_exploration = false` and `exists
+  (select 1 from offres where createur_id = id and actif = true)`.
+  Backs `/explorer`. Deliberately **never** selects `masque_exploration`
+  itself — callers don't need to know a créateur opted out, they just
+  don't see them; verified in `checklist_2_3.sql` that the column never
+  appears in this view's `information_schema.columns`. Joins straight to
+  the `users` base table (for `masque_exploration`) the same way
+  `classement_*` views join it for `classement_public` — same
+  view-owner-bypasses-RLS mechanism, nothing new.
 - `classement_volume`, `classement_reactivite`, `classement_progression`
   — **rank only** (`createur_id, rang`), never the underlying count or
   average. All three: 30-day rolling window, scoped to
@@ -318,7 +376,51 @@ covered by tests/comments in place:
 `/@pseudo` is a public alias on top. Both render the same
 `CreateurProfileView` fed by `getCreateurProfileData()`
 (`src/lib/profil.ts`) — don't duplicate that query logic if adding a third
-entry point.
+entry point. The header shown there is `displayName ?? t("heading")` —
+`displayName` is `getCreateurProfileData`'s resolved
+`resolveDisplayName(nomAffichage, pseudo)`, so it's never null-checked
+again in the component; the generic translated "Profil créateur" heading
+is only a last-resort fallback for a créateur with neither set.
+
+## Explorer (`/[locale]/explorer`, added `0009`)
+
+Public créateur directory — reverses an earlier "no browse page" decision
+(see "Product judgment calls" below). Server component, no auth, reads
+only `profils_explorables` + `offres_publiques` (both public views,
+granted to `anon`). Search (`q`, matched against `pseudo`/`bio` via
+`.or()` + `ilike`, escaped through `escapeIlike()` in
+`src/lib/validation.ts` — the same escaping `/@pseudo` needs, don't
+reimplement it a third time) and offer-type filter (`type`) are plain GET
+query params read via `searchParams`, so filtering/pagination work
+without client JS: the filter bar is a native `<form method="get">`, and
+pagination links are plain `<Link href="/explorer?...">`. Type filtering
+is a two-step query (first resolve matching `createur_id`s from
+`offres_publiques`, then `.in("id", ...)` against `profils_explorables`)
+since the two are separate views with no PostgREST-embeddable
+relationship. Cards link to `/@pseudo` when the créateur has one, else
+fall back to `/createur/[id]`.
+
+## Réglages (`/parametres`, `ParametresForm.tsx`)
+
+Pseudo and bio are both **read-only by default with a "Modifier" button
+to unlock** (protection against accidental edits), but only pseudo has a
+real cooldown behind it — bio's lock is pure UX, never blocked. Both
+start already unlocked if the field has never been set (`useState(!pseudo)`
+/ `useState(!bio)`): there's nothing accidental to protect on a first-time
+value. The pseudo "Modifier" button itself is `disabled` while
+`pseudoLockedUntil` (server-computed prop, see above) is non-null — the
+UI can't even attempt an edit during the cooldown, though the real
+enforcement is server-side regardless (`enforce_pseudo_cooldown` trigger
++ the `/api/profil` pre-check), never trust the disabled button alone.
+
+Profile photo: clicking the photo **zooms it** (a simple `position:
+fixed` overlay, click-outside or ✕ to close) rather than opening the file
+picker — that used to be the accidental behavior, because the `<img>` sat
+inside the same `<label>` as the file `<input>`, and clicking anywhere in
+a label associated with a control activates that control. Fixed by
+pulling the file input out into its own hidden (`className="hidden"`)
+element, triggered only by a separate "Modifier la photo de profil"
+button via `fileInputRef.current?.click()`.
 
 ## i18n (next-intl)
 
@@ -334,8 +436,8 @@ the real `<html>`/`<body>`/`NextIntlClientProvider` live in
 `src/app/[locale]/layout.tsx`.
 
 Fully translated (fr+en) — the pages a foreign visitor hits first: home,
-signup, login, créateur/paiement profile page, payment-return page.
-**Dashboard and `/parametres` stay French-only for now**, by design
+signup, login, créateur/paiement profile page, payment-return page,
+explorer. **Dashboard and `/parametres` stay French-only for now**, by design
 (lower priority for this MVP) — adding their keys to
 `messages/{fr,en}.json` later needs no structural change. Internal
 navigation must use the locale-aware `Link`/`redirect`/`useRouter` from
@@ -359,8 +461,19 @@ always get picked up by control-flow analysis the same way `next/navigation`'s d
   floor (can't be bypassed via UPDATE or via `config`), both deadline-cron
   cases, the new offer types + `video`'s libelle exemption vs. every
   other type's strict one-per-type rule, pseudo format/case-insensitive
-  uniqueness/reserved words, `repondu_at` tracking, and that the
-  classement views are rank-only and opt-in-only. **This is the real
+  uniqueness/reserved words, `repondu_at` tracking, that the
+  classement views are rank-only and opt-in-only, `nom_affichage`'s
+  length constraint, `'explorer'` landing in the reserved-pseudo list,
+  `profils_explorables`'s exact visibility rule (has an active offre,
+  not masked, and never leaks `masque_exploration` itself), and the
+  pseudo cooldown trigger — including the two failure modes that matter
+  most: a repeat change inside the 30-day window is rejected, and
+  directly backdating `pseudo_modifie_at` in the same request (the RLS
+  bypass an app-only check couldn't stop) still doesn't unlock it. The
+  cooldown's "time has passed" case is tested by disabling the trigger
+  as the test harness (`alter table users disable/enable trigger
+  trg_enforce_pseudo_cooldown`) to backdate the timestamp, since the
+  trigger itself refuses to let a normal UPDATE do that. **This is the real
   proof that constraints hold — always extend this file rather than just
   describing new DB behavior in prose.**
 - `supabase/tests/stub_auth.sql` fakes just enough of Supabase's `auth`
@@ -381,11 +494,23 @@ always get picked up by control-flow analysis the same way `next/navigation`'s d
 
 - `contenu_debloque`/`evenement_live` feature flags default **on** (see
   `parametres_plateforme` above), unlike the other flags.
-- No public créateur directory/browse page — traffic is meant to come
-  from a créateur sharing their own `/createur/[id]` or `/@pseudo` link
-  on their existing social bio, matching how the identity-verification
-  flow (external social link) and referral links already work. Easy to
-  add later (`profils_publics` already supports the query).
+- **Reversed in `0009`:** "no public créateur directory" (the original
+  call was that traffic would come only from a créateur sharing their own
+  link) is no longer true — `/explorer` now exists, per explicit
+  instruction, and visibility there defaults **on**: any créateur with an
+  active offre is listed unless they opt out via `masque_exploration`.
+  This is the opposite default direction from `classement_public` (opt-in)
+  on purpose — the instruction that added it was explicit that exploration
+  should default to visible. Because that default could surprise someone
+  running a sensitive/low-profile use case (a pastor collecting church
+  donations, say) without asking for exposure, `POST /api/offres`
+  computes `isFirstOffre` (true iff the créateur had zero offres before
+  this call — self-limiting without a persisted "already shown" flag,
+  since offres are never deleted) and `OffresManager` shows a one-time
+  dismissible notice on that first creation, linking to `/parametres`.
+  Don't mistake this for a second "are you sure" gate — it's
+  informational only, the offre is created either way; it just makes sure
+  the default is never silent.
 - Ranking leaderboards show rank only, nothing else, per an explicit
   instruction — no supporting counts/dates/amounts, even non-monetary
   ones.

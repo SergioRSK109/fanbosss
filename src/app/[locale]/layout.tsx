@@ -1,9 +1,11 @@
 import type { Metadata, Viewport } from "next";
 import { hasLocale } from "next-intl";
 import { NextIntlClientProvider } from "next-intl";
+import { getTranslations } from "next-intl/server";
 import { notFound } from "next/navigation";
 import { Poppins } from "next/font/google";
 import { routing } from "@/i18n/routing";
+import { Link } from "@/i18n/navigation";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ServiceWorkerRegistration } from "@/components/ServiceWorkerRegistration";
 import "./globals.css";
@@ -45,12 +47,20 @@ export default async function LocaleLayout({
     notFound();
   }
 
+  const t = await getTranslations({ locale, namespace: "Nav" });
+
   return (
     <html lang={locale} className={`${poppins.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col font-sans">
         <NextIntlClientProvider>
           <ServiceWorkerRegistration />
-          <div className="flex justify-end px-4 py-3">
+          <div className="flex items-center justify-between px-4 py-3">
+            <Link
+              href="/explorer"
+              className="text-sm font-semibold text-brand-600 dark:text-brand-300"
+            >
+              🔎 {t("explorer")}
+            </Link>
             <LanguageSwitcher />
           </div>
           {children}

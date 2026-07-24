@@ -11,6 +11,10 @@ const PHOTO_SIGNED_URL_EXPIRY_SECONDS = 60 * 60 * 24; // 24h
 
 export interface CreateurProfileData {
   createurId: string;
+  // Resolved display name -- nom_affichage if the créateur set one, else
+  // their pseudo, else null (callers fall back to a generic translated
+  // label; see CreateurProfileView).
+  displayName: string | null;
   bio: string | null;
   photoUrl: string | null;
   lienReseauSocial: string | null;
@@ -33,6 +37,18 @@ export interface CreateurProfileData {
 // whatever order Postgres happens to return, which isn't guaranteed and
 // isn't insertion order either once rows are updated. Stable sort:
 // everything else keeps its existing relative order.
+// nom_affichage takes priority over pseudo -- it's the field a créateur
+// explicitly chose as their public display name; pseudo is the technical,
+// URL-safe handle, a reasonable second choice but not what most people
+// would pick to be called. Empty string is treated the same as null (a
+// blank nom_affichage shouldn't shadow a real pseudo).
+export function resolveDisplayName(
+  nomAffichage: string | null,
+  pseudo: string | null,
+): string | null {
+  return nomAffichage?.trim() || pseudo || null;
+}
+
 export function sortOffresDonFirst<T extends { type: OffreType }>(offres: T[]): T[] {
   return [...offres].sort((a, b) => {
     if (a.type === "don" && b.type !== "don") return -1;
@@ -57,7 +73,7 @@ export async function getCreateurProfileData(
   ] = await Promise.all([
     supabase
       .from("profils_publics")
-      .select("id, bio, photo_r2_key, lien_reseau_social")
+      .select("id, bio, photo_r2_key, lien_reseau_social, pseudo, nom_affichage")
       .eq("id", createurId)
       .single(),
     supabase
@@ -91,6 +107,7 @@ export async function getCreateurProfileData(
 
   return {
     createurId,
+    displayName: resolveDisplayName(profil.nom_affichage, profil.pseudo),
     bio: profil.bio,
     photoUrl,
     lienReseauSocial: profil.lien_reseau_social,

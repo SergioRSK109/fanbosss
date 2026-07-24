@@ -2,6 +2,7 @@ import { redirect, Link } from "@/i18n/navigation";
 import { ParametresForm } from "@/components/ParametresForm";
 import { getSignedDownloadUrl } from "@/lib/r2";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { pseudoLockedUntil } from "@/lib/validation";
 
 export default async function ParametresPage({
   params,
@@ -21,7 +22,9 @@ export default async function ParametresPage({
 
   const { data: profil } = await supabase
     .from("users")
-    .select("pseudo, bio, lien_reseau_social, classement_public, photo_r2_key")
+    .select(
+      "nom_affichage, pseudo, pseudo_modifie_at, bio, lien_reseau_social, classement_public, masque_exploration, photo_r2_key",
+    )
     .eq("id", user.id)
     .single();
 
@@ -39,10 +42,13 @@ export default async function ParametresPage({
       </Link>
       <h1 className="mb-6 mt-2 text-2xl font-bold">Réglages du profil</h1>
       <ParametresForm
+        nomAffichage={profil?.nom_affichage ?? null}
         pseudo={profil?.pseudo ?? null}
+        pseudoLockedUntil={pseudoLockedUntil(profil?.pseudo_modifie_at ?? null)}
         bio={profil?.bio ?? null}
         lienReseauSocial={profil?.lien_reseau_social ?? null}
         classementPublic={profil?.classement_public ?? false}
+        masqueExploration={profil?.masque_exploration ?? false}
         photoUrl={photoUrl}
       />
     </main>

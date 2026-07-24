@@ -41,7 +41,8 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
     evenement_live: t("offerTypes.evenement_live"),
   };
 
-  const { createurId, bio, photoUrl, lienReseauSocial, offres, ranks } = profile;
+  const { createurId, displayName, bio, photoUrl, lienReseauSocial, offres, ranks } =
+    profile;
   const hasRanks =
     ranks.volume !== null || ranks.reactivite !== null || ranks.progression !== null;
 
@@ -67,9 +68,7 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
             </div>
           )}
 
-          <h1 className="text-xs font-semibold uppercase tracking-wide text-white/70">
-            {t("heading")}
-          </h1>
+          <h1 className="text-xl font-bold text-white">{displayName ?? t("heading")}</h1>
 
           {bio && (
             <p className="max-w-xs text-sm leading-relaxed text-white/95">{bio}</p>

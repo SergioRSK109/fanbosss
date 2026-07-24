@@ -2,6 +2,22 @@ import { z } from "zod";
 
 export const WHATSAPP_PRIX_MINIMUM = 20;
 
+// Mirrors the DB trigger's `interval '30 days'` (migration 0010) exactly
+// -- shared by /api/profil (server-side enforcement) and the réglages
+// page (telling the user when they'll be able to change it again) so the
+// two never drift out of sync.
+export const PSEUDO_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000;
+
+// Null means "not locked": either the pseudo was never changed, or the
+// cool-down has already elapsed.
+export function pseudoLockedUntil(pseudoModifieAt: string | null): string | null {
+  if (!pseudoModifieAt) {
+    return null;
+  }
+  const unlockAt = new Date(pseudoModifieAt).getTime() + PSEUDO_COOLDOWN_MS;
+  return unlockAt > Date.now() ? new Date(unlockAt).toISOString() : null;
+}
+
 export const OFFRE_TYPES = [
   "video",
   "don",
@@ -26,6 +42,12 @@ export const creerOffreSchema = z
     // ...). Every other type keeps a single row with libelle left null.
     libelle: z.string().trim().min(1).optional(),
     config: z.record(z.string(), z.unknown()).optional(),
+    // Was missing entirely until this field was added, which meant the
+    // désactiver/réactiver toggle in OffresManager silently never took
+    // effect: the POST /api/offres route only ever wrote the columns zod
+    // let through, so every offre stayed at the table's actif=true
+    // default forever regardless of what the client sent.
+    actif: z.boolean().optional(),
   })
   .refine((offre) => offre.type === "don" || offre.prix !== undefined, {
     message: "le prix est requis pour ce type d'offre",
@@ -64,7 +86,17 @@ export const PSEUDO_MOTS_RESERVES = [
   "mes-transactions",
   "paiement",
   "parametres",
+  "explorer",
 ];
+
+// Shared by the /@pseudo lookup and the /explorer search box: ILIKE
+// treats `_` and `%` as wildcards, and `_` is itself a valid pseudo
+// character, so an unescaped search term can match things it shouldn't
+// (e.g. "test_1" matching "testX1"). Escape before handing a raw term to
+// `.ilike()`/`.or()`.
+export function escapeIlike(value: string): string {
+  return value.replace(/[\\%_]/g, (char) => `\\${char}`);
+}
 
 export const parametresProfilSchema = z
   .object({
@@ -76,9 +108,17 @@ export const parametresProfilSchema = z
       })
       .nullable()
       .optional(),
+    // Distinct from pseudo (the technical, URL-safe handle): freeform
+    // display name shown wherever the profile appears publicly. No format
+    // constraint beyond a sane length -- it's never used for routing.
+    nom_affichage: z.string().trim().max(60).nullable().optional(),
     bio: z.string().trim().max(500).nullable().optional(),
     lien_reseau_social: z.string().trim().url().nullable().optional(),
     classement_public: z.boolean().optional(),
+    // Opt-out, independent of classement_public -- see migration 0009:
+    // exploration visibility defaults ON once a créateur has an active
+    // offre, the opposite default direction from the (opt-in) leaderboards.
+    masque_exploration: z.boolean().optional(),
     // Set after a successful upload via POST /api/profil/photo-upload-url
     // + PUT to R2 -- never accepted directly from arbitrary client input
     // without that round-trip, but the schema itself doesn't need to know
