@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { processAutomaticRefund } from "@/lib/refunds";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 
 // Runs hourly, triggered by an external scheduler (see README --
@@ -22,6 +23,15 @@ export async function GET(request: NextRequest) {
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  // Attempts the real CinetPay refund for each transaction the RPC above
+  // just marked 'remboursee' -- a no-op while remboursement_cinetpay_actif
+  // is off (see src/lib/refunds.ts), which it is by default. Never throws,
+  // so a CinetPay failure here can't turn an otherwise-successful cron run
+  // into a 500.
+  for (const row of data ?? []) {
+    await processAutomaticRefund(supabase, row.transaction_id);
   }
 
   return NextResponse.json({ status: "ok", refunded: data ?? [] });
