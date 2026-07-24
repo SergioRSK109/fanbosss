@@ -7,6 +7,7 @@ import { Poppins } from "next/font/google";
 import { routing } from "@/i18n/routing";
 import { Link } from "@/i18n/navigation";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import { Logo } from "@/components/Logo";
 import { ServiceWorkerRegistration } from "@/components/ServiceWorkerRegistration";
 import "./globals.css";
 
@@ -55,13 +56,18 @@ export default async function LocaleLayout({
         <NextIntlClientProvider>
           <ServiceWorkerRegistration />
           <div className="flex items-center justify-between px-4 py-3">
-            <Link
-              href="/explorer"
-              className="text-sm font-semibold text-brand-600 dark:text-brand-300"
-            >
-              🔎 {t("explorer")}
+            <Link href="/" aria-label="FanBoss -- accueil">
+              <Logo className="h-7 w-auto sm:h-8" />
             </Link>
-            <LanguageSwitcher />
+            <div className="flex items-center gap-3">
+              <Link
+                href="/explorer"
+                className="text-sm font-semibold text-brand-600 dark:text-brand-300"
+              >
+                🔎 {t("explorer")}
+              </Link>
+              <LanguageSwitcher />
+            </div>
           </div>
           {children}
         </NextIntlClientProvider>
