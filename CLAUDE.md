@@ -653,6 +653,49 @@ Regression tests: `page.test.ts` under `login/__tests__`,
 both an authenticated and a logged-out caller, without needing a browser
 or a real Supabase project.
 
+## Logout
+
+There was no sign-out path anywhere in the app until now (confirmed by
+grepping for `signOut` before adding this — zero matches). `LogoutButton`
+(`src/components/LogoutButton.tsx`) is a small client component rendered
+in both `/dashboard`'s header (next to "Réglages") and `/parametres`
+(next to "Retour au tableau de bord") — the two pages a logged-in user
+actually lives in, so the control is always reachable without hunting for
+it. Clicking it calls `supabase.auth.signOut()` on the **browser**
+client, then `router.push("/")` + `router.refresh()` (the same
+locale-aware `useRouter` from `@/i18n/navigation` used elsewhere, and the
+same push-then-refresh order `LoginForm` uses in the other direction).
+
+The signOut→redirect sequence is pulled out into a standalone
+`signOutAndRedirect(supabase, router)` export specifically so it's
+unit-testable without a DOM renderer (this project has no
+jsdom/testing-library) — `LogoutButton.test.ts` asserts `signOut()`
+resolves strictly before the navigation calls, so the redirect can never
+race ahead of the session actually being torn down.
+
+**This does invalidate the session server-side, not just locally —
+verified empirically, not assumed**, the same way the logo-click bug
+above was: a real login → click "Se déconnecter" → direct revisit to
+`/dashboard` flow was driven with Playwright against the mock Supabase
+Auth server (see "Logo-click 'logout' bug" above for why that harness
+exists). Three things were confirmed directly, not inferred from reading
+the code:
+1. The browser actually sends `POST /auth/v1/logout?scope=global` — the
+   *default* `signOut()` scope is `"global"`, which revokes the session
+   via the Supabase Auth API itself (not the local-only `"local"` scope),
+   so a copied/replayed refresh token can't resurrect the session either.
+2. The `sb-*-auth-token` cookie is fully gone from the browser context
+   immediately after the click (`@supabase/ssr`'s browser client clears
+   it via its storage adapter's `removeItem`, triggered by `signOut()`)
+   — not just visually hidden by a UI state change.
+3. Directly navigating to `/dashboard` afterward — a fresh request, no
+   client-side router state involved — server-redirects to `/login` and
+   renders a real password form, exactly like a visitor who was never
+   logged in. This is the same `getUser()`-based check every protected
+   page already does (see "Logo-click 'logout' bug" above); logout needed
+   no new server-side guard, only a way to actually clear the session
+   that guard reads.
+
 ## i18n (next-intl)
 
 Locales `fr` (default, unprefixed) / `en` (prefixed `/en`),

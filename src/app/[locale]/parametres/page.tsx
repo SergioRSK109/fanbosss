@@ -1,4 +1,5 @@
 import { redirect, Link } from "@/i18n/navigation";
+import { LogoutButton } from "@/components/LogoutButton";
 import { ParametresForm } from "@/components/ParametresForm";
 import { getSignedDownloadUrl } from "@/lib/r2";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -34,12 +35,15 @@ export default async function ParametresPage({
 
   return (
     <main className="mx-auto max-w-sm p-6">
-      <Link
-        href="/dashboard"
-        className="text-sm font-medium text-foreground-muted hover:text-foreground"
-      >
-        ← Retour au tableau de bord
-      </Link>
+      <div className="flex items-center justify-between">
+        <Link
+          href="/dashboard"
+          className="text-sm font-medium text-foreground-muted hover:text-foreground"
+        >
+          ← Retour au tableau de bord
+        </Link>
+        <LogoutButton />
+      </div>
       <h1 className="mb-6 mt-2 text-2xl font-bold">Réglages du profil</h1>
       <ParametresForm
         nomAffichage={profil?.nom_affichage ?? null}
