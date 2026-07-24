@@ -82,17 +82,25 @@ before being considered done (see "Testing" below for how).
   the trigger) and `/parametres` (telling the user when they can change
   it again). The DB trigger is what actually guarantees it; the JS check
   is only there for a good error message.
-- `bio text` — max 500 chars (`users_bio_max_length`), collected at
-  signup (optional) or edited later
+- `bio text` — max 500 chars (`users_bio_max_length`). **No longer
+  collected at signup** (removed from `SignupForm.tsx` along with
+  `lien_reseau_social`, see below) — only ever set/edited from
+  `/parametres` post-signup now.
 - `photo_r2_key text` — nullable; only ever settable through the
   authenticated upload flow (`/api/profil/photo-upload-url` → PUT to R2 →
   PATCH `/api/profil`), **never collected at signup** (no authenticated
   session yet at that point to key an R2 object against)
-- `lien_reseau_social text` — single link collected at signup (optional),
-  `zod .url()` validated at the API layer. **Since migration `0011`, this
-  is manual-identity-verification-only** — it's no longer editable from
-  `/parametres` and no longer rendered on the public profile. What the
-  profile shows instead is the four columns below.
+- `lien_reseau_social text` — single link, `zod .url()` validated at the
+  API layer. **Since migration `0011`, this is manual-identity-
+  verification-only** — no longer editable from `/parametres`, no longer
+  rendered on the public profile. **Also no longer collected at signup**
+  (`SignupForm.tsx` dropped both this and `bio`) — as of now there is no
+  UI path left that writes this column at all; it's permanently null for
+  every account created after this change. Flagged back to the user when
+  this was removed rather than silently leaving a dead column — if manual
+  identity verification is still needed, it now has to happen some other
+  way (e.g. asked for directly, outside the app) until a new UI path is
+  added. What the profile shows instead is the four columns below.
 - `lien_tiktok text`, `lien_instagram text`, `lien_youtube text`,
   `lien_autre text` — added in `0011`. Simple links (no OAuth, no
   official account linking), each optional, editable in `/parametres`,
@@ -367,6 +375,62 @@ delivery route re-verifies `fan_id = auth.uid() AND statut = 'livree'`
 (or, for `contenu_debloque`/`evenement_live`, the equivalent ownership
 check reading `offre.config` via service-role) before minting a URL.
 
+## Profile photo crop (`PhotoCropper.tsx`, `src/lib/imageCrop.ts`)
+
+Every profile photo goes through a client-side, Instagram-style square
+crop **before** it's ever uploaded — selecting a file in `/parametres`
+opens `PhotoCropper` (pan by dragging, zoom via a range slider, rotate in
+90° steps, all built on a plain `<canvas>`, no cropping library) instead
+of uploading the raw file directly. Confirming re-encodes the visible
+square onto an off-screen `CROP_EXPORT_SIZE` (800×800) canvas and exports
+it with `canvas.toBlob(..., "image/jpeg", 0.9)` — this is what makes the
+upload always a small, consistent JPEG regardless of the source file's
+format (HEIC, PNG...) or dimensions, since the browser's own canvas
+decode/re-encode pipeline handles the conversion uniformly. `ParametresForm`
+never touches the original `File` after that; `file` state only ever
+holds the cropped result, wrapped via `new File([blob], "profil.jpg", {
+type: "image/jpeg" })`.
+
+The crop geometry (`computeDrawGeometry`, `clampOffsetFrac`,
+`drawCropToCanvas` in `src/lib/imageCrop.ts`) is deliberately DOM-free and
+resolution-independent — pan is stored as a fraction of canvas size, not
+raw pixels — so the exact same functions draw both the small interactive
+preview and the final 800×800 export with no risk of the two drifting
+apart, and the math is unit-testable without a real `<canvas>`
+(`imageCrop.test.ts`). Panning is clamped so the (possibly rotated) image
+always fully covers the square; the transform order is pan-in-screen-
+space-*then*-rotate specifically so dragging "right" always moves the
+image right on screen even after a 90°/270° rotation, not along the
+image's own rotated axis.
+
+**Real bug found and fixed here by actually driving the component in a
+browser, not just from reading the code**: the image-loading `useEffect`
+originally had no cancellation guard, so under React Strict Mode's
+dev-mode double-invoke (mount → cleanup → mount again), the *first*
+`Image`'s `onerror` could fire after its own `objectUrl` was already
+revoked by that first cleanup — showing a false "format not supported"
+error even though the second, real load succeeded. Fixed with a
+`cancelled` flag captured in the effect's closure, checked at the top of
+both `onload` and `onerror`.
+
+**Mobile upload bug**: the PUT straight to the presigned R2 URL in
+`ParametresForm`'s main submit never checked `response.ok` — a failed
+upload (bad network, an R2/signature rejection) silently fell through and
+still wrote a `photo_r2_key` pointing at nothing, appearing later as "the
+photo just doesn't show up" with no error anywhere. Now checked, throwing
+an error with the HTTP status and (truncated) response body through the
+same `useSaveStatus` error path as everything else. The prime suspect for
+why this specifically hit mobile: `getSignedUploadUrl` (`src/lib/r2.ts`)
+signs the presigned URL with a specific `ContentType`, which the actual
+PUT must match exactly or R2 rejects it — before this change, that
+`ContentType` was whatever `file.type` happened to be for the raw
+picked file, which for a phone camera photo can be empty or unusual.
+Since every photo is now cropped into a real `image/jpeg` blob before
+upload (above), that content-type mismatch risk — and the multi-MB
+mobile file size — are both gone by construction. If the bug turns out to
+still reproduce on a real device after this, the fix above means it'll at
+least surface a real, specific error message instead of failing silently.
+
 ## Public handle (`/@pseudo`)
 
 Route is `src/app/[locale]/[handle]/page.tsx` — **deliberately not** a
@@ -535,7 +599,9 @@ always get picked up by control-flow analysis the same way `next/navigation`'s d
 - `npm test` (Vitest): HMAC verification, webhook handler branching
   (don/contenu_debloque/evenement_live → immediate validation, video →
   not), signed-URL delivery routes (auth/ownership/status checks before
-  minting a URL), the `[handle]` route's percent-decoding, zod schemas.
+  minting a URL), the `[handle]` route's percent-decoding, zod schemas,
+  the photo-crop geometry (`imageCrop.test.ts` — covers scaling, the
+  90°/270° effective-dimension swap, and pan clamping on both axes).
 - `npm run test:sql` (`supabase/tests/run_sql_tests.sh` +
   `checklist_2_3.sql`): creates a throwaway Postgres database (via
   `sudo -u postgres psql`, **not** Docker — Docker's daemon isn't running

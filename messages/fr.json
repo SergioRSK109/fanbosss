@@ -29,8 +29,6 @@
     "email": "Email",
     "phone": "Téléphone (WhatsApp)",
     "phoneNumberPlaceholder": "900000000",
-    "bio": "Bio (facultatif)",
-    "socialLinkLabel": "Lien réseau social (TikTok, Instagram... facultatif)",
     "password": "Mot de passe",
     "submit": "Créer mon compte",
     "submitting": "Création...",

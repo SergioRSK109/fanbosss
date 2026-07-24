@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { buttonClass } from "@/components/ui/button-styles";
 import { inputClass, labelClass } from "@/components/ui/field-styles";
 import { ZoomablePhoto } from "@/components/ui/ZoomablePhoto";
+import { PhotoCropper } from "@/components/PhotoCropper";
 import { PSEUDO_COOLDOWN_MS } from "@/lib/validation";
 
 const SAVED_MESSAGE_TIMEOUT_MS = 3000;
@@ -116,6 +117,11 @@ export function ParametresForm({
   const [classementValue, setClassementValue] = useState(classementPublic);
   const [masqueExplorationValue, setMasqueExplorationValue] = useState(masqueExploration);
   const [file, setFile] = useState<File | null>(null);
+  // The raw file straight from the OS picker, before cropping -- opens
+  // PhotoCropper when set. Never uploaded directly: `file` (above) only
+  // ever gets set to the cropped, re-encoded result once the créateur
+  // confirms the crop.
+  const [cropFile, setCropFile] = useState<File | null>(null);
   // Forces the (uncontrolled) file input to remount and drop its displayed
   // filename after a successful upload -- browsers don't allow clearing a
   // file input's value any other way, and without this a second click on
@@ -185,11 +191,23 @@ export function ParametresForm({
           throw new Error(uploadUrlBody.error ?? "upload de la photo impossible");
         }
 
-        await fetch(uploadUrlBody.uploadUrl, {
+        const putResponse = await fetch(uploadUrlBody.uploadUrl, {
           method: "PUT",
           headers: { "Content-Type": file.type },
           body: file,
         });
+        if (!putResponse.ok) {
+          // This response was never checked before -- a failed PUT (bad
+          // network, R2 rejecting the request) used to be silently
+          // ignored and the profile still got pointed at an r2_key with
+          // nothing behind it. Surface exactly what happened instead.
+          const detail = await putResponse.text().catch(() => "");
+          throw new Error(
+            `échec de l'envoi de la photo (HTTP ${putResponse.status})${
+              detail ? ` : ${detail.slice(0, 200)}` : ""
+            }`,
+          );
+        }
 
         payload.photo_r2_key = uploadUrlBody.r2Key;
       }
@@ -203,8 +221,24 @@ export function ParametresForm({
     }
   }
 
+  function handleCropCancel() {
+    setCropFile(null);
+    setFileInputKey((key) => key + 1);
+  }
+
+  function handleCropConfirm(blob: Blob) {
+    setFile(new File([blob], "profil.jpg", { type: "image/jpeg" }));
+    setCropFile(null);
+    setFileInputKey((key) => key + 1);
+    mainSave.dismiss();
+  }
+
   return (
     <>
+      {cropFile && (
+        <PhotoCropper file={cropFile} onCancel={handleCropCancel} onConfirm={handleCropConfirm} />
+      )}
+
       <form onSubmit={handleMainSubmit} className="flex flex-col gap-4">
         <div className="flex flex-col gap-1.5">
           <span className="text-sm font-medium text-foreground">Photo de profil</span>
@@ -228,15 +262,17 @@ export function ParametresForm({
               Modifier la photo de profil
             </button>
           </div>
-          {file && <span className="text-sm text-foreground-muted">{file.name}</span>}
+          {file && <span className="text-sm text-foreground-muted">Nouvelle photo prête à enregistrer.</span>}
           <input
             ref={fileInputRef}
             key={fileInputKey}
             type="file"
             accept="image/*"
             onChange={(event) => {
-              setFile(event.target.files?.[0] ?? null);
-              mainSave.dismiss();
+              const selected = event.target.files?.[0];
+              if (selected) {
+                setCropFile(selected);
+              }
             }}
             className="hidden"
           />
