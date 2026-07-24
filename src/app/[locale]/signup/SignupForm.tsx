@@ -6,6 +6,7 @@ import { useState } from "react";
 import { buttonClass } from "@/components/ui/button-styles";
 import { inputClass, labelClass } from "@/components/ui/field-styles";
 import { COUNTRIES } from "@/lib/countries";
+import { getStatesForCountry } from "@/lib/states";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 const DEFAULT_COUNTRY = COUNTRIES[0];
@@ -17,19 +18,39 @@ export function SignupForm() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [countryCode, setCountryCode] = useState(DEFAULT_COUNTRY.code);
   const [phoneNumber, setPhoneNumber] = useState("");
+  const [provinceCode, setProvinceCode] = useState("");
+  const [ville, setVille] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "sent" | "error">(
     "idle",
   );
   const [errorMessage, setErrorMessage] = useState("");
 
   const country = COUNTRIES.find((c) => c.code === countryCode) ?? DEFAULT_COUNTRY;
+  const states = getStatesForCountry(countryCode);
+  const province = states.find((s) => s.code === provinceCode) ?? null;
+
+  function handleCountryChange(code: string) {
+    setCountryCode(code);
+    // The province list is entirely different (or empty) for the new
+    // country -- a previously selected code would silently point at the
+    // wrong region, or at nothing at all, if left in place.
+    setProvinceCode("");
+  }
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
-    setStatus("loading");
     setErrorMessage("");
+
+    if (password !== confirmPassword) {
+      setStatus("error");
+      setErrorMessage(t("passwordMismatch"));
+      return;
+    }
+
+    setStatus("loading");
 
     const telephone = phoneNumber
       ? `${country.dial}${phoneNumber.replace(/\D/g, "")}`
@@ -44,6 +65,8 @@ export function SignupForm() {
         data: {
           telephone,
           pays: country.name,
+          province: province?.name ?? null,
+          ville: ville.trim() || null,
           parrain_id: parrainId,
         },
       },
@@ -93,7 +116,7 @@ export function SignupForm() {
             <div className="flex gap-2">
               <select
                 value={countryCode}
-                onChange={(event) => setCountryCode(event.target.value)}
+                onChange={(event) => handleCountryChange(event.target.value)}
                 className={`${inputClass} w-[8.5rem] min-w-0 px-3`}
               >
                 {COUNTRIES.map((c) => (
@@ -112,6 +135,33 @@ export function SignupForm() {
               />
             </div>
           </label>
+          {states.length > 0 && (
+            <label className={labelClass}>
+              <span>{t("province")}</span>
+              <select
+                value={provinceCode}
+                onChange={(event) => setProvinceCode(event.target.value)}
+                className={`${inputClass} w-full`}
+              >
+                <option value="">{t("provincePlaceholder")}</option>
+                {states.map((s) => (
+                  <option key={s.code} value={s.code}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <label className={labelClass}>
+            <span>{t("city")}</span>
+            <input
+              type="text"
+              value={ville}
+              onChange={(event) => setVille(event.target.value)}
+              maxLength={100}
+              className={`${inputClass} w-full`}
+            />
+          </label>
           <label className={labelClass}>
             <span>{t("password")}</span>
             <input
@@ -120,6 +170,17 @@ export function SignupForm() {
               minLength={8}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
+              className={`${inputClass} w-full`}
+            />
+          </label>
+          <label className={labelClass}>
+            <span>{t("confirmPassword")}</span>
+            <input
+              type="password"
+              required
+              minLength={8}
+              value={confirmPassword}
+              onChange={(event) => setConfirmPassword(event.target.value)}
               className={`${inputClass} w-full`}
             />
           </label>

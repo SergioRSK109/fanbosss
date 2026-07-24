@@ -30,7 +30,12 @@
     "email": "Email",
     "phone": "Téléphone (WhatsApp)",
     "phoneNumberPlaceholder": "900000000",
+    "province": "Province / région",
+    "provincePlaceholder": "Sélectionner...",
+    "city": "Ville",
     "password": "Mot de passe",
+    "confirmPassword": "Confirmer le mot de passe",
+    "passwordMismatch": "Les mots de passe ne correspondent pas.",
     "submit": "Créer mon compte",
     "submitting": "Création...",
     "confirmationSent": "Vérifiez votre boîte mail pour confirmer votre inscription."

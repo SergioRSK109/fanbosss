@@ -30,7 +30,12 @@
     "email": "Email",
     "phone": "Phone (WhatsApp)",
     "phoneNumberPlaceholder": "900000000",
+    "province": "Province / region",
+    "provincePlaceholder": "Select...",
+    "city": "City",
     "password": "Password",
+    "confirmPassword": "Confirm password",
+    "passwordMismatch": "Passwords don't match.",
     "submit": "Create my account",
     "submitting": "Creating...",
     "confirmationSent": "Check your inbox to confirm your signup."
