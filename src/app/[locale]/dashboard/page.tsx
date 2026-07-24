@@ -1,5 +1,6 @@
 import { redirect, Link } from "@/i18n/navigation";
 import { DemandesEnAttente } from "@/components/DemandesEnAttente";
+import { LogoutButton } from "@/components/LogoutButton";
 import { OffresManager } from "@/components/OffresManager";
 import { TransactionActions } from "@/components/TransactionActions";
 import { RankBadge } from "@/components/ui/RankBadge";
@@ -102,12 +103,15 @@ export default async function DashboardPage({
     <main className="mx-auto flex max-w-2xl flex-col gap-8 p-5 pb-16 sm:p-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Mon espace FanBoss</h1>
-        <Link
-          href="/parametres"
-          className="rounded-full border border-border px-3 py-1.5 text-sm font-medium text-foreground-muted transition-transform active:scale-95 hover:text-foreground"
-        >
-          ⚙️ Réglages
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/parametres"
+            className="rounded-full border border-border px-3 py-1.5 text-sm font-medium text-foreground-muted transition-transform active:scale-95 hover:text-foreground"
+          >
+            ⚙️ Réglages
+          </Link>
+          <LogoutButton className="rounded-full border border-border px-3 py-1.5 text-sm font-medium text-foreground-muted transition-transform active:scale-95 hover:text-danger-600 disabled:opacity-50" />
+        </div>
       </div>
 
       <div className="card px-4 py-3 text-sm">
