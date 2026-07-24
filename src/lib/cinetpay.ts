@@ -153,3 +153,55 @@ export async function initiateCinetPayPayment(
 
   return body.data.payment_url;
 }
+
+export interface RefundCinetPayParams {
+  /** Our transaction id -- used to build an idempotency-safe reference. */
+  transactionId: string;
+  /** The original checkout's CinetPay reference (transactions.reference_cinetpay). */
+  referenceCinetpayOriginal: string | null;
+  /** Amount to refund, already adjusted for remboursement_pourcentage -- see src/lib/refunds.ts. */
+  montant: number;
+}
+
+/**
+ * NOT IMPLEMENTED -- deliberately.
+ *
+ * A real, documented CinetPay refund/reversal API endpoint could not be
+ * found. What was checked (see CLAUDE.md "Automatic CinetPay refunds" for
+ * the full account): CinetPay's own documentation site
+ * (docs.cinetpay.com) for a refund/reversal/annulation page under
+ * checkout, transfert, or BO sections; their public SDK repositories; and
+ * general web search for "CinetPay remboursement API" and equivalent
+ * English terms. The only outbound money-movement product found
+ * documented is "Transfert" (a generic payout API), which requires the
+ * recipient's phone number to first be manually added as a contact and
+ * confirmed via an emailed link before any transfer can be sent to it --
+ * structurally incompatible with an unattended automatic refund, and
+ * never confirmed to be tied to reversing a specific checkout transaction
+ * (no original-transaction reference field, no refund-specific fee
+ * contract). Guessing a plausible-looking request shape here would be
+ * worse than not implementing this at all: it would look like it works
+ * while silently failing against the real API, or worse, silently
+ * succeeding against something that isn't actually a refund.
+ *
+ * remboursement_cinetpay_actif (parametres_plateforme) stays off by
+ * design until this is replaced with a real call verified against a
+ * CinetPay sandbox account with a confirmed contract (endpoint, auth, and
+ * whether a refund returns 100% of the fan's payment or the amount net of
+ * CinetPay's commission -- also unconfirmed, hence
+ * remboursement_pourcentage being configurable rather than hardcoded).
+ * src/lib/refunds.ts#processAutomaticRefund already calls this and
+ * safely catches whatever it throws, leaving
+ * transactions.necessite_remboursement_manuel = true for manual handling
+ * -- so this function can stay exactly as-is (throwing) with zero risk to
+ * the rest of the refund flow until it's genuinely ready.
+ */
+export async function refundCinetPayPayment(
+  params: RefundCinetPayParams,
+): Promise<string> {
+  throw new Error(
+    `refundCinetPayPayment() is not implemented (transaction ${params.transactionId}): ` +
+      "no confirmed CinetPay refund API contract was found. " +
+      "See CLAUDE.md 'Automatic CinetPay refunds' before implementing this.",
+  );
+}

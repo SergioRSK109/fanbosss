@@ -1,0 +1,70 @@
+import { describe, expect, it, vi, beforeEach } from "vitest";
+
+vi.mock("@/lib/supabase/server", () => ({
+  createSupabaseServiceRoleClient: vi.fn(),
+}));
+vi.mock("@/lib/refunds", () => ({
+  processAutomaticRefund: vi.fn(),
+}));
+
+import { processAutomaticRefund } from "@/lib/refunds";
+import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
+
+const CRON_SECRET = "test-cron-secret";
+process.env.CRON_SECRET = CRON_SECRET;
+
+function buildRequest(authHeader?: string) {
+  return new Request("http://localhost/api/cron/check-deadlines", {
+    headers: authHeader ? { authorization: authHeader } : {},
+  });
+}
+
+describe("GET /api/cron/check-deadlines", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("rejects a request without the correct bearer secret, before touching the DB", async () => {
+    const { GET } = await import("@/app/api/cron/check-deadlines/route");
+    const response = await GET(buildRequest("Bearer wrong-secret") as never);
+
+    expect(response.status).toBe(401);
+    expect(createSupabaseServiceRoleClient).not.toHaveBeenCalled();
+    expect(processAutomaticRefund).not.toHaveBeenCalled();
+  });
+
+  it("does not attempt any refund if the RPC itself errors", async () => {
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue({
+      rpc: async () => ({ data: null, error: { message: "boom" } }),
+    } as unknown as ReturnType<typeof createSupabaseServiceRoleClient>);
+
+    const { GET } = await import("@/app/api/cron/check-deadlines/route");
+    const response = await GET(buildRequest(`Bearer ${CRON_SECRET}`) as never);
+
+    expect(response.status).toBe(500);
+    expect(processAutomaticRefund).not.toHaveBeenCalled();
+  });
+
+  it("attempts an automatic refund for every transaction the deadline sweep just refunded", async () => {
+    const rows = [
+      { transaction_id: "tx-1", reason: "deadline_acceptation_depassee" },
+      { transaction_id: "tx-2", reason: "deadline_livraison_depassee" },
+    ];
+    const serviceClient = {
+      rpc: async () => ({ data: rows, error: null }),
+    };
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(
+      serviceClient as unknown as ReturnType<typeof createSupabaseServiceRoleClient>,
+    );
+
+    const { GET } = await import("@/app/api/cron/check-deadlines/route");
+    const response = await GET(buildRequest(`Bearer ${CRON_SECRET}`) as never);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.refunded).toEqual(rows);
+    expect(processAutomaticRefund).toHaveBeenCalledTimes(2);
+    expect(processAutomaticRefund).toHaveBeenNthCalledWith(1, serviceClient, "tx-1");
+    expect(processAutomaticRefund).toHaveBeenNthCalledWith(2, serviceClient, "tx-2");
+  });
+});

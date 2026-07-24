@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeCinetPayToken, verifyCinetPaySignature } from "@/lib/cinetpay";
+import { computeCinetPayToken, refundCinetPayPayment, verifyCinetPaySignature } from "@/lib/cinetpay";
 
 const SECRET = "test-secret-key";
 const NOTIFICATION = {
@@ -54,5 +54,23 @@ describe("verifyCinetPaySignature (brief checklist: webhook signature)", () => {
     const validToken = computeCinetPayToken(NOTIFICATION, SECRET);
     const tampered = { ...NOTIFICATION, cpm_amount: "999999" };
     expect(verifyCinetPaySignature(tampered, validToken, SECRET)).toBe(false);
+  });
+});
+
+// Deliberately still unimplemented -- no confirmed CinetPay refund API
+// contract was found (see CLAUDE.md "Automatic CinetPay refunds"). This
+// is a regression guard, not a placeholder to delete: it fails loudly if
+// someone "fixes" this into returning a fake success without ever wiring
+// up a real, confirmed call -- remboursement_cinetpay_actif depends on
+// this staying an explicit failure until that happens.
+describe("refundCinetPayPayment (deliberately not implemented)", () => {
+  it("always throws -- no real refund call exists yet", async () => {
+    await expect(
+      refundCinetPayPayment({
+        transactionId: "tx-1",
+        referenceCinetpayOriginal: "ref-1",
+        montant: 10,
+      }),
+    ).rejects.toThrow(/not implemented/i);
   });
 });

@@ -194,6 +194,54 @@ begin
   raise notice 'PASS: transaction never accepted by its deadline was auto-refunded by the cron function';
 end $$;
 
+-- ---------------------------------------------------------------------
+-- Automatic CinetPay refunds (migration 0014): marking a transaction
+-- 'remboursee' must ALWAYS flag it for the operator's manual-refund
+-- worklist, regardless of remboursement_cinetpay_actif -- see CLAUDE.md
+-- "Automatic CinetPay refunds". This is the DB-level half; the
+-- application-level half (src/lib/refunds.ts clearing this once a real
+-- CinetPay call is confirmed) is covered by refunds.test.ts, since no
+-- HTTP extension exists in this database to call CinetPay from SQL.
+-- ---------------------------------------------------------------------
+do $$
+declare
+  v_flag jsonb;
+  v_pourcentage jsonb;
+begin
+  select valeur into v_flag from parametres_plateforme
+    where cle = 'remboursement_cinetpay_actif';
+  select valeur into v_pourcentage from parametres_plateforme
+    where cle = 'remboursement_pourcentage';
+
+  if v_flag is distinct from 'false'::jsonb then
+    raise exception 'TEST FAILED: remboursement_cinetpay_actif should default to false, got %', v_flag;
+  end if;
+  if v_pourcentage is distinct from '100'::jsonb then
+    raise exception 'TEST FAILED: remboursement_pourcentage should default to 100, got %', v_pourcentage;
+  end if;
+  raise notice 'PASS: remboursement_cinetpay_actif defaults to false, remboursement_pourcentage to 100';
+end $$;
+
+do $$
+declare
+  v_necessite boolean;
+  v_reference text;
+begin
+  -- The '55555555' transaction above was just auto-refunded by
+  -- process_transaction_deadlines() -- confirm the trigger flagged it.
+  select necessite_remboursement_manuel, reference_remboursement_cinetpay
+    into v_necessite, v_reference
+    from transactions where id = '55555555-5555-5555-5555-555555555555';
+
+  if not v_necessite then
+    raise exception 'TEST FAILED: necessite_remboursement_manuel should be true after an automatic refund';
+  end if;
+  if v_reference is not null then
+    raise exception 'TEST FAILED: reference_remboursement_cinetpay should stay null -- no real CinetPay call was ever made from SQL';
+  end if;
+  raise notice 'PASS: an automatic refund flags necessite_remboursement_manuel and never fabricates a reference';
+end $$;
+
 -- A second, unrelated case: a video transaction that WAS accepted (validee)
 -- but never delivered must also be refunded once deadline_livraison passes
 -- -- the other half of checklist item 3 / brief 0.3.
@@ -312,6 +360,36 @@ begin
   end if;
 
   raise notice 'PASS: accept_transaction records repondu_at (%), used by the réactivité leaderboard', v_repondu_at;
+end $$;
+
+-- refuse_transaction() is the other path into 'remboursee' (besides the
+-- deadline cron) -- must flag necessite_remboursement_manuel exactly the
+-- same way, via the same handle_transaction_remboursement trigger.
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('cccccccc-cccc-cccc-cccc-cccccccccccc',
+   '22222222-2222-2222-2222-222222222222',
+   '11111111-1111-1111-1111-111111111111',
+   '33333333-3333-3333-3333-333333333333', 20, 'en_attente');
+
+select set_config('app.current_user_id', '11111111-1111-1111-1111-111111111111', false);
+select refuse_transaction('cccccccc-cccc-cccc-cccc-cccccccccccc');
+select set_config('app.current_user_id', '', false);
+
+do $$
+declare
+  v_statut text;
+  v_necessite boolean;
+begin
+  select statut, necessite_remboursement_manuel into v_statut, v_necessite
+    from transactions where id = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+
+  if v_statut != 'remboursee' then
+    raise exception 'TEST FAILED: refuse_transaction did not mark the transaction remboursee (got %)', v_statut;
+  end if;
+  if not v_necessite then
+    raise exception 'TEST FAILED: refuse_transaction did not flag necessite_remboursement_manuel';
+  end if;
+  raise notice 'PASS: refuse_transaction also flags necessite_remboursement_manuel';
 end $$;
 
 do $$

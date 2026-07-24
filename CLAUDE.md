@@ -4,7 +4,7 @@
 
 This section is a working reference for picking this project back up in a
 new session without re-deriving context. It reflects the schema and code
-as of migration `0013` plus the follow-up fixes after it. When it and the
+as of migration `0014` plus the follow-up fixes after it. When it and the
 actual code disagree, the code is correct — update this file, don't trust
 it blindly.
 
@@ -37,7 +37,7 @@ account/access/secret/bucket, `CRON_SECRET`, `NEXT_PUBLIC_APP_URL`).
 
 ## Database schema (current, post-migration 0011)
 
-Migrations are strictly incremental (`supabase/migrations/0001`...`0013`)
+Migrations are strictly incremental (`supabase/migrations/0001`...`0014`)
 — never rewritten, never a `DROP`/recreate. Each one has been applied and
 verified against both an empty DB and one seeded with pre-existing data
 before being considered done (see "Testing" below for how).
@@ -211,6 +211,13 @@ reinitialiser-mot-de-passe`.
   (`process_transaction_deadlines`) so a no-response auto-refund is never
   counted as "responsive".
 - `created_at timestamptz`
+- `reference_remboursement_cinetpay text`, `remboursement_tentative_a
+  timestamptz`, `montant_rembourse numeric`,
+  `necessite_remboursement_manuel boolean not null default false` —
+  added in `0014`, see "Automatic CinetPay refunds" below. Live on
+  `transactions` rather than `paiements` because a `paiements` row isn't
+  guaranteed to exist yet at refund time (the acceptation-deadline refund
+  path fires while still `en_attente`).
 
 ### `paiements`
 One row per transaction (unique FK), created by trigger
@@ -240,6 +247,11 @@ Feature-flag key/value store, seeded in `0004`:
 these two ship fully built and are already part of the standard offer
 creation flow, so hiding them by default didn't make sense; flip to
 `false` in this table any time to hold them back, no redeploy needed).
+Plus `remboursement_cinetpay_actif` (default **`false`**) and
+`remboursement_pourcentage` (default `100`) — added in `0014`, see
+"Automatic CinetPay refunds" below. Unlike the flags above, these two are
+actually read by the application (`src/lib/refunds.ts`) — the others are
+still unconsulted placeholders as of this writing.
 
 ### `reports`
 `reporter_id`, `reported_user_id`, `type` (`signalement`/`blocage`),
@@ -374,6 +386,122 @@ back and the external scheduler can be retired.
 - No transaction row exists before payment succeeds — `initiate` never
   writes to the DB, only calls CinetPay's init API and passes
   `{fanId, offreId}` through `cpm_custom` for the webhook to reconstruct.
+
+## Automatic CinetPay refunds (migration `0014`)
+
+**A real, dangerous gap, found by actually reading the code rather than
+assuming**: marking a transaction `remboursee` (the deadline cron,
+`refuse_transaction`) has only ever changed our own bookkeeping —
+`paiements.statut_paiement = 'rembourse'` — via a plain SQL `UPDATE`.
+Confirmed by reading `process_transaction_deadlines()`,
+`handle_transaction_remboursement()`, and `refuse_transaction()` in full,
+and by grepping the entire `src/` tree for `refund`/`cinetpay.com`: the
+only outbound CinetPay call anywhere in this codebase is
+`initiateCinetPayPayment()` (checkout initialization). No refund/reversal
+call exists. No HTTP extension (`pg_net`, `http`) is even installed in
+Postgres — only `pgcrypto` — so the database layer has no technical way to
+make one either. **A fan whose transaction gets auto-refunded today does
+not get their money back.**
+
+**CinetPay's refund API documentation could not be found publicly** —
+flagged rather than guessed at, per explicit instruction. Checked:
+`docs.cinetpay.com`'s checkout/notification/verification/transfert pages
+(via web search, since the domain itself is blocked by this sandbox's
+network policy), CinetPay's public SDK repositories, and general search
+for "CinetPay remboursement/refund/reversal API". The only outbound
+money-movement product found documented is **Transfert** (a generic
+payout API, separate from Checkout) — but it requires the recipient's
+phone number to first be manually added as a contact and confirmed via an
+emailed link before any transfer can be sent, which is structurally
+incompatible with an unattended automatic refund, and was never confirmed
+to even apply to reversing a specific checkout transaction (no
+original-transaction reference field, no refund-specific fee contract
+documented). Guessing a plausible-looking request shape would be worse
+than not implementing this at all.
+
+**What's built instead — real infrastructure, stubbed API call**:
+- `transactions` gained four columns (not `paiements` — a `paiements` row
+  only exists once a transaction reaches `validee`
+  (`create_paiement_on_validation()`), but the acceptation-deadline
+  refund path fires while a transaction is still `en_attente`, before any
+  `paiements` row exists; `transactions` always exists at refund time,
+  for both refund paths): `reference_remboursement_cinetpay` (null until
+  a real refund is confirmed — this is the idempotency key),
+  `remboursement_tentative_a` (timestamp set *before* the outbound call,
+  not after — so a request that times out on our side but may have
+  succeeded on CinetPay's is remembered as "attempted"),
+  `montant_rembourse` (the actual refunded amount, once known), and
+  `necessite_remboursement_manuel boolean not null default false`.
+- `handle_transaction_remboursement()` (the trigger) now **always** sets
+  `necessite_remboursement_manuel = true` the moment a transaction becomes
+  `remboursee`, regardless of the feature flag below. This is the safe
+  default: the real CinetPay call can only ever happen from application
+  code (no HTTP extension), so the DB layer cannot itself attempt or
+  confirm a refund — it can only flag intent. Whatever clears the flag
+  does so from `src/lib/refunds.ts`, and only after a *confirmed* success.
+  If nothing ever clears it — flag off, the call fails, or a future
+  contributor forgets to wire something in — it just stays `true` forever,
+  which is the point: nothing is silently lost track of. (The trigger's
+  self-referential `UPDATE transactions ... WHERE id = new.id` from
+  within its own `AFTER UPDATE ON transactions` trigger is safe, not an
+  infinite loop — it re-fires the trigger once more, but by then
+  `old.statut = new.statut = 'remboursee'` already, so the `IF` condition
+  is false and it stops.)
+- `parametres_plateforme` gained two entries, same pattern as the
+  existing flags: `remboursement_cinetpay_actif` (boolean, **defaults
+  false** — the master switch; never flip this on before
+  `refundCinetPayPayment()` below is implemented against a contract
+  confirmed directly with CinetPay and tested against a real sandbox
+  account) and `remboursement_pourcentage` (number 0–100, **defaults
+  100**) — the percentage of the original amount to refund, configurable
+  rather than hardcoded because whether a CinetPay refund returns the
+  fan's full payment or the amount net of CinetPay's own commission isn't
+  confirmed yet; adjust this key once that's known, no redeploy needed.
+- `src/lib/cinetpay.ts#refundCinetPayPayment()` is a **documented stub
+  that always throws** — see its doc comment for the full account of what
+  was searched. This is deliberate and is itself covered by a regression
+  test (`cinetpay.test.ts`) asserting it still throws, specifically so
+  nobody "fixes" it into a fake success without first replacing it with a
+  real, confirmed call.
+- `src/lib/refunds.ts#processAutomaticRefund(supabase, transactionId)` is
+  the orchestrator, called right after both refund paths
+  (`/api/cron/check-deadlines` for the deadline sweep,
+  `/api/transactions/[id]/refuse` for a créateur's manual refusal — the
+  latter via the **service-role** client, since `transactions` has no
+  authenticated-user UPDATE policy at all; `refuse_transaction()` already
+  re-verified `createur_id = auth.uid()` before this point, so this isn't
+  bypassing that check, just writing follow-up columns RLS wouldn't allow
+  the créateur to touch directly). It never throws — a CinetPay failure
+  must never turn an otherwise-successful cron run or refusal into a
+  user-facing error; `necessite_remboursement_manuel` staying `true` is
+  the correct outcome of any failure, not something to retry blindly. Full
+  idempotency chain, checked in order before ever calling
+  `refundCinetPayPayment()`: (1) transaction not `remboursee` → no-op;
+  (2) `reference_remboursement_cinetpay` already set → already confirmed,
+  no-op; (3) feature flag off → no-op (the trigger's marker already
+  covers it); (4) `remboursement_tentative_a` already set → a previous
+  attempt exists with no confirmed outcome — genuinely ambiguous (real
+  failure vs. a timeout that actually succeeded on CinetPay's side), and
+  since no confirmed "check refund status" endpoint exists either to
+  disambiguate, the only safe move is to **never blindly retry** and leave
+  it on the manual worklist. Only once all four checks pass does it record
+  the attempt timestamp, compute the amount via
+  `computeRefundAmount(montant, pourcentage)`, and call the (stubbed)
+  refund function.
+- Tested at every layer: `refunds.test.ts` (idempotency in all four
+  directions above, percentage calculation, that a failure never throws
+  out of `processAutomaticRefund`), `cinetpay.test.ts` (the stub always
+  throws), route tests for both call sites (refund attempted exactly when
+  expected, never on an auth/RPC failure), and the SQL checklist (the
+  trigger always sets `necessite_remboursement_manuel` for both refund
+  paths, and the two `parametres_plateforme` defaults are correct).
+
+**Before flipping `remboursement_cinetpay_actif` on**: implement
+`refundCinetPayPayment()` against a contract confirmed directly with
+CinetPay (exact endpoint, authentication, and the refund-fee/percentage
+question above), test it against a real CinetPay sandbox account, then
+flip the flag — no redeploy needed for the flag itself, only for the
+real implementation replacing the stub.
 
 ## Video/content delivery (brief 0.5)
 
@@ -917,10 +1045,18 @@ always get picked up by control-flow analysis the same way `next/navigation`'s d
   `[]`, no duplicate codes within a country, and every real `COUNTRIES`
   entry has at least one province), `/auth/callback`'s `safeRedirectPath`
   (`route.test.ts` — only a same-origin relative path is ever followed,
-  see "Password reset & change"), and the proxy matcher itself
+  see "Password reset & change"), the proxy matcher itself
   (`src/__tests__/proxy.test.ts` — asserts against the real shipped
   `config.matcher` regex, not a copy of it, that `/api` and `/auth` stay
-  excluded from next-intl's rewrite while real `[locale]` pages don't).
+  excluded from next-intl's rewrite while real `[locale]` pages don't),
+  and the automatic-refund idempotency chain (`refunds.test.ts` — all four
+  no-op conditions in order, the configurable-percentage calculation, and
+  that a `refundCinetPayPayment()` failure never throws out of
+  `processAutomaticRefund`; `cinetpay.test.ts` — the refund stub always
+  throws; route tests for `/api/cron/check-deadlines` and
+  `/api/transactions/[id]/refuse` — the refund attempt fires exactly when
+  expected and never on an auth/RPC failure; see "Automatic CinetPay
+  refunds").
 - `npm run test:sql` (`supabase/tests/run_sql_tests.sh` +
   `checklist_2_3.sql`): creates a throwaway Postgres database (via
   `sudo -u postgres psql`, **not** Docker — Docker's daemon isn't running
@@ -948,7 +1084,11 @@ always get picked up by control-flow analysis the same way `next/navigation`'s d
   max-length constraints and, by inserting directly into the stubbed
   `auth.users` with a `raw_user_meta_data` payload, that
   `handle_new_auth_user` actually picks both up from signup metadata (and
-  correctly leaves both `null` when they're omitted).
+  correctly leaves both `null` when they're omitted). Also covers the
+  automatic-refund trigger: both refund paths
+  (`process_transaction_deadlines`, `refuse_transaction`) always set
+  `necessite_remboursement_manuel`, and `remboursement_cinetpay_actif`/
+  `remboursement_pourcentage` seed to their correct defaults.
 - `supabase/tests/stub_auth.sql` fakes just enough of Supabase's `auth`
   schema (an `auth.uid()` reading `app.current_user_id`, plus the
   `authenticated`/`anon`/`service_role` roles) for the real migrations to
