@@ -373,6 +373,18 @@ begin
   end;
 end $$;
 
+do $$
+begin
+  begin
+    update users set pseudo = 'reinitialiser-mot-de-passe'
+      where id = '22222222-2222-2222-2222-222222222222';
+    raise exception
+      'TEST FAILED: the password-reset route name was accepted as a pseudo';
+  exception when check_violation then
+    raise notice 'PASS: the password reset routes are rejected as a pseudo (reserved-word list kept in sync)';
+  end;
+end $$;
+
 update users set nom_affichage = 'Sergio le Créateur'
   where id = '11111111-1111-1111-1111-111111111111';
 

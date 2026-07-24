@@ -6,6 +6,7 @@ import { buttonClass } from "@/components/ui/button-styles";
 import { inputClass, labelClass } from "@/components/ui/field-styles";
 import { ZoomablePhoto } from "@/components/ui/ZoomablePhoto";
 import { PhotoCropper } from "@/components/PhotoCropper";
+import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { PSEUDO_COOLDOWN_MS } from "@/lib/validation";
 
 const SAVED_MESSAGE_TIMEOUT_MS = 3000;
@@ -176,6 +177,38 @@ export function ParametresForm({
     const result = await bioSave.run(() => patchProfil({ bio: bioValue.trim() || null }));
     if (result) {
       setBioUnlocked(false);
+    }
+  }
+
+  // Mot de passe ----------------------------------------------------------
+  // Unlike pseudo/bio, there's no existing value to display or protect
+  // against overwriting -- but the same hidden-until-"Modifier" affordance
+  // still guards against an accidental change, so it stays locked by
+  // default rather than starting unlocked the way pseudo/bio do for a
+  // first-time (empty) value.
+  const passwordSave = useSaveStatus();
+  const [passwordUnlocked, setPasswordUnlocked] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
+
+  async function handlePasswordSave() {
+    const result = await passwordSave.run(async () => {
+      if (newPassword !== confirmNewPassword) {
+        throw new Error("Les mots de passe ne correspondent pas.");
+      }
+      // No previous-password prompt -- the already-active session is what
+      // authorizes this on Supabase's side, same as the rest of /parametres.
+      const supabase = createSupabaseBrowserClient();
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) {
+        throw new Error(error.message);
+      }
+      return true;
+    });
+    if (result) {
+      setNewPassword("");
+      setConfirmNewPassword("");
+      setPasswordUnlocked(false);
     }
   }
 
@@ -522,6 +555,58 @@ export function ParametresForm({
         )}
         {bioSave.status === "saved" && (
           <p className="text-sm text-success-600">Bio enregistrée.</p>
+        )}
+      </div>
+
+      <div className={`${labelClass} mt-4`}>
+        <span>Mot de passe</span>
+        {!passwordUnlocked ? (
+          <button
+            type="button"
+            onClick={() => setPasswordUnlocked(true)}
+            className={`${buttonClass("outline", "sm")} self-start`}
+          >
+            Modifier le mot de passe
+          </button>
+        ) : (
+          <>
+            <input
+              type="password"
+              value={newPassword}
+              onChange={(event) => {
+                setNewPassword(event.target.value);
+                passwordSave.dismiss();
+              }}
+              placeholder="Nouveau mot de passe"
+              minLength={8}
+              className={`${inputClass} w-full`}
+            />
+            <input
+              type="password"
+              value={confirmNewPassword}
+              onChange={(event) => {
+                setConfirmNewPassword(event.target.value);
+                passwordSave.dismiss();
+              }}
+              placeholder="Confirmer le nouveau mot de passe"
+              minLength={8}
+              className={`${inputClass} w-full`}
+            />
+            <button
+              type="button"
+              disabled={passwordSave.status === "saving"}
+              onClick={handlePasswordSave}
+              className={buttonClass("primary", "sm", "self-start")}
+            >
+              {passwordSave.status === "saving" ? "Enregistrement..." : "Enregistrer"}
+            </button>
+          </>
+        )}
+        {passwordSave.status === "error" && (
+          <p className="text-sm text-danger-600">{passwordSave.errorMessage}</p>
+        )}
+        {passwordSave.status === "saved" && (
+          <p className="text-sm text-success-600">Mot de passe modifié.</p>
         )}
       </div>
     </>

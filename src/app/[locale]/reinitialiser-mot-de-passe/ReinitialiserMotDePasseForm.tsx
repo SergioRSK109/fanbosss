@@ -1,31 +1,40 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { useSearchParams } from "next/navigation";
 import { useState } from "react";
-import { Link, useRouter } from "@/i18n/navigation";
 import { buttonClass } from "@/components/ui/button-styles";
 import { inputClass, labelClass } from "@/components/ui/field-styles";
+import { useRouter } from "@/i18n/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
-export function LoginForm() {
-  const t = useTranslations("Login");
+export function ReinitialiserMotDePasseForm() {
+  const t = useTranslations("ReinitialiserMotDePasse");
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const callbackError = searchParams.get("error");
 
-  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [status, setStatus] = useState<"idle" | "loading" | "done" | "error">(
+    "idle",
+  );
   const [errorMessage, setErrorMessage] = useState("");
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
-    setStatus("loading");
     setErrorMessage("");
 
+    if (password !== confirmPassword) {
+      setStatus("error");
+      setErrorMessage(t("passwordMismatch"));
+      return;
+    }
+
+    setStatus("loading");
+
+    // No previous-password check: the session /auth/callback just
+    // established from the emailed link is what authorizes this, same as
+    // /parametres' password field for an already-logged-in visitor.
     const supabase = createSupabaseBrowserClient();
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { error } = await supabase.auth.updateUser({ password });
 
     if (error) {
       setStatus("error");
@@ -33,51 +42,53 @@ export function LoginForm() {
       return;
     }
 
+    setStatus("done");
     router.push("/dashboard");
     router.refresh();
+  }
+
+  if (status === "done") {
+    return (
+      <main className="mx-auto flex min-h-[70dvh] max-w-sm flex-col justify-center px-5 py-10 text-center">
+        <div className="card flex flex-col items-center gap-3 p-6">
+          <span className="text-4xl">✅</span>
+          <p className="text-foreground">{t("success")}</p>
+        </div>
+      </main>
+    );
   }
 
   return (
     <main className="mx-auto flex min-h-[70dvh] max-w-sm flex-col justify-center px-5 py-10">
       <div className="card flex flex-col gap-6 p-6 shadow-sm">
         <div className="flex flex-col items-center gap-2 text-center">
-          <span className="text-4xl">👋</span>
+          <span className="text-4xl">🔑</span>
           <h1 className="text-2xl font-bold">{t("heading")}</h1>
         </div>
 
-        {callbackError && status !== "error" && (
-          <p className="rounded-2xl bg-danger-500/10 px-4 py-2.5 text-sm text-danger-600">
-            {t("callbackError", { error: callbackError })}
-          </p>
-        )}
-
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <label className={labelClass}>
-            <span>{t("email")}</span>
-            <input
-              type="email"
-              required
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              className={`${inputClass} w-full`}
-            />
-          </label>
-          <label className={labelClass}>
-            <span>{t("password")}</span>
+            <span>{t("newPassword")}</span>
             <input
               type="password"
               required
+              minLength={8}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               className={`${inputClass} w-full`}
             />
           </label>
-          <Link
-            href="/mot-de-passe-oublie"
-            className="self-end text-sm font-medium text-brand-600 dark:text-brand-300"
-          >
-            {t("forgotPassword")}
-          </Link>
+          <label className={labelClass}>
+            <span>{t("confirmPassword")}</span>
+            <input
+              type="password"
+              required
+              minLength={8}
+              value={confirmPassword}
+              onChange={(event) => setConfirmPassword(event.target.value)}
+              className={`${inputClass} w-full`}
+            />
+          </label>
           {status === "error" && (
             <p className="text-sm text-danger-600">{errorMessage}</p>
           )}

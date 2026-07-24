@@ -46,7 +46,25 @@
     "password": "Mot de passe",
     "submit": "Se connecter",
     "submitting": "Connexion...",
+    "forgotPassword": "Mot de passe oublié ?",
     "callbackError": "La confirmation de votre compte a échoué : {error}. Merci de vous connecter à nouveau."
+  },
+  "MotDePasseOublie": {
+    "heading": "Mot de passe oublié",
+    "instructions": "Entrez votre email, nous vous enverrons un lien pour réinitialiser votre mot de passe.",
+    "email": "Email",
+    "submit": "Envoyer le lien",
+    "submitting": "Envoi...",
+    "emailSent": "Si un compte existe avec cet email, un lien de réinitialisation vient d'être envoyé."
+  },
+  "ReinitialiserMotDePasse": {
+    "heading": "Nouveau mot de passe",
+    "newPassword": "Nouveau mot de passe",
+    "confirmPassword": "Confirmer le mot de passe",
+    "passwordMismatch": "Les mots de passe ne correspondent pas.",
+    "submit": "Enregistrer",
+    "submitting": "Enregistrement...",
+    "success": "Mot de passe mis à jour. Redirection..."
   },
   "CreateurProfile": {
     "heading": "Profil créateur",

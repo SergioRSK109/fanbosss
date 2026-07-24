@@ -4,7 +4,7 @@
 
 This section is a working reference for picking this project back up in a
 new session without re-deriving context. It reflects the schema and code
-as of migration `0012` plus the follow-up fixes after it. When it and the
+as of migration `0013` plus the follow-up fixes after it. When it and the
 actual code disagree, the code is correct — update this file, don't trust
 it blindly.
 
@@ -37,7 +37,7 @@ account/access/secret/bucket, `CRON_SECRET`, `NEXT_PUBLIC_APP_URL`).
 
 ## Database schema (current, post-migration 0011)
 
-Migrations are strictly incremental (`supabase/migrations/0001`...`0012`)
+Migrations are strictly incremental (`supabase/migrations/0001`...`0013`)
 — never rewritten, never a `DROP`/recreate. Each one has been applied and
 verified against both an empty DB and one seeded with pre-existing data
 before being considered done (see "Testing" below for how).
@@ -140,10 +140,11 @@ before being considered done (see "Testing" below for how).
   that makes sure this default is never silent.
 
 Reserved pseudo words (kept in sync in **two** places — the DB CHECK
-constraint in `0009` and `PSEUDO_MOTS_RESERVES` in `src/lib/validation.ts`
-— update both if new top-level routes are added):
-`dashboard, signup, login, api, auth, createur, mes-transactions,
-paiement, parametres, explorer`.
+constraint (most recently updated in `0013`) and `PSEUDO_MOTS_RESERVES`
+in `src/lib/validation.ts` — update both if new top-level routes are
+added): `dashboard, signup, login, api, auth, createur, mes-transactions,
+paiement, parametres, explorer, mot-de-passe-oublie,
+reinitialiser-mot-de-passe`.
 
 ### `offres`
 - `id uuid` PK, `createur_id uuid references users(id)`
@@ -764,18 +765,131 @@ the code:
    no new server-side guard, only a way to actually clear the session
    that guard reads.
 
+## Password reset & change
+
+Two separate flows, both landing on `supabase.auth.updateUser({password})`
+but reaching it from different starting points:
+
+**Forgot password** (`/login` → `/mot-de-passe-oublie` →
+`/reinitialiser-mot-de-passe`): the "Mot de passe oublié ?" link on
+`LoginForm.tsx` goes to `/mot-de-passe-oublie`
+(`MotDePasseOublieForm.tsx`), a plain email form calling
+`supabase.auth.resetPasswordForEmail(email, { redirectTo:
+"${origin}/auth/callback?redirect=/reinitialiser-mot-de-passe" })`. This
+deliberately reuses `/auth/callback` — the same PKCE code-exchange route
+signup already uses — rather than inventing a second route that could
+fall into the same trap (see "Email confirmation / password reset link
+404" above, found and fixed while building this). `/auth/callback`
+already supported a `?redirect=` param (added for signup, unused until
+now) that it forwards to after a successful `exchangeCodeForSession()`;
+password reset is the first thing to actually pass a non-default value
+for it. Once redirected to `/reinitialiser-mot-de-passe`
+(`ReinitialiserMotDePasseForm.tsx`) with a now-real session already
+established by the exchange, the créateur sets a new password (with
+confirmation, same client-side-only mismatch check as signup — see
+"Signup" above for why that's client-only by design) and the page calls
+`updateUser({password})` directly, then redirects to `/dashboard`.
+`/mot-de-passe-oublie` and `/reinitialiser-mot-de-passe` were both added
+to `PSEUDO_MOTS_RESERVES` and the matching DB constraint (migration
+`0013`) — every new top-level route needs this, see the pseudo section
+above.
+
+**`redirect` hardened against open-redirect abuse**: since it's now part
+of an emailed link (attacker-visible/craftable, not just an internal
+implementation detail), `/auth/callback/route.ts` exports
+`safeRedirectPath()` which only accepts a same-origin relative path
+(must start with `/`, must not start with `//`) and falls back to
+`/dashboard` otherwise — covered by `route.test.ts`.
+
+**Password change** (`/parametres`, already logged in): a
+"Mot de passe" field in `ParametresForm.tsx`, same hidden-until-
+"Modifier" affordance as pseudo/bio, but always starts locked (unlike
+pseudo/bio, there's no existing value to protect against overwriting,
+but the same click-to-reveal guard against an accidental change still
+applies). Revealing it shows new-password + confirm fields and its own
+"Enregistrer" button (`handlePasswordSave`, using the same
+`useSaveStatus()` hook the rest of the form already shares), which calls
+`supabase.auth.updateUser({password})` on the **browser** client
+directly — no `/api/profil` involved, since password isn't a `users`
+table column. No previous-password re-entry: the already-active session
+is what authorizes the change on Supabase's side (GoTrue's `updateUser`
+throws `AuthSessionMissingError` client-side, before any network call,
+if there's no session at all — there always is one here, since
+`/parametres` itself redirects a logged-out visitor to `/login`).
+
+Both flows were verified end-to-end against the mock Supabase Auth
+server (see "Logo-click 'logout' bug" above for why that harness
+exists, now extended with `/auth/v1/recover`, `grant_type=pkce` token
+exchange, and `PUT /auth/v1/user`): a real `resetPasswordForEmail()`
+call, followed by simulating the emailed link
+(`/auth/callback?redirect=/reinitialiser-mot-de-passe&code=...`), lands
+on a working `/reinitialiser-mot-de-passe` form — in both `fr` (default)
+and `/en/`-prefixed sessions, specifically re-checking the exact
+`/auth/callback` + locale-prefix scenario that had been broken — a
+password mismatch is caught before any network call, a real
+`updateUser({password})` call is made (confirmed via the mock server's
+own request log), and the session remains valid afterward (a direct
+revisit to `/dashboard` doesn't bounce to `/login`). The `/parametres`
+password field was verified the same way: locked by default, reveals on
+click, mismatch blocked, and the real `PUT /auth/v1/user` call is
+visible in the mock server's log once submitted correctly.
+
 ## i18n (next-intl)
 
 Locales `fr` (default, unprefixed) / `en` (prefixed `/en`),
 `localePrefix: "as-needed"`. All pages live under `src/app/[locale]/...`;
 `src/app/api/**` and `src/app/auth/callback` are deliberately **outside**
 `[locale]` (they're not pages; a next-intl rewrite over them would 404).
-`src/proxy.ts` composes next-intl's middleware with the Supabase session
-refresh — the refreshed cookies are written onto the *same* response
-object next-intl produced (redirect/rewrite/pass-through), not a fresh
-one. Root `src/app/layout.tsx` is a bare passthrough (`return children`);
-the real `<html>`/`<body>`/`NextIntlClientProvider` live in
+Being outside `[locale]` in the file tree is necessary but **not
+sufficient** on its own — `src/proxy.ts`'s `config.matcher` must also
+exclude them, or next-intl's middleware rewrites the request into the
+`[locale]` tree anyway before the route handler ever runs. See "Email
+confirmation / password reset link 404" below: this exact gap was found
+live in this codebase (`/api` was already excluded, `/auth` was not) and
+is now fixed by adding `auth` to the matcher's negative lookahead
+alongside `api`. `src/proxy.ts` composes next-intl's middleware with the
+Supabase session refresh — the refreshed cookies are written onto the
+*same* response object next-intl produced (redirect/rewrite/pass-through),
+not a fresh one. Root `src/app/layout.tsx` is a bare passthrough (`return
+children`); the real `<html>`/`<body>`/`NextIntlClientProvider` live in
 `src/app/[locale]/layout.tsx`.
+
+### Email confirmation / password reset link 404 — found and fixed
+
+Investigated while adding password reset (below), which reuses the same
+`/auth/callback` redirect target signup already used. Before trusting
+that target for a second flow, its behavior was actually checked against
+a running dev server rather than assumed correct from the "it's outside
+`[locale]` on purpose" comment already in this file — and it wasn't:
+`curl -v http://localhost:3000/auth/callback?code=test` returned a plain
+**404**, every time, regardless of `Accept-Language` or a `NEXT_LOCALE`
+cookie. The response headers showed why:
+`x-middleware-rewrite: /fr/auth/callback?code=test` — next-intl was
+rewriting the request into the `[locale]` tree, where no
+`app/[locale]/auth/callback` route exists (it deliberately lives outside
+that tree — see above), so it 404s. `localePrefix: "as-needed"` only
+controls whether the *URL bar* shows a prefix for the default locale; it
+does not stop next-intl from doing its internal per-request rewrite that
+every `[locale]` page relies on to resolve at all. `src/proxy.ts`'s
+matcher already excluded `/api` from this rewrite (with a comment
+explaining exactly this failure mode for API routes) but never excluded
+`/auth` — meaning **every signup confirmation link has been 404ing**
+whenever next-intl's rewrite kicked in, unrelated to anything about
+password reset specifically.
+
+Fixed by adding `auth` to the matcher's negative lookahead:
+`"/((?!api|auth|_next|_vercel|.*\\..*).*)"`. Reverified the same way the
+bug was found — `curl -v` against a real dev server, several times, with
+and without an `Accept-Language`/`NEXT_LOCALE` override — `/auth/callback`
+now reaches the route handler directly (no `x-middleware-rewrite` header
+at all) and its own redirect logic runs as written (e.g. `/login?error=...`
+for a bad/expired code), while `/login`, `/en/login`, and `/api/offres`
+were all re-checked to confirm the exclusion didn't regress anything
+else. `/reinitialiser-mot-de-passe` (below) does **not** need this same
+exclusion — it's a real page under `app/[locale]/reinitialiser-mot-de-passe`,
+so it's *supposed* to go through next-intl's rewrite the same way every
+other page does; only routes deliberately living outside `[locale]`
+(`/api/**`, `/auth/**`) need to be excluded from the matcher.
 
 Fully translated (fr+en) — the pages a foreign visitor hits first: home,
 signup, login, créateur/paiement profile page, payment-return page,
@@ -798,10 +912,15 @@ always get picked up by control-flow analysis the same way `next/navigation`'s d
   the photo-crop geometry (`imageCrop.test.ts` — covers scaling, the
   90°/270° effective-dimension swap, and pan clamping on both axes),
   `signOutAndRedirect` (`LogoutButton.test.ts` — signOut() resolves
-  before navigation), and the generated province dataset
-  (`states.test.ts` — RDC's provinces resolve correctly, an
-  unknown/`"OTHER"` code returns `[]`, no duplicate codes within a
-  country, and every real `COUNTRIES` entry has at least one province).
+  before navigation), the generated province dataset (`states.test.ts` —
+  RDC's provinces resolve correctly, an unknown/`"OTHER"` code returns
+  `[]`, no duplicate codes within a country, and every real `COUNTRIES`
+  entry has at least one province), `/auth/callback`'s `safeRedirectPath`
+  (`route.test.ts` — only a same-origin relative path is ever followed,
+  see "Password reset & change"), and the proxy matcher itself
+  (`src/__tests__/proxy.test.ts` — asserts against the real shipped
+  `config.matcher` regex, not a copy of it, that `/api` and `/auth` stay
+  excluded from next-intl's rewrite while real `[locale]` pages don't).
 - `npm run test:sql` (`supabase/tests/run_sql_tests.sh` +
   `checklist_2_3.sql`): creates a throwaway Postgres database (via
   `sudo -u postgres psql`, **not** Docker — Docker's daemon isn't running
@@ -812,7 +931,8 @@ always get picked up by control-flow analysis the same way `next/navigation`'s d
   other type's strict one-per-type rule, pseudo format/case-insensitive
   uniqueness/reserved words, `repondu_at` tracking, that the
   classement views are rank-only and opt-in-only, `nom_affichage`'s
-  length constraint, `'explorer'` landing in the reserved-pseudo list,
+  length constraint, `'explorer'`/the password-reset routes landing in
+  the reserved-pseudo list,
   `profils_explorables`'s exact visibility rule (has an active offre,
   not masked, and never leaks `masque_exploration` itself), and the
   pseudo cooldown trigger — including the two failure modes that matter

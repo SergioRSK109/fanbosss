@@ -39,11 +39,22 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // `/api` MUST stay excluded: next-intl's rewrite targets the
-  // app/[locale] tree, and API routes live outside it -- routing an API
-  // request through next-intl would 404 it. API route handlers already
-  // call supabase.auth.getUser() themselves (which auto-refreshes via the
-  // same SSR cookie cycle), so they don't need the proxy's proactive
-  // refresh the way page navigations do.
-  matcher: ["/((?!api|_next|_vercel|.*\\..*).*)"],
+  // `/api` and `/auth` MUST stay excluded: next-intl's rewrite targets the
+  // app/[locale] tree, and both live outside it -- routing either through
+  // next-intl would 404 it. This was empirically reproduced for
+  // `/auth/callback` (the Supabase email confirmation/password-reset
+  // redirect target): without this exclusion, next-intl still rewrites an
+  // *unprefixed* request for it to `/fr/auth/callback` internally (its
+  // default-locale rewrite applies regardless of localePrefix:"as-needed"
+  // -- that setting only controls whether the URL bar shows a prefix, not
+  // whether the internal rewrite happens), and since there is no
+  // app/[locale]/auth/callback route, that 404s every single confirmation
+  // link. `curl -v` against a real dev server confirms the exact
+  // `x-middleware-rewrite: /fr/auth/callback?code=...` → 404 chain -- see
+  // CLAUDE.md's "Email confirmation / password reset link 404" section.
+  // API route handlers and /auth/callback already call
+  // supabase.auth.getUser()/exchangeCodeForSession() themselves (which
+  // auto-refresh via the same SSR cookie cycle), so neither needs the
+  // proxy's proactive refresh the way page navigations do.
+  matcher: ["/((?!api|auth|_next|_vercel|.*\\..*).*)"],
 };

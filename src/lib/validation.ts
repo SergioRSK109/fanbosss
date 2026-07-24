@@ -87,6 +87,8 @@ export const PSEUDO_MOTS_RESERVES = [
   "paiement",
   "parametres",
   "explorer",
+  "mot-de-passe-oublie",
+  "reinitialiser-mot-de-passe",
 ];
 
 // Shared by the /@pseudo lookup and the /explorer search box: ILIKE
