@@ -19,8 +19,6 @@ export function SignupForm() {
   const [password, setPassword] = useState("");
   const [countryCode, setCountryCode] = useState(DEFAULT_COUNTRY.code);
   const [phoneNumber, setPhoneNumber] = useState("");
-  const [bio, setBio] = useState("");
-  const [lienReseauSocial, setLienReseauSocial] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "sent" | "error">(
     "idle",
   );
@@ -47,8 +45,6 @@ export function SignupForm() {
           telephone,
           pays: country.name,
           parrain_id: parrainId,
-          bio: bio.trim() || null,
-          lien_reseau_social: lienReseauSocial.trim() || null,
         },
       },
     });
@@ -115,26 +111,6 @@ export function SignupForm() {
                 className={`${inputClass} min-w-0 flex-1`}
               />
             </div>
-          </label>
-          <label className={labelClass}>
-            <span>{t("bio")}</span>
-            <textarea
-              value={bio}
-              onChange={(event) => setBio(event.target.value)}
-              maxLength={500}
-              rows={2}
-              className={`${inputClass} w-full`}
-            />
-          </label>
-          <label className={labelClass}>
-            <span>{t("socialLinkLabel")}</span>
-            <input
-              type="url"
-              value={lienReseauSocial}
-              onChange={(event) => setLienReseauSocial(event.target.value)}
-              placeholder="https://instagram.com/..."
-              className={`${inputClass} w-full`}
-            />
           </label>
           <label className={labelClass}>
             <span>{t("password")}</span>
