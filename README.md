@@ -25,10 +25,77 @@ npm run dev
 
 ### Base de données
 
-Appliquer les migrations `supabase/migrations/*.sql` **dans l'ordre** sur
-un projet Supabase (via le SQL editor, ou `supabase db push` avec la CLI
-officielle) — chaque fichier est une migration incrémentale sur le schéma
-existant, jamais un `DROP`/recréation depuis zéro.
+Les migrations `supabase/migrations/*.sql` — toujours incrémentales,
+jamais un `DROP`/recréation depuis zéro — sont appliquées **automatiquement**
+sur le projet Supabase de production par
+`.github/workflows/deploy-migrations.yml` à chaque push sur `main` qui
+touche `supabase/migrations/`. Plus besoin de les copier-coller à la main
+dans le SQL Editor.
+
+#### Configuration requise (une seule fois, côté GitHub)
+
+Le workflow a besoin de trois secrets, à ajouter soi-même dans **GitHub →
+Settings → Secrets and variables → Actions → New repository secret** (ce
+repo : Settings → Secrets and variables → Actions). Ne jamais les coller
+ailleurs (issue, PR, chat) — Claude Code n'a besoin d'aucun de ces secrets
+pour faire son travail.
+
+| Secret GitHub | Où le récupérer dans le dashboard Supabase |
+|---|---|
+| `SUPABASE_ACCESS_TOKEN` | Compte → [Access Tokens](https://supabase.com/dashboard/account/tokens) → **Generate new token**. Voir "Scope du token" ci-dessous avant de le générer. |
+| `SUPABASE_PROJECT_ID` | URL du projet dans le dashboard : `https://supabase.com/dashboard/project/<PROJECT_ID>` — c'est cette référence (ex. `abcdefghijklmnop`), pas le nom du projet. Aussi visible dans Project Settings → General → "Reference ID". |
+| `SUPABASE_DB_PASSWORD` | Project Settings → Database → **Database password**. Si elle a été oubliée, un bouton "Reset database password" y génère une nouvelle valeur (réservé aux rôles Owner/Administrator — voir ci-dessous) ; bien répercuter tout changement dans ce secret GitHub. |
+
+#### Scope du token — recommandation
+
+Un Personal Access Token Supabase hérite **exactement** des permissions du
+compte qui le génère (ce n'est pas un token indépendamment scopable après
+coup). Pour éviter de stocker un secret GitHub avec un accès admin complet
+à toute l'organisation :
+
+1. Dans l'organisation Supabase, inviter (ou utiliser) un membre avec un
+   rôle **Developer, restreint à ce seul projet** (project-scoped role),
+   plutôt que le compte Owner personnel. D'après la matrice de permissions
+   officielle de Supabase, ce rôle peut gérer les données/le schéma de la
+   base (`Data (Database)` → `Manage` ✓, `SQL Editor` → `Run` ✓ — ce dont
+   `db push` a besoin) mais ne peut ni transférer/supprimer le projet, ni
+   changer les paramètres d'organisation, ni ajouter d'autres owners, ni
+   réinitialiser lui-même le mot de passe de la base.
+2. Générer `SUPABASE_ACCESS_TOKEN` depuis **ce** compte restreint, pas
+   depuis le compte Owner.
+
+**Limite honnête à connaître** : `SUPABASE_DB_PASSWORD` reste, lui, un vrai
+mot de passe Postgres — une fois connu, il donne un accès direct complet à
+la base (c'est un identifiant Postgres, pas une permission gérée par le
+tableau de rôles du dashboard Supabase ci-dessus). Aucune option plus
+étroite n'est documentée publiquement pour ce mot de passe spécifique à ce
+jour ; la seule vraie protection est de limiter qui a accès à ce secret
+GitHub (Settings → Secrets ne montre sa valeur à personne après
+l'enregistrement, y compris aux mainteneurs).
+
+#### En cas d'échec en CI
+
+Un `supabase db push` qui échoue (erreur SQL, mauvais secret, connexion
+refusée...) fait échouer le step et donc tout le workflow — aucun
+`continue-on-error` ni `|| true` nulle part dans
+`deploy-migrations.yml`. Concrètement :
+- Le commit/la PR affiche une ❌ rouge dans les status checks GitHub.
+- L'onglet **Actions** du repo montre le run en rouge, avec le message
+  d'erreur exact de `supabase db push` dans les logs du step "Push new
+  migrations".
+- GitHub notifie par email l'auteur du commit (selon ses préférences de
+  notification) qu'un workflow a échoué.
+
+Pour corriger : lire l'erreur dans les logs, corriger le fichier de
+migration fautif (jamais réécrire une migration déjà mergée sur `main` —
+en ajouter une nouvelle qui corrige), commit, push. Le workflow ne
+retente rien automatiquement — c'est volontaire, pour ne jamais réappliquer
+une migration à moitié échouée sans supervision.
+
+Pour un premier déploiement manuel (avant que ce workflow existe, ou pour
+une base de test locale), les migrations restent applicables via le SQL
+Editor du dashboard ou directement `supabase db push` en local, dans
+l'ordre des fichiers.
 
 ### Déploiement (Vercel Hobby) et cron des deadlines
 

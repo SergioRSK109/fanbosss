@@ -1031,6 +1031,37 @@ few redirects (`/dashboard`, `/parametres` → `/login`) needed an explicit
 afterward (the locale-aware `redirect`'s `never` return type doesn't
 always get picked up by control-flow analysis the same way `next/navigation`'s did).
 
+## Supabase migration deployment (`.github/workflows/deploy-migrations.yml`)
+
+Migrations no longer need to be copy-pasted into the SQL Editor: this
+workflow runs `supabase db push` automatically on every push to `main`
+that touches `supabase/migrations/`, using `supabase/setup-cli@v3`. No
+`continue-on-error`/`|| true` anywhere in it — a failing push (bad SQL, a
+wrong secret, a connection error) fails the job outright, shows as a red
+❌ on the commit and in the Actions tab, and does not retry itself. See
+the README's "Base de données" section for exactly which three GitHub
+secrets this needs (`SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID`,
+`SUPABASE_DB_PASSWORD`), where to get each one, and why: a Supabase
+Personal Access Token inherits the permissions of whatever account
+generates it (it isn't independently scopable after the fact), so the
+README recommends generating it from an org member restricted to a
+**project-scoped Developer role** on just this project rather than from
+the Owner account — confirmed against Supabase's own published
+permissions matrix that Developer can manage the database/run SQL but
+can't touch org settings, transfer/delete the project, or reset the DB
+password itself. `SUPABASE_DB_PASSWORD` itself has no narrower equivalent
+documented anywhere — it's a real Postgres password, full stop; the
+README says so plainly rather than implying otherwise.
+
+`supabase/config.toml` was generated once via a real `supabase init` (not
+hand-written) so `supabase link`/`db push` recognize this repo as a valid
+project directory — `project_id` inside it is just a local label ("fanbosss"),
+unrelated to the real `SUPABASE_PROJECT_ID` secret used to link. Its
+`[db].major_version` should be checked against the real project's Postgres
+version before relying on anything that consults it (`db push` itself
+doesn't, since it talks directly to the already-linked remote database,
+not a local one).
+
 ## Testing
 
 - `npm test` (Vitest): HMAC verification, webhook handler branching
