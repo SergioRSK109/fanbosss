@@ -118,6 +118,16 @@
   },
   "PaiementRetour": {
     "heading": "Merci !",
-    "message": "Votre paiement est en cours de confirmation. Vous retrouverez son statut dans <link>votre espace</link> dès que CinetPay l'aura validé."
+    "message": "Votre paiement est en cours de confirmation. Vous retrouverez son statut dans <link>votre espace</link> dès que CinetPay l'aura validé.",
+    "typeMessages": {
+      "video": "Ta vidéo personnalisée est en préparation ! Le créateur va s'y mettre.",
+      "don": "Merci pour ton geste ! Ton soutien compte énormément.",
+      "whatsapp": "Le numéro WhatsApp du créateur va bientôt t'être révélé !",
+      "shoutout": "Ton shoutout est en préparation !",
+      "contenu_debloque": "Contenu débloqué ! Tu peux y accéder depuis ton espace.",
+      "evenement_live": "Tu es inscrit(e) au live ! Le lien d'accès arrivera bientôt.",
+      "campagne": "Merci pour ta contribution ! Chaque don rapproche cette campagne de son objectif.",
+      "generic": "Merci pour ton paiement !"
+    }
   }
 }

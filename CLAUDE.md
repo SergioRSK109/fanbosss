@@ -1181,6 +1181,74 @@ wrapper text is asserted from general knowledge of Supabase's documented
 behavior, not confirmed against a live project, since none exists in
 this sandbox.
 
+## Engagement/retention additions: copy-link, humanized fan status, payment celebration
+
+Three independent, unrelated additions bundled in one request, each with
+its own section below.
+
+**"Copier mon lien" (`CopyProfileLinkButton.tsx`)** — a share-text-first
+button (`Soutiens-moi sur FanBoss 👉 {origin}/@{pseudo}`), shown on the
+dashboard's public-profile card and in `/parametres`'s pseudo block,
+**only** once a pseudo is actually set (both call sites already had
+their own "no pseudo yet" fallback UI; this button just slots in next to
+the existing "real" state). ParametresForm passes the **saved** `pseudo`
+prop, not the live-editing `pseudoValue` state — copying an unsaved
+draft would share a link that doesn't resolve yet. Deliberately the
+opposite priority order from `ShareCampagneButton` (share-first,
+copy-fallback): this button's whole point is a quick clipboard copy for
+pasting into a bio/story/DM, so Clipboard API is primary and
+`navigator.share()` is only a fallback for the rare case a mobile
+webview restricts clipboard writes — matching the button's own label
+("Copier", not "Partager"). Verified live with Playwright: clicking it
+copies the exact expected text to the clipboard and the button flips to
+"Lien copié !" for 2s, in both the dashboard and `/parametres`.
+
+**Humanized fan-facing status with a concrete deadline**
+(`describeTransactionStatutFan()`, `src/lib/transactions.ts`) — the
+dashboard's "Paiements envoyés à d'autres créateurs" list previously
+showed a short human label (`en attente de réponse du créateur`) but no
+actual deadline. The new helper takes the transaction's
+`deadline_acceptation`/`deadline_livraison` (now also selected in that
+query, alongside the existing short colored badge which still shows a
+one-word status for quick scanning) and produces a full sentence with a
+real date/time — "En attente de réponse du créateur (réponse attendue
+avant le 26 juil., 15:24)" for `en_attente`, "Accepté, en préparation
+(livraison prévue avant le...)" for `validee` (only ever populated for
+video/shoutout, since every other type skips straight past `validee` to
+`livree` — see "Transaction lifecycle") — falling back to the plain
+sentence when no deadline applies. The raw technical `statut` string is
+never shown to the fan anywhere in this list anymore. Pure and
+unit-tested (`transactions.test.ts`) independent of any date-formatting
+concerns in the component itself.
+
+**Payment-success celebration (`/paiement/retour`,
+`PaiementRetourContent.tsx`, `Confetti.tsx`)** — a discreet, brand-colored
+confetti burst (18 pieces, plain CSS keyframe in `globals.css`, no new
+dependency, self-removes after 2.5s, `pointer-events-none` throughout so
+it never blocks the page) plays on every load of this page, since its
+entire purpose is a payment-success return. The warm message is adapted
+per offer type when known, via a new `src/lib/paiementRetour.ts`
+sessionStorage handoff: **CinetPay's `return_url` carries no reference
+back to which transaction was just paid for** (confirmed by re-reading
+`initiateCinetPayPayment()` — it's a static URL, no query params), so
+`CheckoutButton` stashes the offer type in `sessionStorage` right before
+redirecting to CinetPay's hosted checkout; since `return_url` points
+back at this same origin, the value survives the round trip in the
+*paying fan's own browser* and `PaiementRetourContent` reads (and clears)
+it on mount. This is what makes the celebration inherently **fan-only,
+never the créateur** — not a role check (this app has none), but a data
+one: the créateur who receives the payment never has this
+sessionStorage entry in their own browser, since they're never the one
+who just completed this specific checkout in this specific tab. Falls
+back to a generic "Merci pour ton paiement !" message when the value is
+missing (sessionStorage disabled, direct bookmark visit, cross-device
+link, etc.) — confetti still plays either way. Verified live with
+Playwright by intercepting `/api/transactions/initiate` to redirect
+straight back to this same route (simulating CinetPay's round trip
+without a real account): the don-specific message
+("Merci pour ton geste ! ...") renders correctly, and a fresh visit with
+no sessionStorage entry shows the generic fallback instead.
+
 ## Réglages (`/parametres`, `ParametresForm.tsx`)
 
 Pseudo and bio are both **read-only by default with a "Modifier" button
@@ -1625,7 +1693,11 @@ into chat).
   accepted); and the webhook's campagne handling
   (`route.test.ts` — moves straight to livree like don/contenu_debloque/
   evenement_live, and specifically that a campagne contribution is never
-  rejected by the prix-match check despite `prix` being null).
+  rejected by the prix-match check despite `prix` being null); and
+  `describeTransactionStatutFan` (`transactions.test.ts` — a concrete
+  deadline is included for `en_attente`/`validee` when one is set, a
+  plain sentence when it isn't, and the raw technical statut string is
+  never what gets shown, including for an unrecognized value).
 - `npm run test:sql` (`supabase/tests/run_sql_tests.sh` +
   `checklist_2_3.sql`): creates a throwaway Postgres database (via
   `sudo -u postgres psql`, **not** Docker — Docker's daemon isn't running

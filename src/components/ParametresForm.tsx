@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { CopyProfileLinkButton } from "@/components/CopyProfileLinkButton";
 import { buttonClass } from "@/components/ui/button-styles";
 import { inputClass, labelClass } from "@/components/ui/field-styles";
 import { ZoomablePhoto } from "@/components/ui/ZoomablePhoto";
@@ -490,6 +491,10 @@ export function ParametresForm({
         <span className="text-sm text-foreground-muted">
           Ton lien : fanboss.app/@{pseudoValue || "..."}
         </span>
+        {/* Uses the saved `pseudo` prop, not the live-editing pseudoValue
+            -- copying an unsaved draft would share a link that doesn't
+            resolve yet. */}
+        {pseudo && <CopyProfileLinkButton pseudo={pseudo} />}
         {pseudoLockedUntilValue && (
           <span className="text-sm text-accent-600">
             Modifiable à nouveau à partir du {formatDate(pseudoLockedUntilValue)}.
