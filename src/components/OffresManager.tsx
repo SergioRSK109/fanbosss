@@ -487,7 +487,9 @@ function CampagneRow({
           <span className="font-semibold text-foreground">
             {repartition.montantNetCreateur}$
           </span>{" "}
-          net (commission plateforme, frais de paiement et TVA déduits).
+          net (commission plateforme de 17% déduite -- les frais de paiement
+          et la TVA sont pris en charge par la plateforme, pas déduits de
+          ta part).
         </p>
       )}
 

@@ -66,6 +66,51 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------
+-- Commission rate (migration 0018): 17%, not the previous 20% -- and
+-- frais_agregateur/tva are still computed and stored for bookkeeping,
+-- but the platform now absorbs both instead of deducting them from the
+-- créateur. Verified with a real transaction reaching 'validee' (the
+-- moment create_paiement_on_validation() actually fires), not just read
+-- from the function's source.
+-- ---------------------------------------------------------------------
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('ffffffff-1111-1111-1111-111111111111',
+   '22222222-2222-2222-2222-222222222222',
+   '11111111-1111-1111-1111-111111111111',
+   '33333333-3333-3333-3333-333333333333', 100, 'en_attente');
+
+update transactions set statut = 'validee'
+  where id = 'ffffffff-1111-1111-1111-111111111111';
+
+do $$
+declare
+  v_commission numeric;
+  v_frais numeric;
+  v_tva numeric;
+  v_net numeric;
+begin
+  select commission_plateforme, frais_agregateur, tva, montant_net_createur
+    into v_commission, v_frais, v_tva, v_net
+    from paiements where transaction_id = 'ffffffff-1111-1111-1111-111111111111';
+
+  if v_commission != 17 then
+    raise exception 'TEST FAILED: commission_plateforme was % instead of 17 (100 * 17%%)', v_commission;
+  end if;
+  if v_frais != 3 then
+    raise exception 'TEST FAILED: frais_agregateur was % instead of 3 (100 * 3%%, unchanged)', v_frais;
+  end if;
+  if v_tva != 2.72 then
+    raise exception 'TEST FAILED: tva was % instead of 2.72 (17 * 16%%, unchanged formula on the new commission)', v_tva;
+  end if;
+  if v_net != 83 then
+    raise exception
+      'TEST FAILED: montant_net_createur was % instead of 83 -- frais_agregateur/tva must no longer be deducted from the créateur''s share',
+      v_net;
+  end if;
+  raise notice 'PASS: create_paiement_on_validation() charges 17%% commission and no longer deducts frais_agregateur/tva from montant_net_createur';
+end $$;
+
+-- ---------------------------------------------------------------------
 -- Brief v3 point 2/3: the 4 new offer types are accepted, don's prix can
 -- be null (and only don's), and a créateur can't have two offres of the
 -- same type (the conversational settings UI is one row per type).

@@ -4,7 +4,7 @@
 
 This section is a working reference for picking this project back up in a
 new session without re-deriving context. It reflects the schema and code
-as of migration `0017` plus the follow-up fixes after it. When it and the
+as of migration `0018` plus the follow-up fixes after it. When it and the
 actual code disagree, the code is correct — update this file, don't trust
 it blindly.
 
@@ -37,7 +37,7 @@ account/access/secret/bucket, `CRON_SECRET`, `NEXT_PUBLIC_APP_URL`).
 
 ## Database schema (current, post-migration 0011)
 
-Migrations are strictly incremental (`supabase/migrations/0001`...`0017`)
+Migrations are strictly incremental (`supabase/migrations/0001`...`0018`)
 — never rewritten, never a `DROP`/recreate. Each one has been applied and
 verified against both an empty DB and one seeded with pre-existing data
 before being considered done (see "Testing" below for how).
@@ -259,10 +259,17 @@ reinitialiser-mot-de-passe, admin`.
 One row per transaction (unique FK), created by trigger
 `create_paiement_on_validation()` the moment a transaction reaches
 `validee`, frozen at that point (never recomputed later):
-`montant_brut`, `commission_plateforme` (20% of brut),
-`frais_agregateur` (3% of brut), `tva` (16% of commission),
-`montant_net_createur`, `statut_paiement`
+`montant_brut`, `commission_plateforme` (17% of brut, since migration
+`0018` — was 20% before that), `frais_agregateur` (3% of brut), `tva`
+(16% of commission), `montant_net_createur`, `statut_paiement`
 (`initie`→`reussi` on delivery, →`rembourse` on refund).
+`frais_agregateur`/`tva` are still computed and stored on every row —
+real bookkeeping, not dead columns — but since `0018` neither is
+deducted from `montant_net_createur` anymore: `montant_net_createur =
+montant_brut - commission_plateforme` only, the platform absorbing both
+instead of passing them through to the créateur. See "Commission rate"
+below for how this gap (requested previously, never actually wired in)
+was found and fixed.
 
 ### `parrainages`
 `parrain_id`, `filleul_id`, `transaction_id`, `montant_bonus` (10% of the
@@ -416,6 +423,62 @@ both RPC calls must succeed for the route to return 200, so a failure in
 either one still surfaces as a real error to the external scheduler
 rather than silently skipping half the sweep.
 
+## Commission rate: 20% → 17%, frais/TVA absorbed by the platform (migration `0018`)
+
+`create_paiement_on_validation()` now charges **17%** commission, down
+from 20%, and `montant_net_createur` deducts **only** the commission —
+`frais_agregateur` (CinetPay's own fee, still 3% of brut) and `tva`
+(still 16% of the commission) are still computed and stored on every
+`paiements` row for internal bookkeeping, but the platform now absorbs
+both rather than passing them through to the créateur:
+`montant_net_createur = montant_brut - commission_plateforme`, full
+stop.
+
+**This was a previously-requested change that had never actually been
+implemented** — confirmed, not assumed, once it surfaced: it was found
+while building the fundraising-campaigns feature (migration `0017`),
+whose live payout calculator was specified assuming a
+17%-commission/`objectif × 0,83`-net formula. That didn't match what
+`create_paiement_on_validation()` actually charged at the time (still
+20%, with `frais_agregateur`/`tva` both deducted from the créateur's
+share too) — flagged rather than silently wiring the calculator to
+either number, since the instruction was explicit that the calculator
+must reuse the real formula, not a duplicated one. This section is the
+follow-up: the rate itself is now actually 17%, so the calculator's
+existing wiring (unchanged, see below) shows the right number without
+needing any calculator-side fix.
+
+`tva` is computed as 16% of the **new** 17%-based commission, not the
+old 20%-based one — it's VAT on whatever the platform's real commission
+revenue now is, not a historical figure.
+
+Both the SQL formula (`create_paiement_on_validation()`, migration
+`0018`) and its JS mirror (`calculerRepartitionPaiement()`,
+`src/lib/transactions.ts` — `COMMISSION_PLATEFORME_TAUX = 0.17`) were
+updated together, since the whole point of `calculerRepartitionPaiement`
+existing is to never drift from the real DB formula. Verified with a
+real transaction reaching `validee` against a throwaway database
+(`checklist_2_3.sql`), not just read from the function's source: a
+$100 transaction produces `commission_plateforme = 17`,
+`frais_agregateur = 3` (unchanged), `tva = 2.72`, and
+`montant_net_createur = 83` — proving both the new rate and that
+`frais_agregateur`/`tva` are no longer subtracted from the créateur's
+net. `transactions.test.ts` covers the same math for
+`calculerRepartitionPaiement` directly.
+
+`OffresManager.tsx`'s campaign live-calculator copy was updated to
+match what the formula now actually does — "commission plateforme de
+17% déduite — les frais de paiement et la TVA sont pris en charge par
+la plateforme, pas déduits de ta part" — rather than the old wording,
+which claimed frais/TVA were deducted (true before `0018`, false after).
+Re-verified live with Playwright after this migration, exactly the same
+way the pre-fix discrepancy was originally caught rather than assumed
+fixed: typing `1000` into a campaign's objectif field now shows "environ
+830$ net" (1000 × 0.83 exactly), and `83` shows "environ 68.89$ net"
+(83 × 0.83 exactly) — both recomputed on every keystroke, with no
+changes needed to the campaign feature's own code since it was already
+calling the shared formula rather than a duplicated one.
+
 ## Fundraising campaigns (offre type `campagne`, migration `0017`)
 
 A créateur can run one or more time-limited fundraising campaigns
@@ -521,21 +584,22 @@ unit-tested (`campagnes.test.ts`) without needing a browser or a real
 database.
 
 **The créateur-facing live payout calculator does not duplicate the
-commission formula.** The feature request's own phrasing ("commission
-plateforme de 17%", `objectif × 0,83`) doesn't match what
-`create_paiement_on_validation()` actually charges (20% commission + 3%
-CinetPay fee + 16% VAT-on-the-commission, netting ≈73.8%, not 83%) — this
-was flagged rather than silently using either number. Per the explicit
-instruction to reuse the real formula instead of an independent
-calculation that could drift if the rates ever change,
-`CampagneRow`'s live calculator (`src/components/OffresManager.tsx`)
-calls `calculerRepartitionPaiement()` (`src/lib/transactions.ts`), the
-same JS mirror of the SQL formula this codebase already had, and shows
-its real `montantNetCreateur`. Verified live with Playwright, not just
-read from the code: typing `1000` into a fresh campaign's objectif field
-shows "environ 738$ net", and `83` shows "environ 61.25$ net" — both
-recomputed on every keystroke and matching `calculerRepartitionPaiement`'s
-output exactly.
+commission formula.** `CampagneRow`'s live calculator
+(`src/components/OffresManager.tsx`) calls
+`calculerRepartitionPaiement()` (`src/lib/transactions.ts`) — the same
+JS mirror of the SQL formula this codebase already had — and shows its
+real `montantNetCreateur`, rather than an independent calculation that
+could drift if the rates ever change. This is what made the commission
+rate fix (20% → 17%, migration `0018`, see "Commission rate" above)
+require **no calculator-side change at all**: the calculator was already
+wired to the real formula when it was originally built (against the
+then-current 20% rate, which didn't match the feature request's
+17%/`0,83` phrasing — flagged rather than silently using either number
+at the time), so once the underlying rate actually became 17%, the
+calculator started showing the right number automatically. Confirmed,
+not assumed, after the rate change: typing `1000` into a campaign's
+objectif field now shows "environ 830$ net" (1000 × 0.83 exactly), and
+`83` shows "environ 68.89$ net" (83 × 0.83 exactly).
 
 **Donating to a campaign reuses the existing free-amount don flow
 verbatim** — `CheckoutButton` and `/api/transactions/initiate` both
@@ -1523,7 +1587,11 @@ into chat).
   `sudo -u postgres psql`, **not** Docker — Docker's daemon isn't running
   in this sandbox), applies every migration in order, then asserts
   against real constraint violations/trigger behavior: whatsapp price
-  floor (can't be bypassed via UPDATE or via `config`), both deadline-cron
+  floor (can't be bypassed via UPDATE or via `config`), the commission
+  rate (`create_paiement_on_validation()` charges 17% on a real
+  transaction reaching `validee`, with `frais_agregateur`/`tva` still
+  computed but no longer deducted from `montant_net_createur` — see
+  "Commission rate", migration `0018`), both deadline-cron
   cases, the new offer types + `video`'s libelle exemption vs. every
   other type's strict one-per-type rule, pseudo format/case-insensitive
   uniqueness/reserved words, `repondu_at` tracking, that the
