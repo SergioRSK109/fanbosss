@@ -8,8 +8,28 @@ import { inputClass, labelClass } from "@/components/ui/field-styles";
 import { COUNTRIES } from "@/lib/countries";
 import { getStatesForCountry } from "@/lib/states";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { isAtLeast18, minBirthDateForSignup } from "@/lib/validation";
 
 const DEFAULT_COUNTRY = COUNTRIES[0];
+// Combined with the space nom_affichage joins them with, this keeps the
+// concatenated "{nom} {postnom}" within the column's 60-char constraint
+// (users_nom_affichage_max_length, migration 0009) with margin to spare.
+const NOM_MAX_LENGTH = 29;
+
+// A GoTrue trigger failure is generically wrapped (e.g. "Database error
+// saving new user"), never the raw Postgres constraint text -- but since
+// the client already blocks an under-18 date before ever calling
+// signUp(), any signup failure that still looks database-related at this
+// point is most likely this same age gate (the only failure condition
+// this feature adds), so it gets the friendly message here too rather
+// than whatever the wrapper's generic text happens to say.
+function looksLikeAgeConstraintFailure(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("date_naissance") ||
+    normalized.includes("database error saving new user")
+  );
+}
 
 export function SignupForm() {
   const t = useTranslations("Signup");
@@ -19,6 +39,9 @@ export function SignupForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [nom, setNom] = useState("");
+  const [postnom, setPostnom] = useState("");
+  const [dateNaissance, setDateNaissance] = useState("");
   const [countryCode, setCountryCode] = useState(DEFAULT_COUNTRY.code);
   const [phoneNumber, setPhoneNumber] = useState("");
   const [provinceCode, setProvinceCode] = useState("");
@@ -31,6 +54,9 @@ export function SignupForm() {
   const country = COUNTRIES.find((c) => c.code === countryCode) ?? DEFAULT_COUNTRY;
   const states = getStatesForCountry(countryCode);
   const province = states.find((s) => s.code === provinceCode) ?? null;
+  // Limits the native date picker itself so it never even offers an
+  // under-18 date, on top of the real submit-time check below.
+  const maxBirthDate = minBirthDateForSignup();
 
   function handleCountryChange(code: string) {
     setCountryCode(code);
@@ -50,11 +76,18 @@ export function SignupForm() {
       return;
     }
 
+    if (!isAtLeast18(dateNaissance)) {
+      setStatus("error");
+      setErrorMessage(t("ageRestriction"));
+      return;
+    }
+
     setStatus("loading");
 
     const telephone = phoneNumber
       ? `${country.dial}${phoneNumber.replace(/\D/g, "")}`
       : null;
+    const nomAffichage = `${nom.trim()} ${postnom.trim()}`.trim();
 
     const supabase = createSupabaseBrowserClient();
     const { error } = await supabase.auth.signUp({
@@ -67,6 +100,8 @@ export function SignupForm() {
           pays: country.name,
           province: province?.name ?? null,
           ville: ville.trim() || null,
+          nom_affichage: nomAffichage,
+          date_naissance: dateNaissance,
           parrain_id: parrainId,
         },
       },
@@ -74,7 +109,9 @@ export function SignupForm() {
 
     if (error) {
       setStatus("error");
-      setErrorMessage(error.message);
+      setErrorMessage(
+        looksLikeAgeConstraintFailure(error.message) ? t("ageRestriction") : error.message,
+      );
       return;
     }
 
@@ -108,6 +145,41 @@ export function SignupForm() {
               required
               value={email}
               onChange={(event) => setEmail(event.target.value)}
+              className={`${inputClass} w-full`}
+            />
+          </label>
+          <div className="flex gap-2">
+            <label className={`${labelClass} flex-1`}>
+              <span>{t("nom")}</span>
+              <input
+                type="text"
+                required
+                maxLength={NOM_MAX_LENGTH}
+                value={nom}
+                onChange={(event) => setNom(event.target.value)}
+                className={`${inputClass} w-full`}
+              />
+            </label>
+            <label className={`${labelClass} flex-1`}>
+              <span>{t("postnom")}</span>
+              <input
+                type="text"
+                required
+                maxLength={NOM_MAX_LENGTH}
+                value={postnom}
+                onChange={(event) => setPostnom(event.target.value)}
+                className={`${inputClass} w-full`}
+              />
+            </label>
+          </div>
+          <label className={labelClass}>
+            <span>{t("dateNaissance")}</span>
+            <input
+              type="date"
+              required
+              max={maxBirthDate}
+              value={dateNaissance}
+              onChange={(event) => setDateNaissance(event.target.value)}
               className={`${inputClass} w-full`}
             />
           </label>

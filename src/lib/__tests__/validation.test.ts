@@ -1,10 +1,42 @@
 import { describe, expect, it } from "vitest";
 import {
   creerOffreSchema,
+  isAtLeast18,
+  minBirthDateForSignup,
   pseudoLockedUntil,
   PSEUDO_COOLDOWN_MS,
   WHATSAPP_PRIX_MINIMUM,
 } from "@/lib/validation";
+
+describe("minBirthDateForSignup / isAtLeast18", () => {
+  // Fixed reference date so these assertions don't depend on when the
+  // test suite happens to run.
+  const reference = new Date("2026-07-25T12:00:00.000Z");
+
+  it("computes the cutoff as exactly 18 years before the reference date", () => {
+    expect(minBirthDateForSignup(reference)).toBe("2008-07-25");
+  });
+
+  it("accepts someone born exactly 18 years ago today (boundary)", () => {
+    expect(isAtLeast18("2008-07-25", reference)).toBe(true);
+  });
+
+  it("rejects someone one day short of 18 years old (boundary)", () => {
+    expect(isAtLeast18("2008-07-26", reference)).toBe(false);
+  });
+
+  it("accepts someone older than 18", () => {
+    expect(isAtLeast18("2000-01-01", reference)).toBe(true);
+  });
+
+  it("rejects someone clearly under 18", () => {
+    expect(isAtLeast18("2015-01-01", reference)).toBe(false);
+  });
+
+  it("rejects an empty date (nothing selected yet)", () => {
+    expect(isAtLeast18("", reference)).toBe(false);
+  });
+});
 
 describe("pseudoLockedUntil", () => {
   it("is not locked when the pseudo was never changed", () => {

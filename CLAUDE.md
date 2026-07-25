@@ -4,7 +4,7 @@
 
 This section is a working reference for picking this project back up in a
 new session without re-deriving context. It reflects the schema and code
-as of migration `0015` plus the follow-up fixes after it. When it and the
+as of migration `0016` plus the follow-up fixes after it. When it and the
 actual code disagree, the code is correct — update this file, don't trust
 it blindly.
 
@@ -37,7 +37,7 @@ account/access/secret/bucket, `CRON_SECRET`, `NEXT_PUBLIC_APP_URL`).
 
 ## Database schema (current, post-migration 0011)
 
-Migrations are strictly incremental (`supabase/migrations/0001`...`0015`)
+Migrations are strictly incremental (`supabase/migrations/0001`...`0016`)
 — never rewritten, never a `DROP`/recreate. Each one has been applied and
 verified against both an empty DB and one seeded with pre-existing data
 before being considered done (see "Testing" below for how).
@@ -131,7 +131,21 @@ before being considered done (see "Testing" below for how).
   (nom_affichage → pseudo → `null`, with callers falling back to a
   generic translated label) — **don't re-implement this fallback chain
   inline**, every public-facing surface (profile header, `/explorer`
-  cards) shares it.
+  cards) shares it. **Since `0016`, also collected at signup**:
+  `SignupForm.tsx` asks for separate "Nom"/"Post-nom" fields and
+  concatenates them into this same column client-side before calling
+  `signUp()` — there's no separate nom/postnom column, this is still the
+  one existing `nom_affichage` field, just populated earlier than before.
+  Still freely editable afterward from `/parametres` exactly as always.
+- `date_naissance date` — added in `0016`. Nullable (existing accounts
+  predate this column and can't be retroactively assigned a birth date),
+  but collected as a required field at signup going forward.
+  `users_date_naissance_majorite` enforces a real 18+ minimum at the DB
+  level: `check (date_naissance is null or date_naissance <= current_date
+  - interval '18 years')` — see "Signup: nom/post-nom + 18+ age gate"
+  below for the full empirical verification (both of the syntax itself
+  and of the client-side layers backing it up) and why NULL is
+  unaffected by this CHECK.
 - `masque_exploration boolean not null default false` — added in `0009`.
   Opt-*out* of `/explorer`, deliberately the opposite default direction
   from `classement_public`'s opt-*in*: a créateur becomes explorable the
@@ -801,6 +815,91 @@ the app's client code entirely). `handleSubmit` checks
 `password !== confirmPassword` and blocks the request with a translated
 error (`t("passwordMismatch")`) before ever calling `signUp()`.
 
+## Signup: nom/post-nom + 18+ age gate (migration `0016`)
+
+**Nom/post-nom** are two plain text fields, both required, that
+`SignupForm.tsx` concatenates client-side into a single `"{nom}
+{postnom}"` string sent as `nom_affichage` in `raw_user_meta_data` —
+deliberately **not** two new columns. `nom_affichage` already existed
+(migration 0009) as a freeform public display name editable from
+`/parametres`; this just gives it a value at signup time too, going
+through the exact same trigger path `province`/`ville` already use
+(`handle_new_auth_user`, extended again). Each field is capped at
+`NOM_MAX_LENGTH` (29 chars client-side) specifically so the concatenated
+result — `nom` + one space + `postnom` — can never exceed
+`nom_affichage`'s existing 60-char DB constraint
+(`users_nom_affichage_max_length`, migration 0009). Nothing about
+`nom_affichage` itself changed: same column, same constraint, still
+freely editable afterward from `/parametres` exactly as before — a
+créateur can change it post-signup the same way they always could.
+
+**Date of birth, with a real 18+ minimum enforced in the database, not
+just the form.** `users.date_naissance date` is nullable (existing
+accounts predate this column and can't be retroactively assigned a birth
+date — same reasoning as `province`/`ville` in migration 0012), but the
+signup form makes the field required going forward
+(`required` + `max` on the `<input type="date">`). The actual guarantee
+is `users_date_naissance_majorite`: `check (date_naissance is null or
+date_naissance <= current_date - interval '18 years')`. **Verified with
+real insertion attempts against a throwaway database before trusting the
+syntax** (`checklist_2_3.sql`): a date exactly 18 years old today
+passes, one day younger fails, 19 years old passes, NULL passes (a
+Postgres CHECK only ever rejects a row when the expression evaluates to
+`FALSE` — NULL is neither true nor false, so it can never fail a CHECK
+on its own), and a full end-to-end `auth.users` insert with an under-18
+`date_naissance` in its metadata is rejected with the `auth.users` row
+itself rolled back too (same transaction, same trigger failure) — not
+just a direct `UPDATE` on an already-existing row.
+
+**Two independent client-side layers, on top of the DB constraint that
+remains the real guarantee — verified with Playwright, not assumed:**
+1. The date `<input>`'s `max` attribute (`minBirthDateForSignup()` in
+   `src/lib/validation.ts`, mirroring the DB constraint's exact 18-year
+   window) makes the browser's own native HTML5 constraint validation
+   block submission immediately with an inline tooltip
+   ("Value must be 07/25/2008 or earlier.") — confirmed live: typing an
+   under-18 date and clicking submit never even fires React's
+   `onSubmit` handler, the browser intercepts it first.
+2. `handleSubmit` also calls `isAtLeast18(dateNaissance)` itself before
+   ever calling `signUp()` — this is what actually matters, since `max`
+   is trivially removable via devtools. Confirmed empirically: stripping
+   the `<input>`'s `max` attribute via `page.evaluate()` (simulating
+   exactly that bypass) and resubmitting the same under-18 date still
+   blocks the request, this time via the translated `t("ageRestriction")`
+   message ("Tu dois avoir au moins 18 ans pour t'inscrire.") shown
+   in-form, with no network call made at all.
+   `isAtLeast18`/`minBirthDateForSignup` both compute from **UTC**
+   deliberately, not the visitor's local timezone — the DB's
+   `current_date` is evaluated in the database session's timezone (UTC on
+   Supabase), so a naive local-timezone comparison could shift the
+   cutoff by a day right at the boundary for a visitor near midnight.
+   This doesn't eliminate every edge case (a visitor's system clock can
+   simply be wrong), which is exactly why the DB constraint stays the
+   real guarantee, not either client-side layer.
+   A real bug was caught writing the unit tests for these helpers before
+   ever reaching the browser: `isAtLeast18("")` returned `true`, because
+   an empty string sorts lexicographically before any real ISO date
+   string — an unfilled field would have looked "at least 18". Fixed by
+   explicitly rejecting an empty `dateNaissance` before the comparison;
+   covered in `validation.test.ts`.
+
+**What the user sees if the DB constraint itself is ever the thing that
+fails** (only reachable in practice via the same kind of direct bypass
+as layer 2 above, since both client-side layers block the normal path
+first): GoTrue wraps a signup-trigger exception in a generic message
+(commonly `"Database error saving new user"`, not the raw Postgres
+`check_violation` text) rather than exposing the underlying SQL — this
+project has no real Supabase project to confirm the *exact* wrapper text
+against, so `SignupForm.tsx`'s `looksLikeAgeConstraintFailure()` treats
+either that known generic wrapper string or any error text mentioning
+`date_naissance` as the age case and shows the same friendly
+`t("ageRestriction")` message either way, rather than ever surfacing
+`error.message` verbatim for a database-shaped failure. Flagging this
+the same way the CinetPay refund research was flagged: the precise GoTrue
+wrapper text is asserted from general knowledge of Supabase's documented
+behavior, not confirmed against a live project, since none exists in
+this sandbox.
+
 ## Réglages (`/parametres`, `ParametresForm.tsx`)
 
 Pseudo and bio are both **read-only by default with a "Modifier" button
@@ -1229,7 +1328,12 @@ into chat).
   throws; route tests for `/api/cron/check-deadlines` and
   `/api/transactions/[id]/refuse` — the refund attempt fires exactly when
   expected and never on an auth/RPC failure; see "Automatic CinetPay
-  refunds").
+  refunds"); and the signup age-gate helpers (`validation.test.ts` —
+  `minBirthDateForSignup`/`isAtLeast18` against a fixed reference date,
+  covering both boundaries — exactly 18 today passes, one day younger
+  fails — and the empty-string case, which is what caught the
+  lexicographic-comparison bug described in "Signup: nom/post-nom + 18+
+  age gate" before it ever reached the browser).
 - `npm run test:sql` (`supabase/tests/run_sql_tests.sh` +
   `checklist_2_3.sql`): creates a throwaway Postgres database (via
   `sudo -u postgres psql`, **not** Docker — Docker's daemon isn't running
@@ -1261,7 +1365,16 @@ into chat).
   automatic-refund trigger: both refund paths
   (`process_transaction_deadlines`, `refuse_transaction`) always set
   `necessite_remboursement_manuel`, and `remboursement_cinetpay_actif`/
-  `remboursement_pourcentage` seed to their correct defaults.
+  `remboursement_pourcentage` seed to their correct defaults. Also
+  covers `users_date_naissance_majorite` (0016) with real insertion
+  attempts: an under-18 date is rejected, a date one day short of 18
+  years is rejected (boundary), exactly-18-today and older dates are
+  accepted, NULL is unaffected, and a full end-to-end `auth.users` insert
+  with an under-18 `date_naissance` is rejected with the `auth.users` row
+  itself rolled back (not just a direct `UPDATE` on an existing row) —
+  plus that `handle_new_auth_user` correctly picks up `nom_affichage` and
+  `date_naissance` from signup metadata (and leaves both `null` when
+  omitted).
 - `supabase/tests/stub_auth.sql` fakes just enough of Supabase's `auth`
   schema (an `auth.uid()` reading `app.current_user_id`, plus the
   `authenticated`/`anon`/`service_role` roles) for the real migrations to
