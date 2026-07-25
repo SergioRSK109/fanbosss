@@ -1062,6 +1062,55 @@ version before relying on anything that consults it (`db push` itself
 doesn't, since it talks directly to the already-linked remote database,
 not a local one).
 
+### First-run failure: migration history was empty (fixed via `migration repair`)
+
+This workflow's very first real run against production failed immediately
+on `0001_schema.sql` with `relation "users" already exists`. Root cause,
+confirmed rather than assumed: migrations `0001`–`0013` had only ever been
+applied by hand (copy-pasted into the SQL Editor) before this workflow
+existed, so `supabase_migrations.schema_migrations` — the CLI's own
+bookkeeping table for "which migrations has this project already seen" —
+was completely empty, even though every one of those migrations' actual
+schema changes were genuinely live in the database. `supabase db push`
+trusts that table, not the real schema, to decide what's "new"; with it
+empty, it tried to replay everything from `0001`, and the very first
+`create table users` collided with the table that was already there.
+**No data was touched** — the run failed on the first statement of the
+first migration, before anything else executed.
+
+Fixed with `supabase migration repair`, which only ever writes rows into
+`supabase_migrations.schema_migrations` — it does not touch any other
+table and never re-runs a migration's SQL. Verified this precisely,
+end-to-end, in a throwaway environment before running anything against
+production: created a scratch Postgres database, applied `0001`–`0013`
+directly via `psql` (reproducing "applied by hand" exactly), confirmed
+`supabase migration list --db-url ...` showed all 14 versions with an
+empty `remote` column (the exact reported symptom), ran
+`supabase migration repair 0001 0002 ... 0013 --status applied --db-url ...`,
+and confirmed: (a) `supabase_migrations.schema_migrations` now listed
+`0001`–`0013` as applied, (b) every existing table/policy/trigger was
+completely untouched, (c) `supabase migration list` now showed only
+`0014` as pending, and (d) `supabase db push` then applied *only*
+`0014` cleanly, with a second `db push` afterward correctly reporting
+"Remote database is up to date." — full idempotency, confirmed by
+actually running `repair` and `db push` twice each, not assumed.
+
+Also found while testing this: `supabase db push` prints a "push these
+migrations? [Y/n]" confirmation even when nothing needs re-running, and
+`deploy-migrations.yml`'s `db push` step didn't pass `--yes` — empirically
+it still completed fine non-interactively (no TTY) in this exact CLI
+version, but that's unverified CLI-internal behavior, not a documented
+contract, so `--yes` was added to the workflow to make it deterministic
+rather than rely on that.
+
+**The one-time repair itself was never run from CI** — it's a historical
+reconciliation, not something `deploy-migrations.yml` should ever need to
+do again, so it does not belong in that workflow. It was run once,
+directly, from a terminal with real Supabase credentials neither
+generated nor seen by Claude Code (per explicit instruction — secrets are
+configured by the project owner directly in GitHub/Supabase, never pasted
+into chat).
+
 ## Testing
 
 - `npm test` (Vitest): HMAC verification, webhook handler branching
