@@ -69,6 +69,17 @@ export default async function LocaleLayout({
               <Logo className="h-7 w-auto sm:h-8" />
             </Link>
             <div className="flex items-center gap-3">
+              {/* Unlike Explorer (hidden pre-auth on purpose, so a
+                  logged-out visitor on signup/login isn't pulled away
+                  mid-flow), the leaderboard is deliberately public --
+                  it's meant to be reachable without an account, so it's
+                  shown to every visitor regardless of auth state. */}
+              <Link
+                href="/classement"
+                className="text-sm font-semibold text-brand-600 dark:text-brand-300"
+              >
+                🏆 {t("classement")}
+              </Link>
               {user && (
                 <Link
                   href="/explorer"

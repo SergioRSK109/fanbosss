@@ -4,7 +4,8 @@
     "en": "English"
   },
   "Nav": {
-    "explorer": "Explore"
+    "explorer": "Explore",
+    "classement": "Leaderboard"
   },
   "Explorer": {
     "heading": "Discover creators",
@@ -129,5 +130,15 @@
       "campagne": "Thank you for your contribution! Every gift brings this campaign closer to its goal.",
       "generic": "Thank you for your payment!"
     }
+  },
+  "Classement": {
+    "heading": "Leaderboard",
+    "subheading": "The most active créateurs over the last 30 days, sorted by current rank.",
+    "sectionVolume": "🏆 Top 10 volume",
+    "sectionReactivite": "⚡ Top 10 responsiveness",
+    "sectionProgression": "📈 Top 10 growth",
+    "empty": "Nobody on this leaderboard yet.",
+    "anonymous": "FanBoss créateur",
+    "rank": "#{rank}"
   }
 }

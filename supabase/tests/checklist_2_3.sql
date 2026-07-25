@@ -1185,6 +1185,243 @@ begin
   raise notice 'PASS: close_expired_campagnes closes only campagnes whose date_fin has strictly passed';
 end $$;
 
+-- ---------------------------------------------------------------------
+-- Private progress-towards-leaderboard (migration 0019):
+-- mes_progres_classement() exposes real counts/gaps -- unlike the public
+-- classement_* views (rank only) -- so it must be strictly self-only.
+--
+-- There is no `create policy` here: Postgres row-security policies only
+-- ever attach to tables, never to views or functions, and this function
+-- inherently needs to read every opted-in créateur's transactions to
+-- compute the top-10 threshold -- something a genuine RLS-respecting
+-- view could never do under the existing per-user `transactions` SELECT
+-- policy. The real guarantee is structural instead: there is no
+-- parameter anywhere in this function for a caller to name a different
+-- target user (same shape as accept_transaction/refuse_transaction/
+-- set_admin_status), and EXECUTE is granted only to `authenticated`,
+-- never `anon`. Both are verified below via SET ROLE -- a real Postgres
+-- permission check, not just application-level logic.
+-- ---------------------------------------------------------------------
+
+-- Isolate this section from classement_public state set earlier in this
+-- file (e.g. line ~381), so the top-10 pool built below is exactly what
+-- this section creates -- nothing left over from an earlier test leaks
+-- into the threshold computation.
+update users set classement_public = false where classement_public = true;
+
+insert into users (id, date_creation) values
+  ('faceb001-0001-0001-0001-000000000001', now()),                    -- "me": the calling créateur
+  ('faceb001-0002-0002-0002-000000000002', now() - interval '40 days'), -- opted-in but too old for progression
+  ('faceb001-0003-0003-0003-000000000003', now()),                    -- fan, sends every transaction below
+  ('faceb001-0011-0011-0011-000000000011', now()),
+  ('faceb001-0012-0012-0012-000000000012', now()),
+  ('faceb001-0013-0013-0013-000000000013', now()),
+  ('faceb001-0014-0014-0014-000000000014', now()),
+  ('faceb001-0015-0015-0015-000000000015', now()),
+  ('faceb001-0016-0016-0016-000000000016', now()),
+  ('faceb001-0017-0017-0017-000000000017', now()),
+  ('faceb001-0018-0018-0018-000000000018', now()),
+  ('faceb001-0019-0019-0019-000000000019', now()),
+  ('faceb001-0020-0020-0020-000000000020', now());
+
+update users set classement_public = true where id in (
+  'faceb001-0001-0001-0001-000000000001',
+  'faceb001-0002-0002-0002-000000000002',
+  'faceb001-0011-0011-0011-000000000011',
+  'faceb001-0012-0012-0012-000000000012',
+  'faceb001-0013-0013-0013-000000000013',
+  'faceb001-0014-0014-0014-000000000014',
+  'faceb001-0015-0015-0015-000000000015',
+  'faceb001-0016-0016-0016-000000000016',
+  'faceb001-0017-0017-0017-000000000017',
+  'faceb001-0018-0018-0018-000000000018',
+  'faceb001-0019-0019-0019-000000000019',
+  'faceb001-0020-0020-0020-000000000020'
+);
+
+-- 'classement' reserved pseudo (new /classement route): a fresh user
+-- with no prior pseudo change, so this exercises the reserved-word CHECK
+-- constraint itself rather than tripping the (unrelated) cooldown gate
+-- an already-pseudo'd user like 11111111/22222222 would hit by this
+-- point in the file.
+do $$
+begin
+  begin
+    update users set pseudo = 'Classement' where id = 'faceb001-0003-0003-0003-000000000003';
+    raise exception 'TEST FAILED: the new "classement" route name was accepted as a pseudo';
+  exception when check_violation then
+    raise notice 'PASS: "classement" is rejected as a pseudo (reserved-word list kept in sync with the new route)';
+  end;
+end $$;
+
+-- 10 competitors with delivered-don counts 10,9,8,...,1 -- "me" has 0.
+-- Combined pool (11 opted-in créateurs with a livree count, plus the
+-- too-old one at 0): sorted desc, the 10th value is 1 -- so "me" is
+-- exactly 1 transaction short of the top 10, and the créateur with
+-- count=1 already sits exactly at the threshold (already qualifies).
+do $$
+declare
+  v_competiteurs uuid[] := array[
+    'faceb001-0011-0011-0011-000000000011',
+    'faceb001-0012-0012-0012-000000000012',
+    'faceb001-0013-0013-0013-000000000013',
+    'faceb001-0014-0014-0014-000000000014',
+    'faceb001-0015-0015-0015-000000000015',
+    'faceb001-0016-0016-0016-000000000016',
+    'faceb001-0017-0017-0017-000000000017',
+    'faceb001-0018-0018-0018-000000000018',
+    'faceb001-0019-0019-0019-000000000019',
+    'faceb001-0020-0020-0020-000000000020'
+  ]::uuid[];
+  v_counts int[] := array[10,9,8,7,6,5,4,3,2,1];
+  v_offre_id uuid;
+  i int;
+  j int;
+begin
+  for i in 1..array_length(v_competiteurs, 1) loop
+    v_offre_id := gen_random_uuid();
+    insert into offres (id, createur_id, type) values (v_offre_id, v_competiteurs[i], 'don');
+    for j in 1..v_counts[i] loop
+      insert into transactions (fan_id, createur_id, offre_id, montant, statut, created_at)
+      values (
+        'faceb001-0003-0003-0003-000000000003', v_competiteurs[i], v_offre_id,
+        10, 'livree', now()
+      );
+    end loop;
+  end loop;
+end $$;
+
+-- "me" has one video transaction already responded to (~5 minutes),
+-- so réactivité has real data -- but since nobody else in this pool has
+-- any qualifying (video/shoutout/whatsapp) response at all, the
+-- réactivité threshold pool is too small for a real 10th place, and
+-- "me" auto-qualifies (manque = 0) despite having a real, non-null
+-- average.
+insert into offres (id, createur_id, type, prix)
+  values ('faceb001-0001-0001-0001-0000000000aa', 'faceb001-0001-0001-0001-000000000001', 'video', 15);
+
+insert into transactions (fan_id, createur_id, offre_id, montant, statut, created_at, repondu_at)
+values (
+  'faceb001-0003-0003-0003-000000000003', 'faceb001-0001-0001-0001-000000000001',
+  'faceb001-0001-0001-0001-0000000000aa', 15, 'validee',
+  now() - interval '5 minutes', now()
+);
+
+-- Real Postgres permission check: anon has no EXECUTE grant at all.
+set role anon;
+do $$
+begin
+  begin
+    perform 1 from mes_progres_classement();
+    raise exception 'TEST FAILED: anon was able to execute mes_progres_classement()';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE privilege on mes_progres_classement() (real Postgres permission check, not just app logic)';
+  end;
+end $$;
+reset role;
+
+set role authenticated;
+
+-- authenticated with no auth.uid() at all (no app.current_user_id set).
+select set_config('app.current_user_id', '', false);
+do $$
+begin
+  begin
+    perform 1 from mes_progres_classement();
+    raise exception 'TEST FAILED: mes_progres_classement() succeeded with no authenticated user';
+  exception when others then
+    if sqlerrm != 'not authenticated' then
+      raise exception 'TEST FAILED: unexpected error with no auth.uid(): %', sqlerrm;
+    end if;
+    raise notice 'PASS: mes_progres_classement() rejects a call with no auth.uid()';
+  end;
+end $$;
+
+-- "me": the real numbers behind the rank.
+select set_config('app.current_user_id', 'faceb001-0001-0001-0001-000000000001', false);
+do $$
+declare
+  v_row record;
+begin
+  select * into v_row from mes_progres_classement();
+
+  if v_row.volume_actuel != 0 then
+    raise exception 'TEST FAILED: expected volume_actuel=0 for "me", got %', v_row.volume_actuel;
+  end if;
+  if v_row.volume_seuil_top10 != 1 then
+    raise exception 'TEST FAILED: expected volume_seuil_top10=1, got %', v_row.volume_seuil_top10;
+  end if;
+  if v_row.volume_manque != 1 then
+    raise exception 'TEST FAILED: expected volume_manque=1 (exactly 1 short of the top 10), got %', v_row.volume_manque;
+  end if;
+  if v_row.reactivite_actuelle_secondes is null
+     or abs(v_row.reactivite_actuelle_secondes - 300) > 5 then
+    raise exception 'TEST FAILED: expected reactivite_actuelle_secondes ~300, got %', v_row.reactivite_actuelle_secondes;
+  end if;
+  if v_row.reactivite_manque_secondes != 0 then
+    raise exception 'TEST FAILED: expected reactivite_manque_secondes=0 (pool too small for a real 10th place), got %', v_row.reactivite_manque_secondes;
+  end if;
+  if v_row.progression_eligible is not true then
+    raise exception 'TEST FAILED: expected progression_eligible=true for a brand-new account';
+  end if;
+  if v_row.progression_manque != 1 then
+    raise exception 'TEST FAILED: expected progression_manque=1, got %', v_row.progression_manque;
+  end if;
+
+  raise notice 'PASS: mes_progres_classement() computes correct real numbers (counts, threshold, gap) for the calling créateur';
+end $$;
+
+-- A different opted-in créateur, in the same run: must see their OWN
+-- numbers, never "me"'s -- this is the actual self-only guarantee the
+-- brief asked to prove.
+select set_config('app.current_user_id', 'faceb001-0020-0020-0020-000000000020', false);
+do $$
+declare
+  v_row record;
+begin
+  select * into v_row from mes_progres_classement();
+
+  if v_row.volume_actuel != 1 then
+    raise exception 'TEST FAILED: expected volume_actuel=1 for this competitor, got %', v_row.volume_actuel;
+  end if;
+  if v_row.volume_actuel = 0 then
+    raise exception 'TEST FAILED: this competitor session saw "me"''s volume_actuel instead of their own';
+  end if;
+  if v_row.volume_manque != 0 then
+    raise exception 'TEST FAILED: expected volume_manque=0 (already at the threshold), got %', v_row.volume_manque;
+  end if;
+  if v_row.reactivite_actuelle_secondes is not null then
+    raise exception 'TEST FAILED: expected null reactivite_actuelle_secondes (no qualifying response for this créateur), got %', v_row.reactivite_actuelle_secondes;
+  end if;
+
+  raise notice 'PASS: a different opted-in créateur sees only their own real numbers, never another créateur''s';
+end $$;
+
+-- An account older than 30 days: eligible for volume, correctly excluded
+-- from progression (null, not a misleading 0).
+select set_config('app.current_user_id', 'faceb001-0002-0002-0002-000000000002', false);
+do $$
+declare
+  v_row record;
+begin
+  select * into v_row from mes_progres_classement();
+
+  if v_row.progression_eligible is not false then
+    raise exception 'TEST FAILED: expected progression_eligible=false for an account older than 30 days';
+  end if;
+  if v_row.progression_actuel is not null or v_row.progression_manque is not null then
+    raise exception 'TEST FAILED: expected null progression numbers for an ineligible account';
+  end if;
+  if v_row.volume_seuil_top10 != 1 then
+    raise exception 'TEST FAILED: volume is unaffected by account age -- expected volume_seuil_top10=1, got %', v_row.volume_seuil_top10;
+  end if;
+
+  raise notice 'PASS: an account older than 30 days is excluded from progression (null, not a misleading number) while volume is unaffected';
+end $$;
+
+select set_config('app.current_user_id', '', false);
+reset role;
+
 do $$
 begin
   raise notice 'ALL SQL CHECKLIST TESTS PASSED';

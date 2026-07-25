@@ -4,7 +4,8 @@
     "en": "English"
   },
   "Nav": {
-    "explorer": "Explorer"
+    "explorer": "Explorer",
+    "classement": "Classement"
   },
   "Explorer": {
     "heading": "Découvrir des créateurs",
@@ -129,5 +130,15 @@
       "campagne": "Merci pour ta contribution ! Chaque don rapproche cette campagne de son objectif.",
       "generic": "Merci pour ton paiement !"
     }
+  },
+  "Classement": {
+    "heading": "Classement",
+    "subheading": "Les créateurs les plus actifs sur les 30 derniers jours, triés par rang actuel.",
+    "sectionVolume": "🏆 Top 10 volume",
+    "sectionReactivite": "⚡ Top 10 réactivité",
+    "sectionProgression": "📈 Top 10 progression",
+    "empty": "Personne dans ce classement pour l'instant.",
+    "anonymous": "Créateur FanBoss",
+    "rank": "#{rank}"
   }
 }

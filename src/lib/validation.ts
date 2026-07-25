@@ -164,6 +164,7 @@ export const PSEUDO_MOTS_RESERVES = [
   "mot-de-passe-oublie",
   "reinitialiser-mot-de-passe",
   "admin",
+  "classement",
 ];
 
 // Shared by the /@pseudo lookup and the /explorer search box: ILIKE
