@@ -29,3 +29,46 @@ export function calculerRepartitionPaiement(montant: number) {
 function round2(value: number): number {
   return Math.round(value * 100) / 100;
 }
+
+function formatDeadline(iso: string): string {
+  return new Date(iso).toLocaleString("fr-FR", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+// Human-readable status for a fan's own sent payment (dashboard's
+// "Paiements envoyés" list), replacing the raw statut string with real
+// text and, where a deadline actually exists, a concrete date/time
+// instead of a vague "en attente" -- deadlineAcceptation only applies to
+// en_attente, deadlineLivraison only to validee (and only ever set for
+// video/shoutout -- every other type moves straight past validee to
+// livree, see the transaction lifecycle).
+export function describeTransactionStatutFan(params: {
+  statut: string;
+  deadlineAcceptation: string | null;
+  deadlineLivraison: string | null;
+}): string {
+  const { statut, deadlineAcceptation, deadlineLivraison } = params;
+
+  switch (statut) {
+    case "en_attente":
+      return deadlineAcceptation
+        ? `En attente de réponse du créateur (réponse attendue avant le ${formatDeadline(deadlineAcceptation)})`
+        : "En attente de réponse du créateur";
+    case "validee":
+      return deadlineLivraison
+        ? `Accepté, en préparation (livraison prévue avant le ${formatDeadline(deadlineLivraison)})`
+        : "Accepté, en préparation";
+    case "livree":
+      return "Livré";
+    case "remboursee":
+      return "Remboursé";
+    case "refusee":
+      return "Refusé";
+    default:
+      return statut;
+  }
+}

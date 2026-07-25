@@ -3,6 +3,7 @@
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { buttonClass } from "@/components/ui/button-styles";
+import { LAST_PAIEMENT_TYPE_STORAGE_KEY } from "@/lib/paiementRetour";
 import type { OffreType } from "@/lib/validation";
 
 export function CheckoutButton({
@@ -38,6 +39,14 @@ export function CheckoutButton({
     if (!response.ok) {
       setErrorMessage(body.error ?? t("paymentError"));
       return;
+    }
+
+    try {
+      sessionStorage.setItem(LAST_PAIEMENT_TYPE_STORAGE_KEY, type);
+    } catch {
+      // sessionStorage unavailable (private browsing, disabled storage) --
+      // /paiement/retour just falls back to its generic message, not a
+      // reason to block the actual payment redirect.
     }
 
     window.location.href = body.paymentUrl;

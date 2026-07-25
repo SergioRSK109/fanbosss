@@ -1,9 +1,11 @@
 import { redirect, Link } from "@/i18n/navigation";
+import { CopyProfileLinkButton } from "@/components/CopyProfileLinkButton";
 import { DemandesEnAttente } from "@/components/DemandesEnAttente";
 import { LogoutButton } from "@/components/LogoutButton";
 import { OffresManager } from "@/components/OffresManager";
 import { TransactionActions } from "@/components/TransactionActions";
 import { RankBadge } from "@/components/ui/RankBadge";
+import { describeTransactionStatutFan } from "@/lib/transactions";
 import type { OffreType } from "@/lib/validation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -12,20 +14,23 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 // so this single page shows all three, in order: demandes they've
 // received, their own offres settings, and payments they've sent to
 // others (previously split across /dashboard and /mes-transactions).
-const STATUT_LABELS: Record<string, string> = {
-  en_attente: "en attente de réponse du créateur",
-  validee: "acceptée, en préparation",
-  livree: "livrée",
-  remboursee: "remboursée",
-  refusee: "refusée",
-};
-
 const STATUT_STYLES: Record<string, string> = {
   en_attente: "bg-accent-500/15 text-accent-600",
   validee: "bg-brand-500/15 text-brand-600 dark:text-brand-300",
   livree: "bg-success-500/15 text-success-600",
   remboursee: "bg-foreground-muted/15 text-foreground-muted",
   refusee: "bg-danger-500/15 text-danger-600",
+};
+
+// Short at-a-glance badge -- the concrete deadline/detail sentence
+// (describeTransactionStatutFan) is shown separately below it, never the
+// raw technical statut string.
+const STATUT_SHORT_LABELS: Record<string, string> = {
+  en_attente: "En attente",
+  validee: "Accepté",
+  livree: "Livré",
+  remboursee: "Remboursé",
+  refusee: "Refusé",
 };
 
 export default async function DashboardPage({
@@ -65,7 +70,7 @@ export default async function DashboardPage({
       .order("deadline_acceptation", { ascending: true }),
     supabase
       .from("transactions")
-      .select("id, montant, statut, offres(type)")
+      .select("id, montant, statut, deadline_acceptation, deadline_livraison, offres(type)")
       .eq("fan_id", user.id)
       .order("created_at", { ascending: false }),
     supabase
@@ -133,20 +138,23 @@ export default async function DashboardPage({
         </div>
       </div>
 
-      <div className="card px-4 py-3 text-sm">
-        <span className="text-foreground-muted">Votre profil public : </span>
-        {profil?.pseudo ? (
-          <Link href={`/@${profil.pseudo}`} className="font-semibold text-brand-600 dark:text-brand-300">
-            fanboss.app/@{profil.pseudo}
-          </Link>
-        ) : (
-          <>
-            <span className="text-foreground-muted">pas encore de pseudo — </span>
-            <Link href="/parametres" className="font-semibold text-brand-600 dark:text-brand-300">
-              en choisir un
+      <div className="card flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm">
+        <div>
+          <span className="text-foreground-muted">Votre profil public : </span>
+          {profil?.pseudo ? (
+            <Link href={`/@${profil.pseudo}`} className="font-semibold text-brand-600 dark:text-brand-300">
+              fanboss.app/@{profil.pseudo}
             </Link>
-          </>
-        )}
+          ) : (
+            <>
+              <span className="text-foreground-muted">pas encore de pseudo — </span>
+              <Link href="/parametres" className="font-semibold text-brand-600 dark:text-brand-300">
+                en choisir un
+              </Link>
+            </>
+          )}
+        </div>
+        {profil?.pseudo && <CopyProfileLinkButton pseudo={profil.pseudo} />}
       </div>
 
       {profil?.classement_public && (volumeRow || reactiviteRow || progressionRow) && (
@@ -231,9 +239,16 @@ export default async function DashboardPage({
                       STATUT_STYLES[transaction.statut] ?? "bg-foreground-muted/15 text-foreground-muted"
                     }`}
                   >
-                    {STATUT_LABELS[transaction.statut] ?? transaction.statut}
+                    {STATUT_SHORT_LABELS[transaction.statut] ?? transaction.statut}
                   </span>
                 </div>
+                <p className="text-xs text-foreground-muted">
+                  {describeTransactionStatutFan({
+                    statut: transaction.statut,
+                    deadlineAcceptation: transaction.deadline_acceptation,
+                    deadlineLivraison: transaction.deadline_livraison,
+                  })}
+                </p>
                 {offre?.type && (
                   <TransactionActions
                     transactionId={transaction.id}

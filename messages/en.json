@@ -118,6 +118,16 @@
   },
   "PaiementRetour": {
     "heading": "Thank you!",
-    "message": "Your payment is being confirmed. You'll see its status in <link>your dashboard</link> as soon as CinetPay has validated it."
+    "message": "Your payment is being confirmed. You'll see its status in <link>your dashboard</link> as soon as CinetPay has validated it.",
+    "typeMessages": {
+      "video": "Your custom video is on its way! The creator is getting to work.",
+      "don": "Thank you for your support! It means a lot.",
+      "whatsapp": "The creator's WhatsApp number will be revealed to you shortly!",
+      "shoutout": "Your shoutout is being prepared!",
+      "contenu_debloque": "Content unlocked! You can access it from your dashboard.",
+      "evenement_live": "You're in for the live! The access link is coming soon.",
+      "campagne": "Thank you for your contribution! Every gift brings this campaign closer to its goal.",
+      "generic": "Thank you for your payment!"
+    }
   }
 }

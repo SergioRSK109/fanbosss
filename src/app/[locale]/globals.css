@@ -91,3 +91,17 @@ body {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-2xl);
 }
+
+/* Confetti.tsx's falling pieces (/paiement/retour post-payment
+   celebration) -- a plain keyframe rather than a new dependency, kept
+   short/discreet on purpose (see the component for why). */
+@keyframes confetti-fall {
+  0% {
+    transform: translateY(-10px) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(100vh) rotate(360deg);
+    opacity: 0;
+  }
+}
