@@ -164,11 +164,11 @@ before being considered done (see "Testing" below for how).
   pattern as the pseudo-cooldown bypass test.
 
 Reserved pseudo words (kept in sync in **two** places — the DB CHECK
-constraint (most recently updated in `0015`) and `PSEUDO_MOTS_RESERVES`
+constraint (most recently updated in `0019`) and `PSEUDO_MOTS_RESERVES`
 in `src/lib/validation.ts` — update both if new top-level routes are
 added): `dashboard, signup, login, api, auth, createur, mes-transactions,
 paiement, parametres, explorer, mot-de-passe-oublie,
-reinitialiser-mot-de-passe, admin`.
+reinitialiser-mot-de-passe, admin, classement`.
 
 ### `offres`
 - `id uuid` PK, `createur_id uuid references users(id)`
@@ -422,6 +422,80 @@ this same route also calls `close_expired_campagnes()` right after
 both RPC calls must succeed for the route to return 200, so a failure in
 either one still surfaces as a real error to the external scheduler
 rather than silently skipping half the sweep.
+
+## `accept_transaction`/`refuse_transaction`/`deliver_video` anonymous bypass — found and fixed (migration `0020`)
+
+A real, currently-exploitable vulnerability, flagged during unrelated
+work on `mes_progres_classement()` (migration `0019`, see below) after
+noticing these three predated that function's `revoke all ... from
+public` pattern — then **confirmed empirically before being trusted**,
+the same discipline as the logo-click "logout" investigation: a
+throwaway Postgres database was built from the real migrations, a real
+pending `video` transaction was inserted belonging to a real créateur,
+and `SET ROLE anon;` (no `app.current_user_id` at all — genuinely no
+session) followed by `select accept_transaction('<that transaction's
+id>')` **actually flipped it to `validee` and set `repondu_at`**. Same
+result for `refuse_transaction` (→ `remboursee`) and, worse,
+`deliver_video`: an anonymous caller could write an **attacker-chosen
+r2_key** into `livrable`, which would then be served to the paying fan
+as the créateur's real delivered video.
+
+Two independent, compounding problems, both in every one of these three
+functions since migration `0002`/`0006`/`0008`:
+
+1. `if v_tx.createur_id != auth.uid() then raise 'not authorized'` — `!=`
+   with a NULL operand evaluates to NULL, never `TRUE`, and PL/pgSQL's
+   `IF` treats NULL the same as `FALSE`. So whenever `auth.uid()` was
+   NULL (no session at all), this "authorization" check silently did
+   nothing and execution fell straight through to the actual state
+   change.
+2. None of these three ever had `EXECUTE` revoked from `public`.
+   Postgres grants `EXECUTE` to `PUBLIC` **by default** on newly created
+   functions (unlike tables, which default to no access) — migration
+   `0003`'s `grant execute ... to authenticated` was additive, never a
+   replacement, and `anon` inherits `PUBLIC`. Confirmed directly:
+   `select has_function_privilege('anon', 'accept_transaction(uuid)',
+   'EXECUTE')` returned `true` before this migration.
+
+**Fix, both layers, verified independently:**
+- `revoke all on function ... from public` + re-grant to `authenticated`
+  only, on all three functions — the same pattern already used for
+  `mes_progres_classement()`. Verified directly: after this migration,
+  `has_function_privilege('anon', ...)` is `false`, and the exact
+  reproduction above now fails outright with `permission denied for
+  function accept_transaction` (Postgres's own error, not this
+  codebase's) — the transaction is left completely untouched
+  (`statut` still `en_attente`).
+- The ownership comparison itself changed from `!=` to `is distinct
+  from` (correct regardless of which side is NULL) **and** an explicit
+  `if auth.uid() is null then raise exception 'not authenticated'; end
+  if;` was added at the very top of each function, before the `select
+  ... for update` even runs — same style as `mes_progres_classement()`.
+  This is deliberate defense in depth on top of the `EXECUTE` revoke,
+  not redundant with it: it's what keeps this closed even if `EXECUTE`
+  were ever mistakenly re-granted to `anon`/`public` again in the
+  future, exactly the same "don't rely on a single layer" principle
+  already applied to the pseudo-cooldown trigger and admin-escalation
+  trigger elsewhere in this file.
+
+**Tested at both layers in `checklist_2_3.sql`**, not just described:
+`SET ROLE anon` against all three functions confirms a real
+`insufficient_privilege` error (Postgres permission system, not
+application logic); `SET ROLE authenticated` with no
+`app.current_user_id` set at all confirms each function's own
+`not authenticated` exception fires; and a final assertion confirms none
+of the six rejected attack attempts left any trace on the targeted
+transactions (`statut`/`livrable` unchanged). This is the same "always
+extend the SQL checklist, never just describe new DB behavior in prose"
+discipline this file has followed since the pseudo-cooldown bypass test.
+
+**No application code needed to change** — `src/app/api/transactions/
+[id]/accept/route.ts`, `.../refuse/route.ts`, and `.../deliver/route.ts`
+already call these RPCs via the authenticated Supabase client and
+already treat any RPC error as a failure to surface to the caller; a
+genuine créateur accepting/refusing/delivering their own transaction was
+never affected; only a caller with no session at all is newly rejected,
+which was already the intended behavior everywhere else in this app.
 
 ## Commission rate: 20% → 17%, frais/TVA absorbed by the platform (migration `0018`)
 
@@ -1038,6 +1112,129 @@ is a two-step query (first resolve matching `createur_id`s from
 since the two are separate views with no PostgREST-embeddable
 relationship. Cards link to `/@pseudo` when the créateur has one, else
 fall back to `/createur/[id]`.
+
+## Private leaderboard progress + public `/classement` page (migration `0019`)
+
+Two additions on top of the existing rank-only leaderboards
+(`classement_volume`/`classement_reactivite`/`classement_progression`,
+migration `0008`) — neither changes those three views at all.
+
+**1. `mes_progres_classement()` — private, self-only real numbers.**
+Unlike the public views (rank only, never a count or amount — see their
+own section above), the dashboard needs to tell a créateur something like
+"Plus que 3 transactions livrées pour entrer dans le top 10 volume ce
+mois-ci", which means exposing a real count and a real gap. This is a
+`SECURITY DEFINER` SQL function, not a view guarded by a `create policy`
+— and deliberately so: Postgres row-security policies only ever attach to
+**tables**, never to views or functions, and this computation inherently
+needs to read every opted-in créateur's transactions to work out the
+current 10th-place threshold, something a view that stayed subject to the
+real per-user `transactions` SELECT policy (via `security_invoker`) could
+never do at all. A view owned by the migration role (bypassrls, the same
+mechanism `classement_volume` etc. already rely on) *could* compute the
+threshold, but would then have nothing stopping any authenticated caller
+from reading every row unless the view itself hardcoded a self-only
+filter — and Postgres views can't carry `create policy` restrictions
+either way.
+
+So this follows the pattern already established everywhere else in this
+codebase for "must be self-only, needs elevated read access to compute":
+same shape as `accept_transaction`/`refuse_transaction`/
+`set_admin_status` — it takes **no target-user parameter at all**, reads
+`auth.uid()` internally, and raises if it's null. There is no argument a
+caller could ever pass to ask for someone else's numbers. `EXECUTE` is
+revoked from `public` and granted only to `authenticated`, never `anon` —
+real Postgres permission enforcement, not just application logic,
+verified in `checklist_2_3.sql` via `SET ROLE anon`/`SET ROLE
+authenticated` (a new technique for this test file — see below).
+
+Per leaderboard, it returns: the créateur's own real count/average
+(`volume_actuel`, `reactivite_actuelle_secondes`, `progression_actuel`),
+the value currently held by whoever sits in 10th place among opted-in
+créateurs (`*_seuil_top10`, `null` when fewer than 10 opted-in créateurs
+exist at all — meaning there's no real competition for a top-10 spot),
+and the gap still needed (`*_manque`). Réactivité's `manque` is `null`
+(not a misleading `0`) until the créateur has at least one qualifying
+response of their own — there's nothing meaningful to compare yet.
+Progression additionally returns `progression_eligible`: same 30-day
+account-age scoping as `classement_progression` itself, so an account
+older than 30 days gets `null` progression numbers instead of a
+comparison that could never apply to them.
+
+`src/lib/classementProgres.ts` holds the pure, unit-tested (
+`classementProgres.test.ts`) French copy/formatting on top of these raw
+numbers (`describeVolumeProgres`, `describeReactiviteProgres`,
+`describeProgressionProgres`, `formatDureeSecondes`,
+`computeProgressPercent`/`computeReactiviteProgressPercent` — the latter
+inverted, since a *lower* average response time is what qualifies).
+`ClassementProgresCard.tsx` renders three progress bars (same
+bordered-track style as the campaign progress bar, see "Fundraising
+campaigns" above) on the dashboard, fed by a single
+`supabase.rpc("mes_progres_classement")` call alongside the existing
+per-leaderboard `maybeSingle()` rank queries. Shown regardless of the
+créateur's own `classement_public` opt-in status — it's meant to show
+what it would take to qualify, which is useful encouragement even before
+opting in.
+
+Verified end-to-end against a real Postgres instance in
+`checklist_2_3.sql`, not just read from the function's source: a
+controlled pool of 10 competitor créateurs with delivered-don counts
+10..1 plus "me" at 0 gives a real top-10 threshold of 1, so "me" is
+correctly reported as exactly 1 transaction short; a different opted-in
+créateur in the same run sees their own distinct numbers (never "me"'s)
+when called under a different `app.current_user_id`; an account older
+than 30 days gets `progression_eligible = false` and null progression
+numbers while its volume numbers are unaffected; `anon` gets a real
+`insufficient_privilege` error attempting to call the function at all;
+and `authenticated` with no `auth.uid()` set gets the function's own
+`not authenticated` exception. The `SET ROLE anon`/`SET ROLE
+authenticated` technique used for the last two is new to this test file
+(every earlier test ran everything as the superuser applying the
+migrations, relying on `auth.uid()`'s stubbed session variable alone) —
+it's what makes the `EXECUTE` grant a genuinely-enforced check in the
+test rather than just descriptive.
+
+**2. `/classement` — public leaderboard page (no auth required).** Three
+sections (Top 10 volume/réactivité/progression), each reading straight
+from the existing public `classement_volume`/`classement_reactivite`/
+`classement_progression` views (`rang <= 10`, ordered by `rang`) plus
+`profils_publics` for the display bits (photo/pseudo/nom_affichage) —
+the exact same public view `/explorer` and `/@pseudo` already read from.
+`src/lib/classementPublic.ts#getClassementPublicData()` is the only
+place this page queries from; it never touches `users`/`transactions`
+directly and never selects a column beyond `createur_id, rang` from the
+classement views or the four display columns from `profils_publics` —
+asserted directly in `classementPublic.test.ts` by spying on every
+`.from()`/`.select()` call, the same "prove the view/query never
+leaks more than it should" discipline this codebase already applies to
+`profils_explorables` (via SQL) — here via a mocked Supabase client
+instead, since the property being proven is about this page's own query
+shape, not a database view. Cards link to `/@pseudo` when set, else
+`/createur/[id]`, same fallback as `/explorer`'s cards.
+
+Reserved pseudo: `'classement'` added to both
+`users_pseudo_not_reserved` (migration `0019`) and
+`PSEUDO_MOTS_RESERVES` — same requirement as every other new top-level
+route.
+
+**Nav link — deliberately visible to every visitor, unlike Explorer.**
+Explorer's link only renders for an already-authenticated visitor (product
+decision: don't pull a logged-out visitor away from signup/login
+mid-flow). The leaderboard is the opposite case on purpose: it's built to
+be reachable *without* an account, so `src/app/[locale]/layout.tsx` shows
+it unconditionally, on every page including `/login`/`/signup` — treated
+here as a feature (social proof that the platform has real activity), not
+a distraction, though this is a reversible product call like the others
+in this file.
+
+Verified visually (Playwright against a throwaway mock of the Supabase
+REST/Auth endpoints, same investigative technique as the "Logo-click
+'logout' bug" section above): `/classement` renders three populated
+sections with photo/name/rank and correct `/@pseudo` links, and the
+dashboard's new progress card renders three progress bars with the
+expected French copy and fill percentages computed from a fixed
+`mes_progres_classement()` fixture (e.g. "Plus que 3 transactions livrées
+pour entrer dans le top 10 volume ce mois-ci" at a 4-of-7 fill).
 
 ## Signup: province/ville + password confirmation (migration `0012`)
 
@@ -1697,7 +1894,19 @@ into chat).
   `describeTransactionStatutFan` (`transactions.test.ts` — a concrete
   deadline is included for `en_attente`/`validee` when one is set, a
   plain sentence when it isn't, and the raw technical statut string is
-  never what gets shown, including for an unrecognized value).
+  never what gets shown, including for an unrecognized value); the
+  private leaderboard-progress copy/math (`classementProgres.test.ts` —
+  singular/plural wording at a gap of exactly 1, the "already qualifies"
+  vs. "no data yet" branches for réactivité, `formatDureeSecondes`
+  rounding up so a few seconds never displays as "0 min", and both
+  progress-percent helpers' clamping, including réactivité's inverted
+  one); and the public `/classement` page's data query
+  (`classementPublic.test.ts` — spies on every `.from()`/`.select()` call
+  to assert it only ever touches `classement_volume`/`classement_reactivite`/
+  `classement_progression`/`profils_publics`, never `users`/`transactions`
+  directly, and that it selects exactly `createur_id, rang` from the
+  classement views and exactly the four public display columns from
+  `profils_publics` — never a count or amount).
 - `npm run test:sql` (`supabase/tests/run_sql_tests.sh` +
   `checklist_2_3.sql`): creates a throwaway Postgres database (via
   `sudo -u postgres psql`, **not** Docker — Docker's daemon isn't running
@@ -1751,7 +1960,24 @@ into chat).
   two views' deliberately different filtering), and
   `close_expired_campagnes()` closes only a campagne whose date_fin has
   strictly passed — a control campagne whose date_fin is still *today*
-  is confirmed to remain untouched.
+  is confirmed to remain untouched. Also covers `mes_progres_classement()`
+  (0019) against a controlled pool of 11 opted-in créateurs: the real
+  top-10 volume threshold is computed correctly and the calling créateur
+  gets an exact, correct gap; a different opted-in créateur in the same
+  run sees only their own numbers, never the first caller's; an account
+  older than 30 days gets null progression numbers while its volume is
+  unaffected; and — via `SET ROLE anon` / `SET ROLE authenticated`, a
+  technique new to this file (every earlier test ran as the superuser
+  applying the migrations) — `anon` gets a real `insufficient_privilege`
+  error attempting to call the function at all, and `authenticated` with
+  no `auth.uid()` set gets the function's own `not authenticated`
+  exception. Also covers the `'classement'` reserved pseudo (0019). Also
+  covers the `accept_transaction`/`refuse_transaction`/`deliver_video`
+  anonymous-caller bypass fix (0020): `SET ROLE anon` gets a real
+  `insufficient_privilege` error on all three, `SET ROLE authenticated`
+  with no `auth.uid()` set gets each function's own `not authenticated`
+  exception, and a final assertion confirms none of the six rejected
+  attack attempts left any trace on the targeted transactions.
 - `supabase/tests/stub_auth.sql` fakes just enough of Supabase's `auth`
   schema (an `auth.uid()` reading `app.current_user_id`, plus the
   `authenticated`/`anon`/`service_role` roles) for the real migrations to

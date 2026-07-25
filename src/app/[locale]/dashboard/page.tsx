@@ -1,10 +1,12 @@
 import { redirect, Link } from "@/i18n/navigation";
+import { ClassementProgresCard } from "@/components/ClassementProgresCard";
 import { CopyProfileLinkButton } from "@/components/CopyProfileLinkButton";
 import { DemandesEnAttente } from "@/components/DemandesEnAttente";
 import { LogoutButton } from "@/components/LogoutButton";
 import { OffresManager } from "@/components/OffresManager";
 import { TransactionActions } from "@/components/TransactionActions";
 import { RankBadge } from "@/components/ui/RankBadge";
+import type { ProgresClassement } from "@/lib/classementProgres";
 import { describeTransactionStatutFan } from "@/lib/transactions";
 import type { OffreType } from "@/lib/validation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -57,6 +59,7 @@ export default async function DashboardPage({
     { data: volumeRow },
     { data: reactiviteRow },
     { data: progressionRow },
+    { data: progresRows },
   ] = await Promise.all([
     supabase
       .from("offres")
@@ -89,7 +92,38 @@ export default async function DashboardPage({
       .select("rang")
       .eq("createur_id", user.id)
       .maybeSingle(),
+    supabase.rpc("mes_progres_classement"),
   ]);
+
+  const progresRow = progresRows?.[0] as
+    | {
+        volume_actuel: number;
+        volume_seuil_top10: number | null;
+        volume_manque: number;
+        reactivite_actuelle_secondes: number | null;
+        reactivite_seuil_top10_secondes: number | null;
+        reactivite_manque_secondes: number | null;
+        progression_eligible: boolean;
+        progression_actuel: number | null;
+        progression_seuil_top10: number | null;
+        progression_manque: number | null;
+      }
+    | undefined;
+
+  const progres: ProgresClassement | null = progresRow
+    ? {
+        volumeActuel: progresRow.volume_actuel,
+        volumeSeuilTop10: progresRow.volume_seuil_top10,
+        volumeManque: progresRow.volume_manque,
+        reactiviteActuelleSecondes: progresRow.reactivite_actuelle_secondes,
+        reactiviteSeuilTop10Secondes: progresRow.reactivite_seuil_top10_secondes,
+        reactiviteManqueSecondes: progresRow.reactivite_manque_secondes,
+        progressionEligible: progresRow.progression_eligible,
+        progressionActuel: progresRow.progression_actuel,
+        progressionSeuilTop10: progresRow.progression_seuil_top10,
+        progressionManque: progresRow.progression_manque,
+      }
+    : null;
 
   // Montant collecté per campagne, computed live via
   // campagnes_montant_collecte (migration 0017) -- same view the public
@@ -168,6 +202,8 @@ export default async function DashboardPage({
           )}
         </div>
       )}
+
+      {progres && <ClassementProgresCard progres={progres} />}
 
       <section>
         <h2 className="mb-3 flex items-center gap-2 text-lg font-bold">
