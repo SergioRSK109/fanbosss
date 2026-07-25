@@ -6,11 +6,13 @@ import type { OffreType } from "@/lib/validation";
 // Types with no acceptation step: payment success IS delivery. Brief v3
 // point 2 adds contenu_debloque (pre-uploaded content, unlocked on
 // payment) and evenement_live (external link revealed on payment) to the
-// original don-only set.
+// original don-only set. campagne is the same free-amount mechanic as
+// don (see the fundraising-campaigns feature).
 const TYPES_A_VALIDATION_IMMEDIATE: OffreType[] = [
   "don",
   "contenu_debloque",
   "evenement_live",
+  "campagne",
 ];
 
 // CinetPay POSTs notifications as application/x-www-form-urlencoded.
@@ -114,9 +116,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // don has no fixed price -- the fan chooses the amount -- so it's the
-  // only type exempt from this check.
-  if (offerType !== "don" && Math.abs(amount - Number(offre.prix)) > 0.01) {
+  // don/campagne have no fixed price -- the fan chooses the amount -- so
+  // they're the only types exempt from this check.
+  const hasFreeAmount = offerType === "don" || offerType === "campagne";
+  if (!hasFreeAmount && Math.abs(amount - Number(offre.prix)) > 0.01) {
     return NextResponse.json(
       { error: "montant payé ne correspond pas au prix de l'offre" },
       { status: 400 },

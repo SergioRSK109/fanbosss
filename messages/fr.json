@@ -103,6 +103,14 @@
       "don": "Don direct, sans obligation de retour de la part du créateur.",
       "contenu_debloque": "Accès débloqué immédiatement après paiement.",
       "evenement_live": "Lien d'accès envoyé immédiatement après paiement."
+    },
+    "campagnes": {
+      "heading": "Campagnes",
+      "badgeObjectifAtteint": "Objectif atteint 🎉",
+      "badgeTerminee": "Campagne terminée",
+      "collecte": "{collecte}$ collectés sur {objectif}$",
+      "joursRestants": "{jours} jours restants",
+      "dernierJour": "Dernier jour"
     }
   },
   "PaiementRetour": {

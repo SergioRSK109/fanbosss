@@ -4,7 +4,7 @@
 
 This section is a working reference for picking this project back up in a
 new session without re-deriving context. It reflects the schema and code
-as of migration `0016` plus the follow-up fixes after it. When it and the
+as of migration `0017` plus the follow-up fixes after it. When it and the
 actual code disagree, the code is correct — update this file, don't trust
 it blindly.
 
@@ -37,7 +37,7 @@ account/access/secret/bucket, `CRON_SECRET`, `NEXT_PUBLIC_APP_URL`).
 
 ## Database schema (current, post-migration 0011)
 
-Migrations are strictly incremental (`supabase/migrations/0001`...`0016`)
+Migrations are strictly incremental (`supabase/migrations/0001`...`0017`)
 — never rewritten, never a `DROP`/recreate. Each one has been applied and
 verified against both an empty DB and one seeded with pre-existing data
 before being considered done (see "Testing" below for how).
@@ -172,10 +172,13 @@ reinitialiser-mot-de-passe, admin`.
 
 ### `offres`
 - `id uuid` PK, `createur_id uuid references users(id)`
-- `type text` — `check (type in ('video','don','whatsapp','shoutout','contenu_debloque','evenement_live'))`
+- `type text` — `check (type in
+  ('video','don','whatsapp','shoutout','contenu_debloque','evenement_live','campagne'))`
+  — `campagne` (fundraising campaigns) added in migration `0017`
 - `prix numeric` — **nullable**, but `offres_prix_required_unless_don`
-  enforces non-null for every type except `don` (the fan picks the amount
-  at payment time for `don`, so it never has a fixed price)
+  enforces non-null for every type except `don`/`campagne` (the fan
+  picks the amount at payment time for both, so neither has a fixed
+  price — see "Fundraising campaigns" below)
 - `check_whatsapp_minimum_price`: `type != 'whatsapp' or prix >= 20`
   (was 500 in the original brief, lowered to 20 later — this constraint
   is on the billed `prix` column itself, never on `config`, precisely so
@@ -198,19 +201,28 @@ reinitialiser-mot-de-passe, admin`.
   `evenement_live` → `{lien_live}` (external stream link, e.g.
   YouTube/Zoom, revealed to a fan only after their transaction is
   `livree` — never copied into the transaction, so an updated link is
-  reflected immediately for everyone who already paid)
-- `libelle text` — **only meaningful for `video`**: a créateur can list
-  several video offers distinguished by label ("Anniversaire" at 10$,
-  "Danse" at 15$). Every other type leaves this null.
+  reflected immediately for everyone who already paid); `campagne` →
+  `{description, objectif, date_fin}` — see "Fundraising campaigns"
+  below. Unlike `evenement_live`'s config, none of campagne's keys are
+  secret, so they're safe to expose in full through a public view (see
+  `campagnes_publiques`).
+- `libelle text` — **meaningful for `video` and `campagne`**: a créateur
+  can list several video offers distinguished by label ("Anniversaire" at
+  10$, "Danse" at 15$), or run several fundraising campaigns over time,
+  each with its own title stored here. Every other type leaves this
+  null.
 - `unique_offre_type_par_createur`: `unique NULLS NOT DISTINCT
   (createur_id, type, libelle)` — this is the mechanism that makes
-  "one offre per type" hold for every type except `video`. **Do not
-  simplify this to a plain UNIQUE constraint** — plain UNIQUE treats every
-  NULL as distinct, so two whatsapp/don/etc. rows (both with
+  "one offre per type" hold for every type except `video`/`campagne`.
+  **Do not simplify this to a plain UNIQUE constraint** — plain UNIQUE
+  treats every NULL as distinct, so two whatsapp/don/etc. rows (both with
   `libelle = null`) would silently stop conflicting and a créateur could
   end up with duplicates of a type that's supposed to be exclusive.
   Verified this exact failure mode empirically before deciding on NULLS
-  NOT DISTINCT (see git history on migration `0007`).
+  NOT DISTINCT (see git history on migration `0007`). `campagne` needed
+  no change to this constraint at all — it just became a second type that
+  supplies a non-null libelle, reusing the exact mechanism video already
+  established.
 
 ### `transactions`
 - `id uuid` PK, `fan_id`, `createur_id`, `offre_id` (all FKs)
@@ -291,7 +303,13 @@ still unconsulted placeholders as of this writing.
   `lien_reseau_social` entry above.
 - `offres_publiques`: `id, createur_id, type, prix, actif, created_at,
   libelle` — deliberately excludes `config` (which can hold
-  `evenement_live`'s pre-payment secret link).
+  `evenement_live`'s pre-payment secret link). Still filtered to
+  `actif = true`, including for `campagne` rows — a closed campaign
+  should stop looking purchasable here the same way any other inactive
+  offer does; its public history lives in `campagnes_publiques` instead
+  (below), not here.
+- `campagnes_publiques` and `campagnes_montant_collecte` (added `0017`)
+  — see "Fundraising campaigns" below.
 - `profils_explorables` (added `0009`): same public columns as
   `profils_publics`, filtered to `masque_exploration = false` and `exists
   (select 1 from offres where createur_id = id and actif = true)`.
@@ -391,7 +409,162 @@ deadlines. There's no `vercel.json` `crons` block; instead
 `/api/cron/check-deadlines` is meant to be hit hourly by a free external
 scheduler (cron-job.org/EasyCron) — see README for the exact setup. If
 the project moves to Vercel Pro, `vercel.json`'s crons block can come
-back and the external scheduler can be retired.
+back and the external scheduler can be retired. Since migration `0017`,
+this same route also calls `close_expired_campagnes()` right after
+`process_transaction_deadlines()` — see "Fundraising campaigns" below;
+both RPC calls must succeed for the route to return 200, so a failure in
+either one still surfaces as a real error to the external scheduler
+rather than silently skipping half the sweep.
+
+## Fundraising campaigns (offre type `campagne`, migration `0017`)
+
+A créateur can run one or more time-limited fundraising campaigns
+("Toit pour l'église", "Frais de studio"...), each with a title, a
+description of the cause, a target amount, and an optional end date.
+Mechanically it's `don` (free-amount, immediate validation) plus a
+title, a goal, and two auto-close conditions layered on top — nothing
+about the underlying payment flow is new.
+
+**Schema**: `type = 'campagne'` reuses `video`'s existing "several rows
+per créateur, distinguished by `libelle`" mechanism
+(`unique_offre_type_par_createur`, `NULLS NOT DISTINCT`, migration
+`0007`) verbatim — `libelle` holds the campaign's title, no constraint
+changes were needed for this part at all. `prix` stays null, exempted
+from `offres_prix_required_unless_don` alongside `don` — the fan picks
+the contribution amount at payment time, identical to a plain don.
+`config` holds `{description, objectif, date_fin}` — `date_fin` is
+optional/nullable, stored as a plain `"YYYY-MM-DD"` string (same
+convention as `date_naissance`, no time-of-day component). Validated at
+the application layer (`creerOffreSchema` in `src/lib/validation.ts`):
+`libelle` (title) and `config.description`/`config.objectif` (a finite,
+positive number) are required for this type, `config.date_fin` — when
+present — must match `^\d{4}-\d{2}-\d{2}$`.
+
+**Montant collecté is never stored, always computed live** — the
+`campagnes_montant_collecte` view (`offre_id, montant_collecte`) sums
+`transactions.montant` for `statut = 'livree'` rows per campagne offre,
+`LEFT JOIN`ed so a brand-new campaign with zero contributions still
+gets a `0` row instead of being absent from the view. Same "aggregate
+only, never raw transaction rows" discipline as the `classement_*`
+views — this view can't be used to learn who donated or how much any
+single fan gave, only the total. Granted to `authenticated`/`anon` like
+every other public view in this project.
+
+**`campagnes_publiques` deliberately does not filter on `actif = true`**
+— unlike `offres_publiques`, which still does, even for `campagne` rows.
+This is the one thing that makes campaigns behave differently from
+every other offer type: a closed campaign (goal reached, or its
+`date_fin` passed) must stay visible on the public profile as history,
+never disappear the moment it stops accepting contributions. `config` is
+included in this view too (unlike `offres_publiques`, which excludes it
+for every type since `evenement_live`'s config holds a secret
+pre-payment link) — none of `campagne`'s config keys are sensitive, the
+description/objectif/date_fin are meant to be fully public.
+
+**Two independent auto-close paths, both verified with real inserts
+against a throwaway database before trusting them, exactly like the
+pseudo-cooldown/admin-escalation triggers**:
+1. **Goal reached** — `close_campagne_if_goal_reached()`, an `AFTER
+   UPDATE ON transactions` trigger firing in the same "transitioned into
+   `livree`" moment `create_paiement_on_validation()`/
+   `handle_transaction_livraison()` already do. It sums delivered
+   contributions for the campagne (via the same same-transaction
+   read-your-own-write Postgres guarantees those other triggers rely on
+   — the contribution that just landed is already included) and sets
+   `actif = false` the instant the total reaches or exceeds `objectif`.
+   `config->>'objectif'` is parsed inside an exception handler rather
+   than a bare `::numeric` cast — `config` is untyped client-supplied
+   JSON, and a malformed value here must never be able to break an
+   unrelated fan's payment webhook call, same "a side effect must never
+   break the primary flow" principle as `processAutomaticRefund()`.
+2. **`date_fin` passed without reaching the goal** — nothing else
+   naturally happens on a campaign's end date, so this can't be
+   event-triggered; `close_expired_campagnes()` rides the same hourly
+   external-cron infrastructure `process_transaction_deadlines()` already
+   uses (see "Transaction lifecycle" above), called as a second RPC from
+   `/api/cron/check-deadlines`. `< current_date` (strictly less than) —
+   not `<=` — means a campaign stays open through the entirety of its
+   `date_fin` day, closing starting the day after. The
+   `config->>'date_fin' ~ '^\d{4}-\d{2}-\d{2}$'` guard exists for the
+   same reason as the exception handler above: this is a single batch
+   `UPDATE` across every créateur's campaigns, and one malformed
+   `date_fin` must never be able to abort the whole statement and block
+   every other créateur's legitimately-expired campaign from closing.
+
+Both paths verified with real insertion/update sequences in
+`checklist_2_3.sql`, not assumed to work as written: a campaign stays
+active below its goal, auto-closes the instant a contribution reaches
+it, stays visible in `campagnes_publiques` afterward while disappearing
+from `offres_publiques` (proving the two views' different filtering is
+intentional, not an oversight), and `close_expired_campagnes()` closes
+only a campaign whose `date_fin` has strictly passed — a campaign whose
+`date_fin` is still *today* is confirmed to remain untouched (the
+boundary case that would be easy to get off-by-one on).
+
+**Status is computed, never stored** — `computeCampagneStatus()`
+(`src/lib/campagnes.ts`) is the single source of truth for the
+active/objectif_atteint/terminee three-way badge, shared by the public
+profile (`CreateurProfileView`) and the créateur dashboard
+(`OffresManager`'s `CampagneRow`) so the two can never disagree.
+`objectif_atteint` is checked independently of the `actif` column (not
+"inferred from actif being false") so the badge is still correct in the
+brief window before the auto-close trigger has actually run; `terminee`
+covers both `date_fin` having passed **and** any other reason the
+campaign is inactive (e.g. manually paused via the existing
+désactiver/réactiver toggle every offer type already has) — from a
+fan's perspective both read the same: this campaign isn't accepting
+contributions right now. Same file also exports
+`computeCampagneProgressPercent` (clamped 0–100) and
+`computeJoursRestants` (inclusive of `date_fin`'s own day, consistent
+with the DB's `< current_date` closing rule) — all three are pure and
+unit-tested (`campagnes.test.ts`) without needing a browser or a real
+database.
+
+**The créateur-facing live payout calculator does not duplicate the
+commission formula.** The feature request's own phrasing ("commission
+plateforme de 17%", `objectif × 0,83`) doesn't match what
+`create_paiement_on_validation()` actually charges (20% commission + 3%
+CinetPay fee + 16% VAT-on-the-commission, netting ≈73.8%, not 83%) — this
+was flagged rather than silently using either number. Per the explicit
+instruction to reuse the real formula instead of an independent
+calculation that could drift if the rates ever change,
+`CampagneRow`'s live calculator (`src/components/OffresManager.tsx`)
+calls `calculerRepartitionPaiement()` (`src/lib/transactions.ts`), the
+same JS mirror of the SQL formula this codebase already had, and shows
+its real `montantNetCreateur`. Verified live with Playwright, not just
+read from the code: typing `1000` into a fresh campaign's objectif field
+shows "environ 738$ net", and `83` shows "environ 61.25$ net" — both
+recomputed on every keystroke and matching `calculerRepartitionPaiement`'s
+output exactly.
+
+**Donating to a campaign reuses the existing free-amount don flow
+verbatim** — `CheckoutButton` and `/api/transactions/initiate` both
+already special-cased `type === "don"` for a fan-chosen amount; both now
+check `type === "don" || type === "campagne"` instead of adding a
+second, parallel code path. The webhook (`TYPES_A_VALIDATION_IMMEDIATE`)
+gained `campagne` alongside `don`/`contenu_debloque`/`evenement_live`
+(payment success is delivery, no acceptation step) — and its
+prix-match check (`Math.abs(amount - Number(offre.prix)) > 0.01`), which
+already exempted `don`, now exempts `campagne` too: since `campagne`'s
+`prix` column is always null, `Number(null)` is `0`, and without this
+exemption every real contribution would have been rejected as
+"montant payé ne correspond pas au prix de l'offre". Caught before ever
+reaching a real webhook call, by re-reading the existing `don` exemption
+line and asking what it would do for a type with the same null-`prix`
+shape.
+
+**Créateur dashboard**: `CampagnesList`/`CampagneRow` in
+`OffresManager.tsx` mirror `VideoOffresList`/`VideoOffreRow`'s
+repeatable-row pattern (a créateur can launch more than one campaign
+over time, not a single settings row) — the form doubles as both
+creation and history: an existing campaign shows its title, status
+badge, progress bar, and collected/objectif figures inline above its
+(pre-filled, still-editable) form fields. `montantCollecte` is threaded
+through from the dashboard page's own query against
+`campagnes_montant_collecte` (the same view the public profile reads,
+so the dashboard's numbers can never disagree with what a fan sees) as
+an extra optional field on the `Offre` type passed into `OffresManager`,
+meaningful only for `campagne` rows.
 
 ## CinetPay webhook (`src/app/api/webhooks/cinetpay/route.ts`)
 
@@ -1333,7 +1506,18 @@ into chat).
   covering both boundaries — exactly 18 today passes, one day younger
   fails — and the empty-string case, which is what caught the
   lexicographic-comparison bug described in "Signup: nom/post-nom + 18+
-  age gate" before it ever reached the browser).
+  age gate" before it ever reached the browser); the fundraising-campaign
+  helpers (`campagnes.test.ts` — `computeCampagneStatus`'s full priority
+  order (objectif_atteint beats a passed date_fin beats a manually-paused
+  campaign), the date_fin boundary (still active through its own day),
+  `computeCampagneProgressPercent`'s clamping, and `computeJoursRestants`);
+  `creerOffreSchema`'s campagne validation (`validation.test.ts` — title/
+  description/objectif required, a zero-or-negative objectif rejected, a
+  malformed date_fin rejected, a well-formed campagne with no prix at all
+  accepted); and the webhook's campagne handling
+  (`route.test.ts` — moves straight to livree like don/contenu_debloque/
+  evenement_live, and specifically that a campagne contribution is never
+  rejected by the prix-match check despite `prix` being null).
 - `npm run test:sql` (`supabase/tests/run_sql_tests.sh` +
   `checklist_2_3.sql`): creates a throwaway Postgres database (via
   `sudo -u postgres psql`, **not** Docker — Docker's daemon isn't running
@@ -1374,7 +1558,16 @@ into chat).
   itself rolled back (not just a direct `UPDATE` on an existing row) —
   plus that `handle_new_auth_user` correctly picks up `nom_affichage` and
   `date_naissance` from signup metadata (and leaves both `null` when
-  omitted).
+  omitted). Also covers fundraising campaigns (0017) with real
+  insert/update sequences: a campagne stays active while its collected
+  total is below the objectif, auto-closes (`actif = false`) the instant
+  a contribution reaches or exceeds it, `campagnes_montant_collecte`
+  reflects the live sum, a closed campagne stays visible in
+  `campagnes_publiques` while disappearing from `offres_publiques` (the
+  two views' deliberately different filtering), and
+  `close_expired_campagnes()` closes only a campagne whose date_fin has
+  strictly passed — a control campagne whose date_fin is still *today*
+  is confirmed to remain untouched.
 - `supabase/tests/stub_auth.sql` fakes just enough of Supabase's `auth`
   schema (an `auth.uid()` reading `app.current_user_id`, plus the
   `authenticated`/`anon`/`service_role` roles) for the real migrations to

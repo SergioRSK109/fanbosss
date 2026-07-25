@@ -156,4 +156,80 @@ describe("creerOffreSchema", () => {
       expect(result.data.actif).toBe(true);
     }
   });
+
+  describe("campagne", () => {
+    const valid = {
+      type: "campagne" as const,
+      libelle: "Toit pour l'église",
+      config: { description: "Réparer le toit", objectif: 500 },
+    };
+
+    it("accepts a well-formed campagne with no price at all (free-amount, like don)", () => {
+      expect(creerOffreSchema.safeParse(valid).success).toBe(true);
+    });
+
+    it("accepts an optional date_fin in YYYY-MM-DD format", () => {
+      expect(
+        creerOffreSchema.safeParse({
+          ...valid,
+          config: { ...valid.config, date_fin: "2026-12-31" },
+        }).success,
+      ).toBe(true);
+    });
+
+    it("accepts a null date_fin explicitly", () => {
+      expect(
+        creerOffreSchema.safeParse({
+          ...valid,
+          config: { ...valid.config, date_fin: null },
+        }).success,
+      ).toBe(true);
+    });
+
+    it("rejects a malformed date_fin", () => {
+      expect(
+        creerOffreSchema.safeParse({
+          ...valid,
+          config: { ...valid.config, date_fin: "31/12/2026" },
+        }).success,
+      ).toBe(false);
+    });
+
+    it("rejects a campagne with no libelle (title is required)", () => {
+      expect(
+        creerOffreSchema.safeParse({ type: "campagne", config: valid.config }).success,
+      ).toBe(false);
+    });
+
+    it("rejects a campagne with no objectif", () => {
+      expect(
+        creerOffreSchema.safeParse({
+          type: "campagne",
+          libelle: valid.libelle,
+          config: { description: "x" },
+        }).success,
+      ).toBe(false);
+    });
+
+    it("rejects a campagne with a zero or negative objectif", () => {
+      for (const objectif of [0, -10]) {
+        expect(
+          creerOffreSchema.safeParse({
+            ...valid,
+            config: { ...valid.config, objectif },
+          }).success,
+        ).toBe(false);
+      }
+    });
+
+    it("rejects a campagne with no description", () => {
+      expect(
+        creerOffreSchema.safeParse({
+          type: "campagne",
+          libelle: valid.libelle,
+          config: { objectif: 500 },
+        }).success,
+      ).toBe(false);
+    });
+  });
 });

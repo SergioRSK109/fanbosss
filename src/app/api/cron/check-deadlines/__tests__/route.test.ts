@@ -33,9 +33,10 @@ describe("GET /api/cron/check-deadlines", () => {
     expect(processAutomaticRefund).not.toHaveBeenCalled();
   });
 
-  it("does not attempt any refund if the RPC itself errors", async () => {
+  it("does not attempt any refund if the RPC itself errors, and never reaches close_expired_campagnes", async () => {
+    const rpc = vi.fn(async () => ({ data: null, error: { message: "boom" } }));
     vi.mocked(createSupabaseServiceRoleClient).mockReturnValue({
-      rpc: async () => ({ data: null, error: { message: "boom" } }),
+      rpc,
     } as unknown as ReturnType<typeof createSupabaseServiceRoleClient>);
 
     const { GET } = await import("@/app/api/cron/check-deadlines/route");
@@ -43,6 +44,8 @@ describe("GET /api/cron/check-deadlines", () => {
 
     expect(response.status).toBe(500);
     expect(processAutomaticRefund).not.toHaveBeenCalled();
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith("process_transaction_deadlines");
   });
 
   it("attempts an automatic refund for every transaction the deadline sweep just refunded", async () => {
@@ -51,7 +54,11 @@ describe("GET /api/cron/check-deadlines", () => {
       { transaction_id: "tx-2", reason: "deadline_livraison_depassee" },
     ];
     const serviceClient = {
-      rpc: async () => ({ data: rows, error: null }),
+      rpc: vi.fn(async (name: string) =>
+        name === "process_transaction_deadlines"
+          ? { data: rows, error: null }
+          : { data: [], error: null },
+      ),
     };
     vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(
       serviceClient as unknown as ReturnType<typeof createSupabaseServiceRoleClient>,
@@ -66,5 +73,45 @@ describe("GET /api/cron/check-deadlines", () => {
     expect(processAutomaticRefund).toHaveBeenCalledTimes(2);
     expect(processAutomaticRefund).toHaveBeenNthCalledWith(1, serviceClient, "tx-1");
     expect(processAutomaticRefund).toHaveBeenNthCalledWith(2, serviceClient, "tx-2");
+  });
+
+  it("also closes expired campagnes and includes them in the response", async () => {
+    const closedCampagnes = [{ offre_id: "campagne-1" }];
+    const serviceClient = {
+      rpc: vi.fn(async (name: string) =>
+        name === "close_expired_campagnes"
+          ? { data: closedCampagnes, error: null }
+          : { data: [], error: null },
+      ),
+    };
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(
+      serviceClient as unknown as ReturnType<typeof createSupabaseServiceRoleClient>,
+    );
+
+    const { GET } = await import("@/app/api/cron/check-deadlines/route");
+    const response = await GET(buildRequest(`Bearer ${CRON_SECRET}`) as never);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.campagnesClosed).toEqual(closedCampagnes);
+    expect(serviceClient.rpc).toHaveBeenCalledWith("close_expired_campagnes");
+  });
+
+  it("returns a 500 if close_expired_campagnes errors, even though the deadline sweep already succeeded", async () => {
+    const serviceClient = {
+      rpc: vi.fn(async (name: string) =>
+        name === "close_expired_campagnes"
+          ? { data: null, error: { message: "campagnes boom" } }
+          : { data: [], error: null },
+      ),
+    };
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(
+      serviceClient as unknown as ReturnType<typeof createSupabaseServiceRoleClient>,
+    );
+
+    const { GET } = await import("@/app/api/cron/check-deadlines/route");
+    const response = await GET(buildRequest(`Bearer ${CRON_SECRET}`) as never);
+
+    expect(response.status).toBe(500);
   });
 });

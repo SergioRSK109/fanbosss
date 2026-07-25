@@ -103,6 +103,14 @@
       "don": "Direct tip, with no obligation for the creator to respond.",
       "contenu_debloque": "Access unlocked immediately after payment.",
       "evenement_live": "Access link sent immediately after payment."
+    },
+    "campagnes": {
+      "heading": "Campaigns",
+      "badgeObjectifAtteint": "Goal reached 🎉",
+      "badgeTerminee": "Campaign ended",
+      "collecte": "${collecte} raised out of ${objectif}",
+      "joursRestants": "{jours} days left",
+      "dernierJour": "Last day"
     }
   },
   "PaiementRetour": {

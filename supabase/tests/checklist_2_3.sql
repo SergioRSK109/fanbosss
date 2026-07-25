@@ -984,6 +984,162 @@ begin
   raise notice 'PASS: mark_remboursement_manuel_traite clears the worklist flag without fabricating an automated-refund confirmation';
 end $$;
 
+-- ---------------------------------------------------------------------
+-- Fundraising campaigns (migration 0017): both auto-close paths,
+-- verified with real inserts/updates -- not assumed to work as written.
+-- Reaching the objectif closes the campaign immediately via a
+-- transactions trigger; separately, close_expired_campagnes() (the cron
+-- RPC) closes any campaign whose date_fin has passed without reaching
+-- it, while leaving every other campaign (goal not reached, no
+-- date_fin, or date_fin still in the future/today) untouched. Also
+-- covers campagnes_montant_collecte's live sum and the deliberate
+-- difference between campagnes_publiques (never actif-filtered, so
+-- closed campaigns stay visible as history) and offres_publiques
+-- (still actif-filtered, exactly like every other offer type).
+-- ---------------------------------------------------------------------
+
+insert into users (id, telephone, pays) values
+  ('eeeeeee1-1111-1111-1111-111111111111', '+243900000101', 'RDC'),
+  ('eeeeeee2-2222-2222-2222-222222222222', '+243900000102', 'RDC');
+
+-- Campaign 1: goal-reached path.
+insert into offres (id, createur_id, type, libelle, config, actif)
+values (
+  'eeeeeee3-3333-3333-3333-333333333333',
+  'eeeeeee1-1111-1111-1111-111111111111',
+  'campagne', 'Toit pour l''église',
+  jsonb_build_object('description', 'Réparer le toit', 'objectif', 100),
+  true
+);
+
+-- First contribution: below goal, must stay active.
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut)
+values (
+  'eeeeeee6-6666-6666-6666-666666666666',
+  'eeeeeee2-2222-2222-2222-222222222222',
+  'eeeeeee1-1111-1111-1111-111111111111',
+  'eeeeeee3-3333-3333-3333-333333333333',
+  40, 'en_attente'
+);
+update transactions set statut = 'validee' where id = 'eeeeeee6-6666-6666-6666-666666666666';
+update transactions set statut = 'livree' where id = 'eeeeeee6-6666-6666-6666-666666666666';
+
+do $$
+declare
+  v_actif boolean;
+begin
+  select actif into v_actif from offres where id = 'eeeeeee3-3333-3333-3333-333333333333';
+  if not v_actif then
+    raise exception 'TEST FAILED: the campaign closed before reaching its objectif (40/100)';
+  end if;
+  raise notice 'PASS: a campagne stays active while its collected total is below the objectif';
+end $$;
+
+do $$
+declare
+  v_collecte numeric;
+begin
+  select montant_collecte into v_collecte from campagnes_montant_collecte
+    where offre_id = 'eeeeeee3-3333-3333-3333-333333333333';
+  if v_collecte != 40 then
+    raise exception 'TEST FAILED: campagnes_montant_collecte reported % instead of 40', v_collecte;
+  end if;
+  raise notice 'PASS: campagnes_montant_collecte reflects the live sum of delivered contributions';
+end $$;
+
+-- Second contribution: pushes the total to exactly the objectif -- must
+-- auto-close immediately.
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut)
+values (
+  'eeeeeee7-7777-7777-7777-777777777777',
+  'eeeeeee2-2222-2222-2222-222222222222',
+  'eeeeeee1-1111-1111-1111-111111111111',
+  'eeeeeee3-3333-3333-3333-333333333333',
+  60, 'en_attente'
+);
+update transactions set statut = 'validee' where id = 'eeeeeee7-7777-7777-7777-777777777777';
+update transactions set statut = 'livree' where id = 'eeeeeee7-7777-7777-7777-777777777777';
+
+do $$
+declare
+  v_actif boolean;
+begin
+  select actif into v_actif from offres where id = 'eeeeeee3-3333-3333-3333-333333333333';
+  if v_actif then
+    raise exception 'TEST FAILED: the campaign did not auto-close after reaching its objectif (100/100)';
+  end if;
+  raise notice 'PASS: a campagne auto-closes (actif=false) the instant a contribution reaches its objectif';
+end $$;
+
+do $$
+declare
+  v_count integer;
+begin
+  select count(*) into v_count from campagnes_publiques
+    where id = 'eeeeeee3-3333-3333-3333-333333333333';
+  if v_count != 1 then
+    raise exception 'TEST FAILED: a closed campagne disappeared from campagnes_publiques';
+  end if;
+  raise notice 'PASS: a closed (actif=false) campagne stays visible in campagnes_publiques for public history';
+end $$;
+
+do $$
+declare
+  v_count integer;
+begin
+  select count(*) into v_count from offres_publiques
+    where id = 'eeeeeee3-3333-3333-3333-333333333333';
+  if v_count != 0 then
+    raise exception 'TEST FAILED: a closed campagne is still showing in offres_publiques (should only ever show active offres there)';
+  end if;
+  raise notice 'PASS: offres_publiques (unlike campagnes_publiques) still hides a closed campagne, exactly like every other inactive offer type';
+end $$;
+
+-- Campaign 2: date_fin already passed, objectif never reached -- must be
+-- closed by close_expired_campagnes(), not by the goal-reached trigger.
+insert into offres (id, createur_id, type, libelle, config, actif)
+values (
+  'eeeeeee4-4444-4444-4444-444444444444',
+  'eeeeeee1-1111-1111-1111-111111111111',
+  'campagne', 'Campagne expirée',
+  jsonb_build_object(
+    'description', 'x', 'objectif', 1000,
+    'date_fin', (current_date - interval '1 day')::date::text
+  ),
+  true
+);
+
+-- Campaign 3 (control): date_fin is today -- must remain untouched (open
+-- through the entirety of its own date_fin day, not closed the moment
+-- that day starts).
+insert into offres (id, createur_id, type, libelle, config, actif)
+values (
+  'eeeeeee5-5555-5555-5555-555555555555',
+  'eeeeeee1-1111-1111-1111-111111111111',
+  'campagne', 'Campagne se termine aujourd''hui',
+  jsonb_build_object('description', 'x', 'objectif', 1000, 'date_fin', current_date::text),
+  true
+);
+
+select close_expired_campagnes();
+
+do $$
+declare
+  v_actif_expiree boolean;
+  v_actif_aujourdhui boolean;
+begin
+  select actif into v_actif_expiree from offres where id = 'eeeeeee4-4444-4444-4444-444444444444';
+  select actif into v_actif_aujourdhui from offres where id = 'eeeeeee5-5555-5555-5555-555555555555';
+
+  if v_actif_expiree then
+    raise exception 'TEST FAILED: close_expired_campagnes did not close a campagne past its date_fin';
+  end if;
+  if not v_actif_aujourdhui then
+    raise exception 'TEST FAILED: close_expired_campagnes incorrectly closed a campagne whose date_fin is still today';
+  end if;
+  raise notice 'PASS: close_expired_campagnes closes only campagnes whose date_fin has strictly passed';
+end $$;
+
 do $$
 begin
   raise notice 'ALL SQL CHECKLIST TESTS PASSED';

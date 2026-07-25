@@ -53,6 +53,7 @@ describe("GET /[locale]/[handle] (percent-encoded '@' bug)", () => {
       lienReseauSocial: null,
       socialLinks: { tiktok: null, instagram: null, youtube: null, autre: null },
       offres: [],
+      campagnes: [],
       ranks: { volume: null, reactivite: null, progression: null },
     });
   });

@@ -37,11 +37,11 @@ export async function POST(request: NextRequest) {
   }
 
   let montant: number;
-  if (offre.type === "don") {
+  if (offre.type === "don" || offre.type === "campagne") {
     montant = Number(body.montant);
     if (!Number.isFinite(montant) || montant <= 0) {
       return NextResponse.json(
-        { error: "montant invalide pour un don" },
+        { error: "montant invalide" },
         { status: 400 },
       );
     }

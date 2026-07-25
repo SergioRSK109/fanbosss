@@ -140,8 +140,8 @@ describe("POST /api/webhooks/cinetpay (brief checklist items 1 & 4)", () => {
     expect(statutsApplied).toEqual(["validee", "livree"]);
   });
 
-  it.each(["contenu_debloque", "evenement_live"] as const)(
-    "a validly-signed %s notification also moves straight to livree (brief v3 point 2)",
+  it.each(["contenu_debloque", "evenement_live", "campagne"] as const)(
+    "a validly-signed %s notification also moves straight to livree (brief v3 point 2 / fundraising campaigns)",
     async (type) => {
       const { client, updates, inserts } = buildSupabaseMock(
         { id: "offre-1", type, createur_id: "createur-1", prix: 3 },
@@ -184,6 +184,33 @@ describe("POST /api/webhooks/cinetpay (brief checklist items 1 & 4)", () => {
 
     expect(inserts).toHaveLength(1);
     expect(updates).toHaveLength(0);
+  });
+
+  it("a campagne contribution is never rejected by the price-match check, even though its prix is null", async () => {
+    const { client, updates, inserts } = buildSupabaseMock(
+      { id: "offre-campagne-1", type: "campagne", createur_id: "createur-1", prix: null },
+      null,
+    );
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(
+      client as unknown as ReturnType<typeof createSupabaseServiceRoleClient>,
+    );
+
+    const { POST } = await import("@/app/api/webhooks/cinetpay/route");
+    // A free-amount contribution, deliberately far from any "prix" --
+    // there is none to match against, unlike a fixed-price offer type.
+    const notification = buildNotification({ cpm_amount: "47" });
+    const token = computeCinetPayToken(notification, SECRET);
+    const request = buildRequest(notification, token);
+
+    const response = await POST(request);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.status).toBe("ok");
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0].row.montant).toBe(47);
+    const statutsApplied = updates.map((update) => update.patch.statut);
+    expect(statutsApplied).toEqual(["validee", "livree"]);
   });
 
   it("throws rather than silently defaulting when the offer join fails to produce a type", async () => {

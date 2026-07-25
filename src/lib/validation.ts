@@ -57,21 +57,27 @@ export const OFFRE_TYPES = [
   "shoutout",
   "contenu_debloque",
   "evenement_live",
+  "campagne",
 ] as const;
 
 export type OffreType = (typeof OFFRE_TYPES)[number];
 
-// `don` has no fixed price (brief point 4: a checkbox, not a price field --
-// the fan picks their own amount at payment time); every other type
-// requires one. Mirrors the DB constraints (offres_prix_required_unless_don,
-// check_whatsapp_minimum_price) as defense in depth -- see brief 0.2.
+// Both `don` and `campagne` have no fixed price (brief point 4 for don: a
+// checkbox, not a price field; campagne is the same free-amount mechanic
+// -- the fan picks their own contribution at payment time). Every other
+// type requires one. Mirrors the DB constraints
+// (offres_prix_required_unless_don, check_whatsapp_minimum_price) as
+// defense in depth -- see brief 0.2.
 export const creerOffreSchema = z
   .object({
     type: z.enum(OFFRE_TYPES),
     prix: z.number().positive().optional(),
-    // Only meaningful for `video`: several video offers can coexist for the
-    // same créateur, distinguished by libelle ("Anniversaire", "Danse",
-    // ...). Every other type keeps a single row with libelle left null.
+    // Meaningful for `video` (several video offers can coexist for the
+    // same créateur, distinguished by libelle -- "Anniversaire", "Danse")
+    // and for `campagne` (the campaign's title -- a créateur can run
+    // several campaigns over time, same NULLS NOT DISTINCT mechanism,
+    // migration 0007/0017). Every other type keeps a single row with
+    // libelle left null.
     libelle: z.string().trim().min(1).optional(),
     config: z.record(z.string(), z.unknown()).optional(),
     // Was missing entirely until this field was added, which meant the
@@ -81,7 +87,7 @@ export const creerOffreSchema = z
     // default forever regardless of what the client sent.
     actif: z.boolean().optional(),
   })
-  .refine((offre) => offre.type === "don" || offre.prix !== undefined, {
+  .refine((offre) => offre.type === "don" || offre.type === "campagne" || offre.prix !== undefined, {
     message: "le prix est requis pour ce type d'offre",
     path: ["prix"],
   })
@@ -92,6 +98,42 @@ export const creerOffreSchema = z
     {
       message: `le prix d'une offre whatsapp doit être >= ${WHATSAPP_PRIX_MINIMUM}$`,
       path: ["prix"],
+    },
+  )
+  .refine((offre) => offre.type !== "campagne" || Boolean(offre.libelle), {
+    message: "le titre de la campagne est requis",
+    path: ["libelle"],
+  })
+  .refine(
+    (offre) => {
+      if (offre.type !== "campagne") return true;
+      const objectif = Number(offre.config?.objectif);
+      return Number.isFinite(objectif) && objectif > 0;
+    },
+    {
+      message: "l'objectif de la campagne doit être un nombre positif",
+      path: ["config", "objectif"],
+    },
+  )
+  .refine(
+    (offre) => {
+      if (offre.type !== "campagne") return true;
+      return typeof offre.config?.description === "string" && offre.config.description.trim().length > 0;
+    },
+    {
+      message: "la description de la campagne est requise",
+      path: ["config", "description"],
+    },
+  )
+  .refine(
+    (offre) => {
+      if (offre.type !== "campagne") return true;
+      const dateFin = offre.config?.date_fin;
+      return dateFin === undefined || dateFin === null || /^\d{4}-\d{2}-\d{2}$/.test(String(dateFin));
+    },
+    {
+      message: "date_fin doit être au format AAAA-MM-JJ",
+      path: ["config", "date_fin"],
     },
   );
 
