@@ -463,6 +463,16 @@ begin
   end;
 end $$;
 
+do $$
+begin
+  begin
+    update users set pseudo = 'admin' where id = '22222222-2222-2222-2222-222222222222';
+    raise exception 'TEST FAILED: the new "admin" route name was accepted as a pseudo';
+  exception when check_violation then
+    raise notice 'PASS: "admin" is rejected as a pseudo (reserved-word list kept in sync with the new route)';
+  end;
+end $$;
+
 update users set nom_affichage = 'Sergio le Créateur'
   where id = '11111111-1111-1111-1111-111111111111';
 
@@ -692,6 +702,150 @@ begin
       v_province, v_ville;
   end if;
   raise notice 'PASS: province and ville are optional -- omitting them at signup leaves both null';
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Admin role (migration 0015): a normal user can never self-promote via
+-- a direct UPDATE (users_update_self's RLS lets a user PATCH their own
+-- row's *any* column, the same gap already closed for pseudo_modifie_at
+-- in 0010), only an existing admin can grant/revoke someone else's
+-- status via the SECURITY DEFINER RPC, and marking a manual refund as
+-- handled never fabricates a fake automated-refund confirmation.
+-- ---------------------------------------------------------------------
+-- '22222222' has never been admin anywhere in this file up to this point.
+-- ATTACK: self-promote via a direct UPDATE, as itself.
+select set_config('app.current_user_id', '22222222-2222-2222-2222-222222222222', false);
+update users set est_admin = true where id = '22222222-2222-2222-2222-222222222222';
+select set_config('app.current_user_id', '', false);
+
+do $$
+declare
+  v_est_admin boolean;
+begin
+  select est_admin into v_est_admin from users where id = '22222222-2222-2222-2222-222222222222';
+  if v_est_admin then
+    raise exception 'TEST FAILED: a normal user was able to self-promote to admin via a direct UPDATE';
+  end if;
+  raise notice 'PASS: a normal user cannot self-promote via a direct UPDATE (RLS would otherwise allow it, same class of bug as pseudo_modifie_at backdating)';
+end $$;
+
+-- Bootstrap the first admin: no app.current_user_id set at all (mirrors a
+-- direct SQL Editor session or this migration itself, not an authenticated
+-- PostgREST request) -- the trigger's auth.uid() is null exemption is what
+-- makes this possible without disabling the trigger.
+update users set est_admin = true where id = '11111111-1111-1111-1111-111111111111';
+
+do $$
+declare
+  v_est_admin boolean;
+begin
+  select est_admin into v_est_admin from users where id = '11111111-1111-1111-1111-111111111111';
+  if not v_est_admin then
+    raise exception 'TEST FAILED: bootstrapping the first admin via a no-auth-context UPDATE did not work';
+  end if;
+  raise notice 'PASS: the first admin can be bootstrapped via a direct UPDATE with no auth.uid() context';
+end $$;
+
+-- '11111111' (now admin) grants admin to '22222222' via the RPC.
+select set_config('app.current_user_id', '11111111-1111-1111-1111-111111111111', false);
+select set_admin_status('22222222-2222-2222-2222-222222222222', true);
+select set_config('app.current_user_id', '', false);
+
+do $$
+declare
+  v_est_admin boolean;
+begin
+  select est_admin into v_est_admin from users where id = '22222222-2222-2222-2222-222222222222';
+  if not v_est_admin then
+    raise exception 'TEST FAILED: an existing admin could not grant admin status to another user via set_admin_status';
+  end if;
+  raise notice 'PASS: an existing admin can grant admin status to another user via set_admin_status';
+end $$;
+
+-- '22222222' (now admin) revokes '11111111''s admin status via the RPC.
+select set_config('app.current_user_id', '22222222-2222-2222-2222-222222222222', false);
+select set_admin_status('11111111-1111-1111-1111-111111111111', false);
+select set_config('app.current_user_id', '', false);
+
+do $$
+declare
+  v_est_admin boolean;
+begin
+  select est_admin into v_est_admin from users where id = '11111111-1111-1111-1111-111111111111';
+  if v_est_admin then
+    raise exception 'TEST FAILED: set_admin_status did not actually revoke admin status';
+  end if;
+  raise notice 'PASS: an existing admin can revoke another admin''s status via set_admin_status';
+end $$;
+
+-- ATTACK: '11111111' (no longer admin) tries to re-grant itself via the
+-- RPC directly -- must be rejected, not just silently no-op.
+select set_config('app.current_user_id', '11111111-1111-1111-1111-111111111111', false);
+
+do $$
+begin
+  perform set_admin_status('11111111-1111-1111-1111-111111111111', true);
+  raise exception 'TEST FAILED: a non-admin was able to call set_admin_status to self-promote';
+exception when others then
+  if sqlerrm != 'not authorized' then
+    raise;
+  end if;
+  raise notice 'PASS: set_admin_status rejects a non-admin caller (self-promotion attempt via the RPC)';
+end $$;
+
+select set_config('app.current_user_id', '', false);
+
+-- mark_remboursement_manuel_traite: uses the existing whatsapp offre
+-- ('33333333', créateur '11111111', see near the top of this file).
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut, necessite_remboursement_manuel)
+values (
+  'dddddddd-dddd-dddd-dddd-dddddddddddd',
+  '22222222-2222-2222-2222-222222222222',
+  '11111111-1111-1111-1111-111111111111',
+  '33333333-3333-3333-3333-333333333333',
+  20, 'remboursee', true
+);
+
+-- '11111111' is not admin at this point (revoked above) -- must be rejected.
+select set_config('app.current_user_id', '11111111-1111-1111-1111-111111111111', false);
+
+do $$
+begin
+  perform mark_remboursement_manuel_traite('dddddddd-dddd-dddd-dddd-dddddddddddd');
+  raise exception 'TEST FAILED: a non-admin was able to call mark_remboursement_manuel_traite';
+exception when others then
+  if sqlerrm != 'not authorized' then
+    raise;
+  end if;
+  raise notice 'PASS: mark_remboursement_manuel_traite rejects a non-admin caller';
+end $$;
+
+select set_config('app.current_user_id', '', false);
+
+-- '22222222' is admin -- marking it treated must succeed.
+select set_config('app.current_user_id', '22222222-2222-2222-2222-222222222222', false);
+select mark_remboursement_manuel_traite('dddddddd-dddd-dddd-dddd-dddddddddddd');
+select set_config('app.current_user_id', '', false);
+
+do $$
+declare
+  v_necessite boolean;
+  v_reference text;
+  v_montant numeric;
+begin
+  select necessite_remboursement_manuel, reference_remboursement_cinetpay, montant_rembourse
+    into v_necessite, v_reference, v_montant
+    from transactions where id = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+
+  if v_necessite then
+    raise exception 'TEST FAILED: mark_remboursement_manuel_traite did not clear necessite_remboursement_manuel';
+  end if;
+  if v_reference is not null or v_montant is not null then
+    raise exception
+      'TEST FAILED: mark_remboursement_manuel_traite fabricated an automated-refund confirmation (reference=%, montant=%)',
+      v_reference, v_montant;
+  end if;
+  raise notice 'PASS: mark_remboursement_manuel_traite clears the worklist flag without fabricating an automated-refund confirmation';
 end $$;
 
 do $$
