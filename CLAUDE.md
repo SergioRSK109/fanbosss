@@ -35,7 +35,7 @@ Env vars: see `.env.example` for the full list (Supabase URL/anon/service
 keys, CinetPay API key + site id + **secret key** used for HMAC, R2
 account/access/secret/bucket, `CRON_SECRET`, `NEXT_PUBLIC_APP_URL`).
 
-## Database schema (current, post-migration 0011)
+## Database schema (current, post-migration 0018)
 
 Migrations are strictly incremental (`supabase/migrations/0001`...`0018`)
 — never rewritten, never a `DROP`/recreate. Each one has been applied and
@@ -1943,7 +1943,21 @@ into chat).
   (`process_transaction_deadlines`, `refuse_transaction`) always set
   `necessite_remboursement_manuel`, and `remboursement_cinetpay_actif`/
   `remboursement_pourcentage` seed to their correct defaults. Also
-  covers `users_date_naissance_majorite` (0016) with real insertion
+  covers the admin-role trigger and RPCs (0015) with an explicit attack
+  simulation, the same pattern as the pseudo-cooldown bypass test: a
+  normal user's direct `UPDATE ... set est_admin = true` on their own
+  row is rejected (`enforce_est_admin_change`), the very first admin can
+  still be bootstrapped via a direct `UPDATE` with no `auth.uid()`
+  context (SQL Editor/migration, never reachable through the app),
+  `set_admin_status()` lets an existing admin grant/revoke another
+  user's status while rejecting a non-admin caller (including a
+  self-promotion attempt via the RPC itself, not just the raw column),
+  and `mark_remboursement_manuel_traite()` rejects a non-admin caller
+  and, for an admin, clears `necessite_remboursement_manuel` without
+  ever fabricating `reference_remboursement_cinetpay`/`montant_rembourse`
+  (those specifically mean "a real automated CinetPay call was
+  confirmed," which a manual dashboard action isn't). Also covers
+  `users_date_naissance_majorite` (0016) with real insertion
   attempts: an under-18 date is rejected, a date one day short of 18
   years is rejected (boundary), exactly-18-today and older dates are
   accepted, NULL is unaffected, and a full end-to-end `auth.users` insert
