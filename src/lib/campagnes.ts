@@ -66,3 +66,14 @@ export function computeJoursRestants(
   const today = new Date(`${todayIso(now)}T00:00:00Z`).getTime();
   return Math.ceil((endOfDay - today) / (24 * 60 * 60 * 1000));
 }
+
+// Thousands-grouped display for a campaign amount (objectif, montant
+// collecté) -- a raw "1205$" is hard to scan for a 4-5 digit goal.
+// Shared (rather than reimplemented per call site) so the public
+// profile and the créateur dashboard format the exact same way.
+// Locale defaults to "fr-FR" since the créateur dashboard is
+// French-only by design (see CLAUDE.md's i18n section); the bilingual
+// public profile passes next-intl's own active locale explicitly.
+export function formatMontant(value: number, locale: string = "fr-FR"): string {
+  return new Intl.NumberFormat(locale).format(value);
+}

@@ -105,12 +105,15 @@
       "evenement_live": "Lien d'accès envoyé immédiatement après paiement."
     },
     "campagnes": {
-      "heading": "Campagnes",
+      "heading": "Campagnes de collecte de fonds",
       "badgeObjectifAtteint": "Objectif atteint 🎉",
       "badgeTerminee": "Campagne terminée",
-      "collecte": "{collecte}$ collectés sur {objectif}$",
+      "collecteEtPourcentage": "{collecte}$ collectés ({pourcentage}%)",
+      "objectifLabel": "Objectif : {objectif}$",
       "joursRestants": "{jours} jours restants",
-      "dernierJour": "Dernier jour"
+      "dernierJour": "Dernier jour",
+      "share": "Partager cette campagne",
+      "shareCopied": "Lien copié !"
     }
   },
   "PaiementRetour": {

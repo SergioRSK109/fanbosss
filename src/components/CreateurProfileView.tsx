@@ -1,12 +1,14 @@
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { CheckoutButton } from "@/components/CheckoutButton";
 import { ReportButton } from "@/components/ReportButton";
+import { ShareCampagneButton } from "@/components/ShareCampagneButton";
 import { RankBadge } from "@/components/ui/RankBadge";
 import { ZoomablePhoto } from "@/components/ui/ZoomablePhoto";
 import {
   computeCampagneProgressPercent,
   computeCampagneStatus,
   computeJoursRestants,
+  formatMontant,
 } from "@/lib/campagnes";
 import type { CreateurProfileData } from "@/lib/profil";
 import type { OffreType } from "@/lib/validation";
@@ -48,6 +50,7 @@ const SOCIAL_LINK_ICONS = {
 
 export function CreateurProfileView({ profile }: { profile: CreateurProfileData }) {
   const t = useTranslations("CreateurProfile");
+  const locale = useLocale();
   const labels: Record<string, string> = {
     video: t("offerTypes.video"),
     don: t("offerTypes.don"),
@@ -152,7 +155,16 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
             const joursRestants = computeJoursRestants(campagne.dateFin);
 
             return (
-              <div key={campagne.id} className="card flex flex-col gap-3 p-4">
+              // Stable anchor so "Partager cette campagne" can link
+              // straight at this one card, not just the profile in
+              // general -- scroll-mt-6 keeps it clear of any future
+              // sticky header even though there isn't one today.
+              <div
+                key={campagne.id}
+                id={`campagne-${campagne.id}`}
+                className="card scroll-mt-6 flex flex-col gap-3 p-4"
+              >
+                {/* 1. Title + status */}
                 <div className="flex items-start justify-between gap-2">
                   <h3 className="font-semibold leading-snug">{campagne.titre}</h3>
                   {status === "objectif_atteint" && (
@@ -167,38 +179,54 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
                   )}
                 </div>
 
-                {campagne.description && (
-                  <p className="text-sm text-foreground-muted">{campagne.description}</p>
-                )}
-
+                {/* 2. Progress bar + montant collecté + pourcentage,
+                    together -- the track itself carries a visible border
+                    so it reads as a bar even at 0% filled, not just once
+                    it starts filling in. */}
                 <div>
-                  <div className="h-2 overflow-hidden rounded-full bg-surface-muted">
+                  <div className="h-2 overflow-hidden rounded-full border border-border bg-surface-muted">
                     <div
                       className="h-full rounded-full bg-brand-500"
                       style={{ width: `${progressPercent}%` }}
                     />
                   </div>
                   <p className="mt-1.5 text-sm font-medium">
-                    {t("campagnes.collecte", {
-                      collecte: campagne.montantCollecte,
-                      objectif: campagne.objectif,
+                    {t("campagnes.collecteEtPourcentage", {
+                      collecte: formatMontant(campagne.montantCollecte, locale),
+                      pourcentage: Math.round(progressPercent),
                     })}
                   </p>
                 </div>
 
-                {status === "active" && joursRestants !== null && (
-                  <p className="text-xs text-foreground-muted">
-                    {joursRestants > 0
-                      ? t("campagnes.joursRestants", { jours: joursRestants })
-                      : t("campagnes.dernierJour")}
+                {/* 3. Objectif + description of the cause */}
+                <div className="flex flex-col gap-1">
+                  <p className="text-sm font-medium text-foreground-muted">
+                    {t("campagnes.objectifLabel", {
+                      objectif: formatMontant(campagne.objectif, locale),
+                    })}
                   </p>
-                )}
+                  {campagne.description && (
+                    <p className="text-sm text-foreground-muted">{campagne.description}</p>
+                  )}
+                  {status === "active" && joursRestants !== null && (
+                    <p className="text-xs text-foreground-muted">
+                      {joursRestants > 0
+                        ? t("campagnes.joursRestants", { jours: joursRestants })
+                        : t("campagnes.dernierJour")}
+                    </p>
+                  )}
+                </div>
 
+                {/* 4. Amount field + Payer button */}
                 {status === "active" && (
                   <div className="flex justify-end">
                     <CheckoutButton offreId={campagne.id} type="campagne" />
                   </div>
                 )}
+
+                <div className="border-t border-border pt-2">
+                  <ShareCampagneButton campagneId={campagne.id} />
+                </div>
               </div>
             );
           })}
