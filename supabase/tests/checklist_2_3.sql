@@ -437,6 +437,145 @@ begin
   raise notice 'PASS: refuse_transaction also flags necessite_remboursement_manuel';
 end $$;
 
+-- ---------------------------------------------------------------------
+-- Security regression (migration 0020): accept_transaction/
+-- refuse_transaction/deliver_video must reject a fully anonymous caller
+-- (auth.uid() IS NULL), not silently let one through via `!=`'s NULL
+-- semantics -- a real, previously-exploitable bug, reproduced directly
+-- against a real Postgres instance (SET ROLE anon; no
+-- app.current_user_id at all; a real pending transaction belonging to a
+-- different, real créateur got accepted/refused/fake-delivered) before
+-- this fix was written. Two independent layers, both tested: (1) `anon`
+-- must have no EXECUTE privilege on any of the three functions at all
+-- (migration 0020's `revoke all ... from public`); (2) even as
+-- `authenticated` (EXECUTE granted), a call with auth.uid() genuinely
+-- NULL must still be rejected by the function body itself -- defense in
+-- depth, so this stays closed even if EXECUTE were ever mistakenly
+-- re-granted to anon/public in the future.
+-- ---------------------------------------------------------------------
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('a110ac01-0000-0000-0000-000000000001',
+   '22222222-2222-2222-2222-222222222222',
+   '11111111-1111-1111-1111-111111111111',
+   '44444444-4444-4444-4444-444444444444', 10, 'en_attente'),
+  ('a110ac02-0000-0000-0000-000000000002',
+   '22222222-2222-2222-2222-222222222222',
+   '11111111-1111-1111-1111-111111111111',
+   '44444444-4444-4444-4444-444444444444', 10, 'en_attente'),
+  ('a110ac03-0000-0000-0000-000000000003',
+   '22222222-2222-2222-2222-222222222222',
+   '11111111-1111-1111-1111-111111111111',
+   '44444444-4444-4444-4444-444444444444', 10, 'validee');
+
+-- Genuinely anonymous: no app.current_user_id at all.
+select set_config('app.current_user_id', '', false);
+
+-- Layer 1: anon has no EXECUTE privilege at all -- real Postgres
+-- permission check, same technique as mes_progres_classement() above.
+set role anon;
+
+do $$
+begin
+  begin
+    perform accept_transaction('a110ac01-0000-0000-0000-000000000001');
+    raise exception 'TEST FAILED: anon was able to call accept_transaction() at all';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE privilege on accept_transaction() (migration 0020)';
+  end;
+end $$;
+
+do $$
+begin
+  begin
+    perform refuse_transaction('a110ac02-0000-0000-0000-000000000002');
+    raise exception 'TEST FAILED: anon was able to call refuse_transaction() at all';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE privilege on refuse_transaction() (migration 0020)';
+  end;
+end $$;
+
+do $$
+begin
+  begin
+    perform deliver_video('a110ac03-0000-0000-0000-000000000003', 'attacker/forged.mp4');
+    raise exception 'TEST FAILED: anon was able to call deliver_video() at all';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE privilege on deliver_video() (migration 0020)';
+  end;
+end $$;
+
+reset role;
+
+-- Layer 2: `authenticated` (EXECUTE granted) but auth.uid() genuinely
+-- NULL -- this is the exact scenario that used to succeed silently.
+set role authenticated;
+
+do $$
+begin
+  begin
+    perform accept_transaction('a110ac01-0000-0000-0000-000000000001');
+    raise exception 'TEST FAILED: accept_transaction() succeeded with auth.uid() IS NULL -- the anonymous-caller bypass is back';
+  exception when others then
+    if sqlerrm != 'not authenticated' then
+      raise exception 'TEST FAILED: unexpected error calling accept_transaction() with a NULL auth.uid(): %', sqlerrm;
+    end if;
+    raise notice 'PASS: accept_transaction() rejects a call with auth.uid() IS NULL';
+  end;
+end $$;
+
+do $$
+begin
+  begin
+    perform refuse_transaction('a110ac02-0000-0000-0000-000000000002');
+    raise exception 'TEST FAILED: refuse_transaction() succeeded with auth.uid() IS NULL -- the anonymous-caller bypass is back';
+  exception when others then
+    if sqlerrm != 'not authenticated' then
+      raise exception 'TEST FAILED: unexpected error calling refuse_transaction() with a NULL auth.uid(): %', sqlerrm;
+    end if;
+    raise notice 'PASS: refuse_transaction() rejects a call with auth.uid() IS NULL';
+  end;
+end $$;
+
+do $$
+begin
+  begin
+    perform deliver_video('a110ac03-0000-0000-0000-000000000003', 'attacker/forged.mp4');
+    raise exception 'TEST FAILED: deliver_video() succeeded with auth.uid() IS NULL -- the anonymous-caller bypass is back';
+  exception when others then
+    if sqlerrm != 'not authenticated' then
+      raise exception 'TEST FAILED: unexpected error calling deliver_video() with a NULL auth.uid(): %', sqlerrm;
+    end if;
+    raise notice 'PASS: deliver_video() rejects a call with auth.uid() IS NULL';
+  end;
+end $$;
+
+reset role;
+
+-- None of the rejected attacks above should have left any trace.
+do $$
+declare
+  v_statut1 text;
+  v_statut2 text;
+  v_statut3 text;
+  v_livrable jsonb;
+begin
+  select statut into v_statut1 from transactions where id = 'a110ac01-0000-0000-0000-000000000001';
+  select statut into v_statut2 from transactions where id = 'a110ac02-0000-0000-0000-000000000002';
+  select statut, livrable into v_statut3, v_livrable from transactions where id = 'a110ac03-0000-0000-0000-000000000003';
+
+  if v_statut1 != 'en_attente' then
+    raise exception 'TEST FAILED: accept_transaction attack mutated the transaction despite being rejected (statut=%)', v_statut1;
+  end if;
+  if v_statut2 != 'en_attente' then
+    raise exception 'TEST FAILED: refuse_transaction attack mutated the transaction despite being rejected (statut=%)', v_statut2;
+  end if;
+  if v_statut3 != 'validee' or v_livrable != '{}'::jsonb then
+    raise exception 'TEST FAILED: deliver_video attack mutated the transaction despite being rejected (statut=%, livrable=%)', v_statut3, v_livrable;
+  end if;
+
+  raise notice 'PASS: none of the rejected anonymous-caller attacks left any trace on the targeted transactions';
+end $$;
+
 do $$
 begin
   if not exists (

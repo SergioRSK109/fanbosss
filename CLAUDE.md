@@ -423,6 +423,80 @@ both RPC calls must succeed for the route to return 200, so a failure in
 either one still surfaces as a real error to the external scheduler
 rather than silently skipping half the sweep.
 
+## `accept_transaction`/`refuse_transaction`/`deliver_video` anonymous bypass — found and fixed (migration `0020`)
+
+A real, currently-exploitable vulnerability, flagged during unrelated
+work on `mes_progres_classement()` (migration `0019`, see below) after
+noticing these three predated that function's `revoke all ... from
+public` pattern — then **confirmed empirically before being trusted**,
+the same discipline as the logo-click "logout" investigation: a
+throwaway Postgres database was built from the real migrations, a real
+pending `video` transaction was inserted belonging to a real créateur,
+and `SET ROLE anon;` (no `app.current_user_id` at all — genuinely no
+session) followed by `select accept_transaction('<that transaction's
+id>')` **actually flipped it to `validee` and set `repondu_at`**. Same
+result for `refuse_transaction` (→ `remboursee`) and, worse,
+`deliver_video`: an anonymous caller could write an **attacker-chosen
+r2_key** into `livrable`, which would then be served to the paying fan
+as the créateur's real delivered video.
+
+Two independent, compounding problems, both in every one of these three
+functions since migration `0002`/`0006`/`0008`:
+
+1. `if v_tx.createur_id != auth.uid() then raise 'not authorized'` — `!=`
+   with a NULL operand evaluates to NULL, never `TRUE`, and PL/pgSQL's
+   `IF` treats NULL the same as `FALSE`. So whenever `auth.uid()` was
+   NULL (no session at all), this "authorization" check silently did
+   nothing and execution fell straight through to the actual state
+   change.
+2. None of these three ever had `EXECUTE` revoked from `public`.
+   Postgres grants `EXECUTE` to `PUBLIC` **by default** on newly created
+   functions (unlike tables, which default to no access) — migration
+   `0003`'s `grant execute ... to authenticated` was additive, never a
+   replacement, and `anon` inherits `PUBLIC`. Confirmed directly:
+   `select has_function_privilege('anon', 'accept_transaction(uuid)',
+   'EXECUTE')` returned `true` before this migration.
+
+**Fix, both layers, verified independently:**
+- `revoke all on function ... from public` + re-grant to `authenticated`
+  only, on all three functions — the same pattern already used for
+  `mes_progres_classement()`. Verified directly: after this migration,
+  `has_function_privilege('anon', ...)` is `false`, and the exact
+  reproduction above now fails outright with `permission denied for
+  function accept_transaction` (Postgres's own error, not this
+  codebase's) — the transaction is left completely untouched
+  (`statut` still `en_attente`).
+- The ownership comparison itself changed from `!=` to `is distinct
+  from` (correct regardless of which side is NULL) **and** an explicit
+  `if auth.uid() is null then raise exception 'not authenticated'; end
+  if;` was added at the very top of each function, before the `select
+  ... for update` even runs — same style as `mes_progres_classement()`.
+  This is deliberate defense in depth on top of the `EXECUTE` revoke,
+  not redundant with it: it's what keeps this closed even if `EXECUTE`
+  were ever mistakenly re-granted to `anon`/`public` again in the
+  future, exactly the same "don't rely on a single layer" principle
+  already applied to the pseudo-cooldown trigger and admin-escalation
+  trigger elsewhere in this file.
+
+**Tested at both layers in `checklist_2_3.sql`**, not just described:
+`SET ROLE anon` against all three functions confirms a real
+`insufficient_privilege` error (Postgres permission system, not
+application logic); `SET ROLE authenticated` with no
+`app.current_user_id` set at all confirms each function's own
+`not authenticated` exception fires; and a final assertion confirms none
+of the six rejected attack attempts left any trace on the targeted
+transactions (`statut`/`livrable` unchanged). This is the same "always
+extend the SQL checklist, never just describe new DB behavior in prose"
+discipline this file has followed since the pseudo-cooldown bypass test.
+
+**No application code needed to change** — `src/app/api/transactions/
+[id]/accept/route.ts`, `.../refuse/route.ts`, and `.../deliver/route.ts`
+already call these RPCs via the authenticated Supabase client and
+already treat any RPC error as a failure to surface to the caller; a
+genuine créateur accepting/refusing/delivering their own transaction was
+never affected; only a caller with no session at all is newly rejected,
+which was already the intended behavior everywhere else in this app.
+
 ## Commission rate: 20% → 17%, frais/TVA absorbed by the platform (migration `0018`)
 
 `create_paiement_on_validation()` now charges **17%** commission, down
@@ -1897,7 +1971,13 @@ into chat).
   applying the migrations) — `anon` gets a real `insufficient_privilege`
   error attempting to call the function at all, and `authenticated` with
   no `auth.uid()` set gets the function's own `not authenticated`
-  exception. Also covers the `'classement'` reserved pseudo (0019).
+  exception. Also covers the `'classement'` reserved pseudo (0019). Also
+  covers the `accept_transaction`/`refuse_transaction`/`deliver_video`
+  anonymous-caller bypass fix (0020): `SET ROLE anon` gets a real
+  `insufficient_privilege` error on all three, `SET ROLE authenticated`
+  with no `auth.uid()` set gets each function's own `not authenticated`
+  exception, and a final assertion confirms none of the six rejected
+  attack attempts left any trace on the targeted transactions.
 - `supabase/tests/stub_auth.sql` fakes just enough of Supabase's `auth`
   schema (an `auth.uid()` reading `app.current_user_id`, plus the
   `authenticated`/`anon`/`service_role` roles) for the real migrations to
