@@ -18,6 +18,38 @@ export function pseudoLockedUntil(pseudoModifieAt: string | null): string | null
   return unlockAt > Date.now() ? new Date(unlockAt).toISOString() : null;
 }
 
+// Mirrors the DB CHECK constraint `users_date_naissance_majorite`
+// (migration 0016) exactly -- `date_naissance <= current_date - interval
+// '18 years'` -- so the signup form's pre-submit check and the server's
+// real enforcement never drift apart. Computed from UTC on purpose: the
+// DB's `current_date` is evaluated in the database session's timezone
+// (UTC on Supabase), while a naive client-side `new Date()` would use
+// the visitor's local timezone -- using UTC here keeps the two aligned
+// instead of the cutoff silently shifting by a day for a visitor near
+// midnight. This can't fully eliminate every edge case (a visitor's
+// system clock could simply be wrong), which is exactly why the DB
+// constraint, not this helper, is the real guarantee.
+export function minBirthDateForSignup(referenceDate: Date = new Date()): string {
+  const year = referenceDate.getUTCFullYear() - 18;
+  const month = String(referenceDate.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(referenceDate.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+// dateNaissance is an ISO "YYYY-MM-DD" string (the native <input
+// type="date"> format) -- plain lexicographic comparison against another
+// ISO date string of the same shape sorts identically to a real date
+// comparison, no Date parsing needed. An empty string sorts before every
+// real date, which would otherwise make an unfilled field look "at least
+// 18" -- explicitly rejected instead of relying on the lexicographic
+// comparison alone.
+export function isAtLeast18(dateNaissance: string, referenceDate: Date = new Date()): boolean {
+  if (!dateNaissance) {
+    return false;
+  }
+  return dateNaissance <= minBirthDateForSignup(referenceDate);
+}
+
 export const OFFRE_TYPES = [
   "video",
   "don",

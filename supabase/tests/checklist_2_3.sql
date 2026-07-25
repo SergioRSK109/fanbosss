@@ -705,6 +705,142 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------
+-- Signup age gate + nom_affichage from signup (migration 0016): a real
+-- 18+ minimum enforced at the DB level -- verified with actual insertion
+-- attempts, not assumed to work as written. An under-18 date is
+-- rejected, a date one day short of 18 years is rejected (boundary),
+-- exactly-18-years-old today is accepted (boundary), and NULL (existing
+-- rows predating this column) is unaffected. handle_new_auth_user also
+-- starts picking up nom_affichage from signup metadata -- SignupForm.tsx
+-- concatenates "{nom} {postnom}" client-side before calling signUp(),
+-- so there's no separate nom/postnom column to test here, only that the
+-- already-existing nom_affichage column receives it correctly.
+-- ---------------------------------------------------------------------
+do $$
+begin
+  begin
+    update users set date_naissance = (current_date - interval '17 years')::date
+      where id = '11111111-1111-1111-1111-111111111111';
+    raise exception 'TEST FAILED: a 17-year-old date_naissance was accepted';
+  exception when check_violation then
+    raise notice 'PASS: date_naissance rejects an under-18 date (17 years old)';
+  end;
+end $$;
+
+do $$
+begin
+  begin
+    update users set date_naissance = (current_date - interval '18 years' + interval '1 day')::date
+      where id = '11111111-1111-1111-1111-111111111111';
+    raise exception 'TEST FAILED: a date one day short of 18 years was accepted';
+  exception when check_violation then
+    raise notice 'PASS: date_naissance rejects a date one day short of 18 years (boundary)';
+  end;
+end $$;
+
+do $$
+declare
+  v_date_naissance date;
+begin
+  update users set date_naissance = (current_date - interval '18 years')::date
+    where id = '11111111-1111-1111-1111-111111111111';
+  select date_naissance into v_date_naissance from users
+    where id = '11111111-1111-1111-1111-111111111111';
+  if v_date_naissance != (current_date - interval '18 years')::date then
+    raise exception 'TEST FAILED: an exactly-18-years-old date_naissance was not accepted (got %)', v_date_naissance;
+  end if;
+  raise notice 'PASS: date_naissance accepts exactly 18 years old today (boundary)';
+end $$;
+
+do $$
+begin
+  update users set date_naissance = null
+    where id = '11111111-1111-1111-1111-111111111111';
+  raise notice 'PASS: date_naissance accepts NULL (existing accounts predating this column)';
+end $$;
+
+insert into auth.users (id, raw_user_meta_data)
+values (
+  '77777777-7777-7777-7777-777777777777',
+  jsonb_build_object(
+    'telephone', '+243900000077',
+    'pays', 'RD Congo',
+    'nom_affichage', 'Jean Kabila',
+    'date_naissance', (current_date - interval '25 years')::date::text
+  )
+);
+
+do $$
+declare
+  v_nom_affichage text;
+  v_date_naissance date;
+begin
+  select nom_affichage, date_naissance into v_nom_affichage, v_date_naissance from users
+    where id = '77777777-7777-7777-7777-777777777777';
+  if v_nom_affichage != 'Jean Kabila' then
+    raise exception 'TEST FAILED: handle_new_auth_user did not pick up nom_affichage from signup metadata (got %)', v_nom_affichage;
+  end if;
+  if v_date_naissance != (current_date - interval '25 years')::date then
+    raise exception 'TEST FAILED: handle_new_auth_user did not pick up date_naissance from signup metadata (got %)', v_date_naissance;
+  end if;
+  raise notice 'PASS: handle_new_auth_user stores nom_affichage and date_naissance from signup metadata';
+end $$;
+
+insert into auth.users (id, raw_user_meta_data)
+values (
+  '66666666-6666-6666-6666-666666666666',
+  jsonb_build_object('telephone', '+243900000066', 'pays', 'RD Congo')
+);
+
+do $$
+declare
+  v_nom_affichage text;
+  v_date_naissance date;
+begin
+  select nom_affichage, date_naissance into v_nom_affichage, v_date_naissance from users
+    where id = '66666666-6666-6666-6666-666666666666';
+  if v_nom_affichage is not null or v_date_naissance is not null then
+    raise exception
+      'TEST FAILED: nom_affichage/date_naissance should default to null when omitted from signup metadata (got nom_affichage=%, date_naissance=%)',
+      v_nom_affichage, v_date_naissance;
+  end if;
+  raise notice 'PASS: nom_affichage and date_naissance are optional at the trigger level -- omitting them leaves both null';
+end $$;
+
+-- The trigger must also reject an under-18 signup end-to-end -- this is
+-- the exact path a real signup takes (an INSERT into auth.users, not a
+-- direct UPDATE on an existing users row), and the failure must roll
+-- back the auth.users row too, not leave a half-created account behind.
+do $$
+begin
+  begin
+    insert into auth.users (id, raw_user_meta_data)
+    values (
+      '55555555-5555-5555-5555-555555555555',
+      jsonb_build_object(
+        'telephone', '+243900000055',
+        'pays', 'RD Congo',
+        'date_naissance', (current_date - interval '17 years')::date::text
+      )
+    );
+    raise exception 'TEST FAILED: an under-18 signup was accepted end-to-end via handle_new_auth_user';
+  exception when check_violation then
+    raise notice 'PASS: an under-18 signup is rejected end-to-end via handle_new_auth_user';
+  end;
+end $$;
+
+do $$
+declare
+  v_count integer;
+begin
+  select count(*) into v_count from auth.users where id = '55555555-5555-5555-5555-555555555555';
+  if v_count != 0 then
+    raise exception 'TEST FAILED: the rejected under-18 signup left a row behind in auth.users';
+  end if;
+  raise notice 'PASS: the rejected under-18 signup left no row behind in auth.users (whole statement rolled back)';
+end $$;
+
+-- ---------------------------------------------------------------------
 -- Admin role (migration 0015): a normal user can never self-promote via
 -- a direct UPDATE (users_update_self's RLS lets a user PATCH their own
 -- row's *any* column, the same gap already closed for pseudo_modifie_at
