@@ -4,7 +4,7 @@
 
 This section is a working reference for picking this project back up in a
 new session without re-deriving context. It reflects the schema and code
-as of migration `0014` plus the follow-up fixes after it. When it and the
+as of migration `0015` plus the follow-up fixes after it. When it and the
 actual code disagree, the code is correct — update this file, don't trust
 it blindly.
 
@@ -37,7 +37,7 @@ account/access/secret/bucket, `CRON_SECRET`, `NEXT_PUBLIC_APP_URL`).
 
 ## Database schema (current, post-migration 0011)
 
-Migrations are strictly incremental (`supabase/migrations/0001`...`0014`)
+Migrations are strictly incremental (`supabase/migrations/0001`...`0015`)
 — never rewritten, never a `DROP`/recreate. Each one has been applied and
 verified against both an empty DB and one seeded with pre-existing data
 before being considered done (see "Testing" below for how).
@@ -138,13 +138,23 @@ before being considered done (see "Testing" below for how).
   moment they have one active offre, unless they flip this. See "Product
   judgment calls" below for why, and the first-offre transparency notice
   that makes sure this default is never silent.
+- `est_admin boolean not null default false` — added in `0015`. Gates
+  `/admin` (see "Admin dashboard" below). **The real guarantee that a
+  normal user can never self-promote is a DB trigger, not application
+  code** — `users_update_self`'s RLS policy lets an authenticated user
+  PATCH their own row's *any* column via a raw REST call, the exact same
+  class of gap already closed for `pseudo_modifie_at` in `0010`.
+  `enforce_est_admin_change` (BEFORE UPDATE) silently reverts any change
+  to this column unless `auth.uid()` already belongs to an admin —
+  verified with an explicit attack test in `checklist_2_3.sql`, same
+  pattern as the pseudo-cooldown bypass test.
 
 Reserved pseudo words (kept in sync in **two** places — the DB CHECK
-constraint (most recently updated in `0013`) and `PSEUDO_MOTS_RESERVES`
+constraint (most recently updated in `0015`) and `PSEUDO_MOTS_RESERVES`
 in `src/lib/validation.ts` — update both if new top-level routes are
 added): `dashboard, signup, login, api, auth, createur, mes-transactions,
 paiement, parametres, explorer, mot-de-passe-oublie,
-reinitialiser-mot-de-passe`.
+reinitialiser-mot-de-passe, admin`.
 
 ### `offres`
 - `id uuid` PK, `createur_id uuid references users(id)`
@@ -502,6 +512,89 @@ CinetPay (exact endpoint, authentication, and the refund-fee/percentage
 question above), test it against a real CinetPay sandbox account, then
 flip the flag — no redeploy needed for the flag itself, only for the
 real implementation replacing the stub.
+
+## Admin dashboard (`/admin`, migration `0015`)
+
+Business-only page, gated by `users.est_admin` — see the schema entry
+above for the DB-level (not just application-level) guarantee that a
+normal user can never grant this to themselves.
+
+**404, never a redirect, for a non-admin visitor** — logged out or
+logged in but not admin, both get the exact same real Next.js 404
+(`notFound()` from `next/navigation`, not the locale-aware `redirect()`
+every other protected page uses). A redirect to `/login` would itself
+leak that this route exists and is auth-gated; a 404 looks identical to
+a URL that was never a route at all. Verified empirically with
+Playwright against the mock Supabase server: a non-admin visit returns
+real HTTP 404 with Next's generic "This page could not be found" body,
+the URL stays `/admin` (no bounce to `/login`), and none of the
+admin-only queries below ever fire (confirmed via a spy on the
+service-role client) — only once the same session is flipped to admin
+does the page render.
+
+**Bootstrapping the first admin**: since nobody starts out admin,
+`set_admin_status()` (below) can never be used to create the very first
+one — there'd be no existing admin to authorize the call. This is
+intentional, not an oversight: `enforce_est_admin_change` exempts any
+UPDATE where `auth.uid()` is null (a direct SQL Editor session, a
+migration, or a service-role connection — none of which carry a
+PostgREST JWT), so the first admin is bootstrapped with a single plain
+`update users set est_admin = true where id = '<uuid>';` run directly
+against the database, once, outside the app. Every subsequent
+grant/revoke goes through the app normally. There's no
+"last admin" guard against a sole admin revoking their own status —
+flagged rather than silently protected against, since fixing a
+self-lockout still only takes the same one-line direct `UPDATE`.
+
+**Granting/revoking someone else's status** needs a `SECURITY DEFINER`
+RPC (`set_admin_status(p_user_id, p_est_admin)`), not a raw table write —
+`users_update_self`'s RLS is `id = auth.uid()`, so even a genuine admin
+cannot `UPDATE` another user's row directly via PostgREST at all. The RPC
+re-verifies the caller is already admin before writing (defense in
+depth alongside the trigger, same pattern as
+`accept_transaction`/`refuse_transaction` re-verifying ownership despite
+already being `SECURITY DEFINER`) and raises `not authorized` rather
+than silently no-op'ing, so `/api/admin/set-admin-status` can surface a
+real 403 instead of a confusing "nothing happened."
+
+**Manual-refund worklist** reads `transactions` where
+`necessite_remboursement_manuel = true` (see "Automatic CinetPay
+refunds" above), oldest first — it's an operational queue, not a feed,
+so the longest-overdue one surfaces first. "Marquer comme traité"
+(`mark_remboursement_manuel_traite()`, same `SECURITY DEFINER` +
+re-verify-admin pattern) clears only that flag. It deliberately never
+touches `reference_remboursement_cinetpay`/`montant_rembourse` — those
+columns specifically mean "a real automated CinetPay API call was
+confirmed," which a manual dashboard refund isn't; setting them here
+would misrepresent what actually happened. Verified in
+`checklist_2_3.sql` that both stay `null` after marking a manual refund
+treated.
+
+**Vue d'ensemble / top créateurs** both use one consistent, deliberately
+unadjusted definition of "this month's activity": every transaction
+`created_at` this calendar month, **all statuses included** (refused/
+refunded transactions count too) — "GMV brut" means gross, not
+net-of-refunds. Both admin-page queries and the "gestion des admins"
+user list run via the **service-role** client, only after the page's own
+`est_admin` check (via the normal, RLS-scoped client) already
+re-verified this exact caller server-side — same "verify with the real
+client first, then use service-role for the privileged read" pattern as
+the whatsapp-link/content-url delivery routes. `users` has no email
+column at all (deliberately — see the schema section) — emails for the
+"gestion des admins" list come from `supabase.auth.admin.listUsers()`
+(the Auth Admin API, only reachable with the service-role key), joined
+to `public.users` by id.
+
+**A real bug found and fixed by actually driving this in a browser, not
+just unit tests**: after a successful "Marquer comme traité" or
+grant/revoke click, `router.refresh()` re-fetches the server data but
+does **not** remount the client component — if the same row is still
+present afterward (the créateur stays in the admin list after a toggle;
+in the mock-server visual test the same manual-refund row stayed too,
+since the mock doesn't mutate its fixtures), the button's `pendingId`
+state stayed stuck showing its loading label forever. Fixed by clearing
+`pendingId` back to `null` on success, not just on error, in both
+`RemboursementsManuelsManager` and `GestionAdminsManager`.
 
 ## Video/content delivery (brief 0.5)
 
