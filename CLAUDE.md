@@ -497,6 +497,68 @@ genuine créateur accepting/refusing/delivering their own transaction was
 never affected; only a caller with no session at all is newly rejected,
 which was already the intended behavior everywhere else in this app.
 
+## SECURITY DEFINER grant audit — same oversight checked everywhere else (migration `0021`)
+
+Requested immediately after the `0020` finding, per the "an audit now
+beats a similar discovery later" principle: every other `SECURITY
+DEFINER` function in the project was checked for the same "`EXECUTE`
+never revoked from `public`" oversight. Checked empirically for each one
+(`has_function_privilege(...)` plus a live `SET ROLE anon` call against a
+throwaway database), not assumed from reading the code.
+
+**Two real, confirmed gaps**: `process_transaction_deadlines()` and
+`close_expired_campagnes()` (the hourly deadline/campagne sweeps, meant
+to run only from `/api/cron/check-deadlines` via the service-role
+client) never had `EXECUTE` revoked/scoped at all, and neither has any
+internal auth check — they're global sweeps by design, with no
+per-caller scoping. `SET ROLE anon;` (no session at all) successfully
+called both directly against a throwaway database: it refunded a real
+overdue transaction via `process_transaction_deadlines()` and closed a
+real expired campagne via `close_expired_campagnes()`. Unlike the `0020`
+bug this can't target a specific victim's not-yet-overdue data, but it's
+still a real hole — anyone on the internet could force either sweep to
+run on demand instead of waiting for the trusted hourly cron. **Fixed**:
+revoked from `public`, granted `EXECUTE` to `service_role` only — no
+ordinary user, authenticated or not, has any legitimate reason to call
+either directly, and the cron route already calls both via
+`createSupabaseServiceRoleClient()`.
+
+**Same missing-revoke oversight, but NOT actually exploitable**:
+`set_admin_status()` and `mark_remboursement_manuel_traite()` (migration
+`0015`). Both check `not exists (select 1 from users where id =
+auth.uid() and est_admin = true)`. Unlike the `!=` bug, `id = auth.uid()`
+with `auth.uid()` `NULL` matches zero rows — an equality against `NULL`
+is simply never true for any real id, not an ambiguous comparison the
+way `!=` was — so `not exists(...)` correctly evaluates to `true` and
+`raise exception 'not authorized'` fires exactly as intended. Verified
+directly: a live anonymous call against both (targeting a real user and
+a real flagged transaction) was rejected with `not authorized`, and both
+were left completely untouched. **Still tightened** for defense in depth
+and consistency with every other admin RPC in this codebase: revoked
+from `public`, granted to `authenticated` only (never `anon` — an admin
+action always requires a real session) — matching how both admin API
+routes already call them via the authenticated client, never
+service-role.
+
+**Also checked, confirmed not a gap at all**: `handle_new_auth_user()`
+(the signup trigger) also never had `EXECUTE` revoked, but it's a
+trigger function (`returns trigger`) — Postgres itself refuses to invoke
+a trigger function directly regardless of any grant. Confirmed live:
+`select handle_new_auth_user()` as `anon` fails with `trigger functions
+can only be called as triggers`, a Postgres-level restriction this
+codebase's grants don't control either way. Left as-is, matching every
+other trigger-only function in this project (`enforce_pseudo_cooldown`,
+`set_deadline_acceptation`, etc.), none of which revoke `EXECUTE` either
+— there'd be nothing for the revoke to actually protect against.
+
+Tested in `checklist_2_3.sql`: `SET ROLE anon` gets a real
+`insufficient_privilege` error on all four RPCs; none of the four
+rejected attack attempts left any trace (transaction/offre/user state
+all confirmed unchanged); a positive check confirms `service_role` and
+`authenticated` still hold `EXECUTE` on their respective functions
+(the revoke didn't overreach); and `handle_new_auth_user()` is confirmed
+uncallable directly with the exact Postgres error, not a generic one.
+
 ## Commission rate: 20% → 17%, frais/TVA absorbed by the platform (migration `0018`)
 
 `create_paiement_on_validation()` now charges **17%** commission, down
@@ -1977,7 +2039,15 @@ into chat).
   `insufficient_privilege` error on all three, `SET ROLE authenticated`
   with no `auth.uid()` set gets each function's own `not authenticated`
   exception, and a final assertion confirms none of the six rejected
-  attack attempts left any trace on the targeted transactions.
+  attack attempts left any trace on the targeted transactions. Also
+  covers the SECURITY DEFINER grant audit (0021): `SET ROLE anon` gets a
+  real `insufficient_privilege` error on `process_transaction_deadlines`/
+  `close_expired_campagnes`/`set_admin_status`/
+  `mark_remboursement_manuel_traite`, none of the four rejected calls
+  left any trace, a positive check confirms `service_role`/
+  `authenticated` still hold `EXECUTE` on their respective functions, and
+  `handle_new_auth_user()` is confirmed uncallable directly (Postgres's
+  own trigger-function restriction, not a grant).
 - `supabase/tests/stub_auth.sql` fakes just enough of Supabase's `auth`
   schema (an `auth.uid()` reading `app.current_user_id`, plus the
   `authenticated`/`anon`/`service_role` roles) for the real migrations to

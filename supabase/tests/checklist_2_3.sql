@@ -1561,6 +1561,155 @@ end $$;
 select set_config('app.current_user_id', '', false);
 reset role;
 
+-- ---------------------------------------------------------------------
+-- SECURITY DEFINER grant audit (migration 0021), triggered by finding
+-- the migration 0020 bug: process_transaction_deadlines()/
+-- close_expired_campagnes() must be service_role-only (no legitimate
+-- authenticated-user or anonymous caller should ever invoke these global
+-- sweeps directly), and set_admin_status()/
+-- mark_remboursement_manuel_traite() must not be callable by anon either
+-- -- defense in depth, since their own internal check already correctly
+-- rejects an anonymous caller (see migration 0021's comment for why that
+-- check was never actually vulnerable the way accept_transaction's was).
+-- ---------------------------------------------------------------------
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('a0d17001-0000-0000-0000-000000000001',
+   '22222222-2222-2222-2222-222222222222',
+   '11111111-1111-1111-1111-111111111111',
+   '44444444-4444-4444-4444-444444444444', 10, 'en_attente');
+update transactions set deadline_acceptation = now() - interval '1 hour'
+  where id = 'a0d17001-0000-0000-0000-000000000001';
+
+insert into offres (id, createur_id, type, libelle, config, actif) values
+  ('a0d17002-0000-0000-0000-000000000002',
+   '11111111-1111-1111-1111-111111111111', 'campagne', 'Audit campagne test',
+   jsonb_build_object('description', 'x', 'objectif', 100,
+     'date_fin', (current_date - interval '1 day')::date::text),
+   true);
+
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut, necessite_remboursement_manuel) values
+  ('a0d17003-0000-0000-0000-000000000003',
+   '22222222-2222-2222-2222-222222222222',
+   '11111111-1111-1111-1111-111111111111',
+   '44444444-4444-4444-4444-444444444444', 10, 'remboursee', true);
+
+-- A user nobody has ever granted admin to (22222222 already legitimately
+-- became admin earlier in this file via a real set_admin_status() call --
+-- reusing it here would make a false "still admin" positive impossible
+-- to distinguish from a real attack success).
+insert into users (id) values ('a0d17004-0000-0000-0000-000000000004');
+
+select set_config('app.current_user_id', '', false);
+set role anon;
+
+do $$
+begin
+  begin
+    perform 1 from process_transaction_deadlines();
+    raise exception 'TEST FAILED: anon was able to call process_transaction_deadlines() directly';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE privilege on process_transaction_deadlines() (migration 0021)';
+  end;
+end $$;
+
+do $$
+begin
+  begin
+    perform 1 from close_expired_campagnes();
+    raise exception 'TEST FAILED: anon was able to call close_expired_campagnes() directly';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE privilege on close_expired_campagnes() (migration 0021)';
+  end;
+end $$;
+
+do $$
+begin
+  begin
+    perform set_admin_status('a0d17004-0000-0000-0000-000000000004', true);
+    raise exception 'TEST FAILED: anon was able to call set_admin_status() directly';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE privilege on set_admin_status() (migration 0021)';
+  end;
+end $$;
+
+do $$
+begin
+  begin
+    perform mark_remboursement_manuel_traite('a0d17003-0000-0000-0000-000000000003');
+    raise exception 'TEST FAILED: anon was able to call mark_remboursement_manuel_traite() directly';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE privilege on mark_remboursement_manuel_traite() (migration 0021)';
+  end;
+end $$;
+
+reset role;
+
+-- None of the four rejected calls above should have left any trace.
+do $$
+declare
+  v_statut1 text;
+  v_actif2 boolean;
+  v_necessite3 boolean;
+  v_est_admin boolean;
+begin
+  select statut into v_statut1 from transactions where id = 'a0d17001-0000-0000-0000-000000000001';
+  select actif into v_actif2 from offres where id = 'a0d17002-0000-0000-0000-000000000002';
+  select necessite_remboursement_manuel into v_necessite3
+    from transactions where id = 'a0d17003-0000-0000-0000-000000000003';
+  select est_admin into v_est_admin from users where id = 'a0d17004-0000-0000-0000-000000000004';
+
+  if v_statut1 != 'en_attente' then
+    raise exception 'TEST FAILED: process_transaction_deadlines attack mutated a transaction despite being rejected (statut=%)', v_statut1;
+  end if;
+  if not v_actif2 then
+    raise exception 'TEST FAILED: close_expired_campagnes attack closed a campagne despite being rejected';
+  end if;
+  if not v_necessite3 then
+    raise exception 'TEST FAILED: mark_remboursement_manuel_traite attack cleared the flag despite being rejected';
+  end if;
+  if v_est_admin then
+    raise exception 'TEST FAILED: set_admin_status attack granted admin despite being rejected';
+  end if;
+
+  raise notice 'PASS: none of the four rejected anonymous calls left any trace';
+end $$;
+
+-- Positive confirmation the grants still work for their real callers --
+-- not just that anon is blocked.
+do $$
+begin
+  if not has_function_privilege('service_role', 'process_transaction_deadlines()', 'EXECUTE') then
+    raise exception 'TEST FAILED: service_role lost EXECUTE on process_transaction_deadlines()';
+  end if;
+  if not has_function_privilege('service_role', 'close_expired_campagnes()', 'EXECUTE') then
+    raise exception 'TEST FAILED: service_role lost EXECUTE on close_expired_campagnes()';
+  end if;
+  if not has_function_privilege('authenticated', 'set_admin_status(uuid,boolean)', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lost EXECUTE on set_admin_status()';
+  end if;
+  if not has_function_privilege('authenticated', 'mark_remboursement_manuel_traite(uuid)', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lost EXECUTE on mark_remboursement_manuel_traite()';
+  end if;
+
+  raise notice 'PASS: the legitimate callers (service_role for the sweeps, authenticated for the admin RPCs) still have EXECUTE';
+end $$;
+
+-- handle_new_auth_user(): also never had EXECUTE revoked, but confirmed
+-- this is not a real gap -- Postgres itself refuses to invoke a trigger
+-- function directly, regardless of any grant.
+do $$
+begin
+  begin
+    perform handle_new_auth_user();
+    raise exception 'TEST FAILED: handle_new_auth_user() was called directly without error';
+  exception when others then
+    if sqlerrm !~ 'trigger functions can only be called as triggers' then
+      raise exception 'TEST FAILED: unexpected error calling handle_new_auth_user() directly: %', sqlerrm;
+    end if;
+    raise notice 'PASS: handle_new_auth_user() cannot be invoked directly (Postgres trigger-function restriction, independent of any grant)';
+  end;
+end $$;
+
 do $$
 begin
   raise notice 'ALL SQL CHECKLIST TESTS PASSED';
