@@ -3,6 +3,7 @@ import {
   computeCampagneProgressPercent,
   computeCampagneStatus,
   computeJoursRestants,
+  formatMontant,
 } from "@/lib/campagnes";
 
 const REFERENCE = new Date("2026-07-25T12:00:00.000Z");
@@ -119,5 +120,25 @@ describe("computeJoursRestants", () => {
 
   it("returns a positive count of days for a future date_fin", () => {
     expect(computeJoursRestants("2026-07-28", REFERENCE)).toBe(3);
+  });
+});
+
+describe("formatMontant", () => {
+  it("groups a 4-digit amount with the fr-FR thousands separator by default", () => {
+    // fr-FR uses a narrow no-break space (U+202F) as the grouping
+    // separator, not a plain space.
+    expect(formatMontant(1205)).toBe("1 205");
+  });
+
+  it("groups with the en-US thousands separator (comma) when that locale is passed", () => {
+    expect(formatMontant(1205, "en-US")).toBe("1,205");
+  });
+
+  it("leaves a sub-1000 amount unchanged (no grouping needed)", () => {
+    expect(formatMontant(83)).toBe("83");
+  });
+
+  it("preserves decimals without forcing trailing zeros", () => {
+    expect(formatMontant(61.25, "en-US")).toBe("61.25");
   });
 });

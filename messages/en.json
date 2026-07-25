@@ -105,12 +105,15 @@
       "evenement_live": "Access link sent immediately after payment."
     },
     "campagnes": {
-      "heading": "Campaigns",
+      "heading": "Fundraising campaigns",
       "badgeObjectifAtteint": "Goal reached 🎉",
       "badgeTerminee": "Campaign ended",
-      "collecte": "${collecte} raised out of ${objectif}",
+      "collecteEtPourcentage": "${collecte} raised ({pourcentage}%)",
+      "objectifLabel": "Goal: ${objectif}",
       "joursRestants": "{jours} days left",
-      "dernierJour": "Last day"
+      "dernierJour": "Last day",
+      "share": "Share this campaign",
+      "shareCopied": "Link copied!"
     }
   },
   "PaiementRetour": {

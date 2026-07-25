@@ -8,6 +8,7 @@ import { inputClass, labelClass } from "@/components/ui/field-styles";
 import {
   computeCampagneProgressPercent,
   computeCampagneStatus,
+  formatMontant,
   type CampagneStatus,
 } from "@/lib/campagnes";
 import { calculerRepartitionPaiement } from "@/lib/transactions";
@@ -430,7 +431,8 @@ function CampagneRow({
                 {CAMPAGNE_STATUS_LABELS[campagneStatus]}
               </span>
               <span className="text-xs text-foreground-muted">
-                {existing.montantCollecte ?? 0}$ / {existingConfig.objectif ?? 0}$
+                {formatMontant(existing.montantCollecte ?? 0)}$ /{" "}
+                {formatMontant(Number(existingConfig.objectif) || 0)}$
               </span>
             </div>
           </div>
@@ -485,7 +487,7 @@ function CampagneRow({
         <p className="text-xs text-foreground-muted">
           Une fois cet objectif atteint, tu recevras environ{" "}
           <span className="font-semibold text-foreground">
-            {repartition.montantNetCreateur}$
+            {formatMontant(repartition.montantNetCreateur)}$
           </span>{" "}
           net (commission plateforme de 17% déduite -- les frais de paiement
           et la TVA sont pris en charge par la plateforme, pas déduits de

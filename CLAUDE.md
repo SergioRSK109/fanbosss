@@ -617,6 +617,50 @@ reaching a real webhook call, by re-reading the existing `don` exemption
 line and asking what it would do for a type with the same null-`prix`
 shape.
 
+**Public profile card layout** (adjusted after an initial round of
+feedback): the section heading is `t("campagnes.heading")` —
+"Campagnes de collecte de fonds" / "Fundraising campaigns" — not the
+bare "Campagnes" it originally shipped with, which read as ambiguous
+(an electoral or vaccination campaign, not a fundraiser). Each card in
+`CreateurProfileView` follows a fixed, deliberate order: (1) title +
+status badge, (2) progress bar + montant collecté + percentage
+together (`t("campagnes.collecteEtPourcentage")`), (3) objectif +
+description of the cause (`t("campagnes.objectifLabel")`) + jours
+restants, (4) the amount field + "Payer" button (`CheckoutButton`) —
+show what it is, then the momentum already behind it, then the full
+context, then the ask. The progress track itself carries `border
+border-border` on top of its `bg-surface-muted` fill — at `--surface:
+#ffffff` vs `--surface-muted: #f6f1ff` (light mode) the two are only
+~2% apart in lightness, so a 0%-filled bar was previously all but
+invisible against the card; the border makes the track legible from
+the very first dollar, not just once it starts filling in. Campaign
+amounts (`objectif`, `montantCollecte`) are formatted with
+`formatMontant()` (`src/lib/campagnes.ts`, wraps
+`Intl.NumberFormat`, defaults to `"fr-FR"` grouping) — a raw `12500$`
+is hard to scan for a 4-5 digit goal; the public profile passes
+next-intl's own `useLocale()` so an English-locale visitor sees
+`12,500` grouping instead of `12 500`. Verified against Node's actual
+`Intl` output rather than assumed, since fr-FR's grouping separator is
+a narrow no-break space (U+202F), not a plain space — a naive test
+string would have silently never matched.
+
+Each campaign card carries a stable `id="campagne-{id}"` anchor
+(`scroll-mt-6` for defense against any future sticky header, though
+there isn't one today) — confirmed this anchor did **not** already
+exist anywhere before adding it (there was no id-based deep-linking
+into a specific card at all), so `ShareCampagneButton.tsx` was added
+alongside it in the same change rather than assuming a pre-existing
+hook. It builds `${origin}${pathname}#campagne-{id}` and hands it to
+`navigator.share()` where available (mobile), falling back to
+`navigator.clipboard.writeText()` with a 2s "Lien copié !" confirmation
+on desktop. Verified live with Playwright, not just read from the
+code: clicking the button copies exactly
+`http://.../createur/creator-1#campagne-campagne-active` to the
+clipboard, and separately, loading `/createur/creator-1#campagne-...`
+directly (simulating a visitor opening a shared link) auto-scrolls the
+browser straight to that card via the browser's native anchor
+handling — no custom scroll code needed, the `id` alone is sufficient.
+
 **Créateur dashboard**: `CampagnesList`/`CampagneRow` in
 `OffresManager.tsx` mirror `VideoOffresList`/`VideoOffreRow`'s
 repeatable-row pattern (a créateur can launch more than one campaign
