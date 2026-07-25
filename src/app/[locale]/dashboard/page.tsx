@@ -86,6 +86,25 @@ export default async function DashboardPage({
       .maybeSingle(),
   ]);
 
+  // Montant collecté per campagne, computed live via
+  // campagnes_montant_collecte (migration 0017) -- same view the public
+  // profile reads, so the dashboard's own numbers can never disagree with
+  // what a fan sees. Only fetched when the créateur actually has a
+  // campagne offre.
+  const campagneIds = (offres ?? [])
+    .filter((offre) => offre.type === "campagne")
+    .map((offre) => offre.id);
+  const { data: collecteRows } =
+    campagneIds.length > 0
+      ? await supabase
+          .from("campagnes_montant_collecte")
+          .select("offre_id, montant_collecte")
+          .in("offre_id", campagneIds)
+      : { data: [] as { offre_id: string; montant_collecte: number }[] };
+  const montantCollecteParOffre = new Map(
+    (collecteRows ?? []).map((row) => [row.offre_id, row.montant_collecte]),
+  );
+
   // Notification badge: demandes created since the last time this page was
   // viewed count as "new". Compute the count first, then mark everything
   // as seen for next time.
@@ -171,7 +190,7 @@ export default async function DashboardPage({
       <section>
         <h2 className="mb-3 text-lg font-bold">Vos offres</h2>
         <OffresManager
-          offres={
+          offres={(
             (offres ?? []) as {
               id: string;
               type: OffreType;
@@ -180,7 +199,11 @@ export default async function DashboardPage({
               actif: boolean;
               config: Record<string, unknown>;
             }[]
-          }
+          ).map((offre) => ({
+            ...offre,
+            montantCollecte:
+              offre.type === "campagne" ? montantCollecteParOffre.get(offre.id) ?? 0 : undefined,
+          }))}
         />
       </section>
 

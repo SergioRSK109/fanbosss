@@ -33,6 +33,20 @@ export interface CreateurProfileData {
     prix: number | null;
     libelle: string | null;
   }[];
+  // Fundraising campaigns (type `campagne`) are deliberately kept out of
+  // `offres` above and rendered separately -- they need a progress
+  // bar/badge/donate flow, not a plain price card, and (unlike every
+  // other type) must stay visible here even once actif=false, so they
+  // can't come from the same actif-only offres_publiques query.
+  campagnes: {
+    id: string;
+    titre: string;
+    description: string;
+    objectif: number;
+    dateFin: string | null;
+    montantCollecte: number;
+    actif: boolean;
+  }[];
   ranks: {
     volume: number | null;
     reactivite: number | null;
@@ -76,6 +90,7 @@ export async function getCreateurProfileData(
   const [
     { data: profil },
     { data: offres },
+    { data: campagnesRows },
     { data: volumeRow },
     { data: reactiviteRow },
     { data: progressionRow },
@@ -90,6 +105,14 @@ export async function getCreateurProfileData(
     supabase
       .from("offres_publiques")
       .select("id, type, prix, libelle")
+      .eq("createur_id", createurId)
+      .neq("type", "campagne"),
+    // campagnes_publiques, unlike offres_publiques, is never filtered to
+    // actif=true -- see migration 0017 -- so closed campaigns stay in the
+    // public history instead of vanishing.
+    supabase
+      .from("campagnes_publiques")
+      .select("id, libelle, actif, config, created_at")
       .eq("createur_id", createurId),
     supabase
       .from("classement_volume")
@@ -116,6 +139,57 @@ export async function getCreateurProfileData(
     ? await getSignedDownloadUrl(profil.photo_r2_key, PHOTO_SIGNED_URL_EXPIRY_SECONDS)
     : null;
 
+  const campagneIds = (campagnesRows ?? []).map((row) => row.id);
+  // Montant collecté is computed live (never stored) via
+  // campagnes_montant_collecte -- see migration 0017 -- so it can't drift
+  // out of sync with the transactions it's summed from. Only fetched when
+  // there's at least one campaign, since `.in()` with an empty array
+  // would otherwise still round-trip for nothing.
+  const { data: collecteRows } =
+    campagneIds.length > 0
+      ? await supabase
+          .from("campagnes_montant_collecte")
+          .select("offre_id, montant_collecte")
+          .in("offre_id", campagneIds)
+      : { data: [] as { offre_id: string; montant_collecte: number }[] };
+
+  const montantCollecteParOffre = new Map(
+    (collecteRows ?? []).map((row) => [row.offre_id, row.montant_collecte]),
+  );
+
+  // Most recent campaign first -- a créateur's history reads naturally
+  // with their latest activity on top, matching how the créateur
+  // dashboard's video-offres list already appends new entries.
+  const campagnes = [...(campagnesRows ?? [])]
+    .sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+    )
+    .map((row) => {
+      const config = row.config as {
+        description?: unknown;
+        objectif?: unknown;
+        date_fin?: unknown;
+      };
+      const objectif = Number(config.objectif);
+      // Defensive, not expected in practice: config is validated at
+      // creation time (creerOffreSchema), but this is public-facing
+      // rendering code -- a malformed row must never crash the whole
+      // profile page for a créateur's other, valid offres.
+      if (!Number.isFinite(objectif) || objectif <= 0) {
+        return null;
+      }
+      return {
+        id: row.id,
+        titre: row.libelle ?? "",
+        description: typeof config.description === "string" ? config.description : "",
+        objectif,
+        dateFin: typeof config.date_fin === "string" ? config.date_fin : null,
+        montantCollecte: montantCollecteParOffre.get(row.id) ?? 0,
+        actif: row.actif,
+      };
+    })
+    .filter((c): c is NonNullable<typeof c> => c !== null);
+
   return {
     createurId,
     displayName: resolveDisplayName(profil.nom_affichage, profil.pseudo),
@@ -129,6 +203,7 @@ export async function getCreateurProfileData(
       autre: profil.lien_autre,
     },
     offres: sortOffresDonFirst(offres ?? []),
+    campagnes,
     ranks: {
       volume: volumeRow?.rang ?? null,
       reactivite: reactiviteRow?.rang ?? null,

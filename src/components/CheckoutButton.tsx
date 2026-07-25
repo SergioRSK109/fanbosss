@@ -17,6 +17,8 @@ export function CheckoutButton({
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
+  const hasFreeAmount = type === "don" || type === "campagne";
+
   async function handleClick() {
     setLoading(true);
     setErrorMessage("");
@@ -26,7 +28,7 @@ export function CheckoutButton({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         offreId,
-        montant: type === "don" ? Number(montant) : undefined,
+        montant: hasFreeAmount ? Number(montant) : undefined,
       }),
     });
 
@@ -43,7 +45,7 @@ export function CheckoutButton({
 
   return (
     <div className="flex items-center gap-2">
-      {type === "don" && (
+      {hasFreeAmount && (
         <div className="flex items-center gap-1 rounded-full border border-border bg-surface-muted px-3 py-2">
           <span className="text-sm text-foreground-muted">$</span>
           <input

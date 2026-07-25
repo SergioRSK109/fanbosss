@@ -3,6 +3,11 @@ import { CheckoutButton } from "@/components/CheckoutButton";
 import { ReportButton } from "@/components/ReportButton";
 import { RankBadge } from "@/components/ui/RankBadge";
 import { ZoomablePhoto } from "@/components/ui/ZoomablePhoto";
+import {
+  computeCampagneProgressPercent,
+  computeCampagneStatus,
+  computeJoursRestants,
+} from "@/lib/campagnes";
 import type { CreateurProfileData } from "@/lib/profil";
 import type { OffreType } from "@/lib/validation";
 
@@ -29,6 +34,7 @@ const OFFER_ICONS: Record<OffreType, string> = {
   shoutout: "📣",
   contenu_debloque: "🔓",
   evenement_live: "🎥",
+  campagne: "🎯",
 };
 
 // Simple links (no OAuth/account linking, migration 0011) -- one emoji
@@ -51,7 +57,8 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
     evenement_live: t("offerTypes.evenement_live"),
   };
 
-  const { createurId, displayName, bio, photoUrl, socialLinks, offres, ranks } = profile;
+  const { createurId, displayName, bio, photoUrl, socialLinks, offres, campagnes, ranks } =
+    profile;
   const hasSocialLinks = Object.values(socialLinks).some(Boolean);
   const hasRanks =
     ranks.volume !== null || ranks.reactivite !== null || ranks.progression !== null;
@@ -128,7 +135,77 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
         </div>
       )}
 
-      <ul className={`flex flex-col gap-3 px-5 ${hasRanks ? "mt-6" : "mt-8"}`}>
+      {campagnes.length > 0 && (
+        <section className={`flex flex-col gap-3 px-5 ${hasRanks ? "mt-6" : "mt-8"}`}>
+          <h2 className="text-lg font-bold">{t("campagnes.heading")}</h2>
+          {campagnes.map((campagne) => {
+            const status = computeCampagneStatus({
+              actif: campagne.actif,
+              montantCollecte: campagne.montantCollecte,
+              objectif: campagne.objectif,
+              dateFin: campagne.dateFin,
+            });
+            const progressPercent = computeCampagneProgressPercent(
+              campagne.montantCollecte,
+              campagne.objectif,
+            );
+            const joursRestants = computeJoursRestants(campagne.dateFin);
+
+            return (
+              <div key={campagne.id} className="card flex flex-col gap-3 p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <h3 className="font-semibold leading-snug">{campagne.titre}</h3>
+                  {status === "objectif_atteint" && (
+                    <span className="shrink-0 rounded-full bg-success-500/15 px-2.5 py-1 text-xs font-semibold text-success-600">
+                      {t("campagnes.badgeObjectifAtteint")}
+                    </span>
+                  )}
+                  {status === "terminee" && (
+                    <span className="shrink-0 rounded-full bg-foreground-muted/15 px-2.5 py-1 text-xs font-semibold text-foreground-muted">
+                      {t("campagnes.badgeTerminee")}
+                    </span>
+                  )}
+                </div>
+
+                {campagne.description && (
+                  <p className="text-sm text-foreground-muted">{campagne.description}</p>
+                )}
+
+                <div>
+                  <div className="h-2 overflow-hidden rounded-full bg-surface-muted">
+                    <div
+                      className="h-full rounded-full bg-brand-500"
+                      style={{ width: `${progressPercent}%` }}
+                    />
+                  </div>
+                  <p className="mt-1.5 text-sm font-medium">
+                    {t("campagnes.collecte", {
+                      collecte: campagne.montantCollecte,
+                      objectif: campagne.objectif,
+                    })}
+                  </p>
+                </div>
+
+                {status === "active" && joursRestants !== null && (
+                  <p className="text-xs text-foreground-muted">
+                    {joursRestants > 0
+                      ? t("campagnes.joursRestants", { jours: joursRestants })
+                      : t("campagnes.dernierJour")}
+                  </p>
+                )}
+
+                {status === "active" && (
+                  <div className="flex justify-end">
+                    <CheckoutButton offreId={campagne.id} type="campagne" />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </section>
+      )}
+
+      <ul className={`flex flex-col gap-3 px-5 ${campagnes.length > 0 ? "mt-6" : hasRanks ? "mt-6" : "mt-8"}`}>
         {offres.map((offre) => (
           <li key={offre.id} className="card flex flex-col gap-3 p-4">
             <div className="flex items-center gap-3">
@@ -164,7 +241,7 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
             )}
           </li>
         ))}
-        {offres.length === 0 && (
+        {offres.length === 0 && campagnes.length === 0 && (
           <p className="text-center text-sm text-foreground-muted">
             {t("noActiveOffers")}
           </p>

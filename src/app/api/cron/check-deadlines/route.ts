@@ -34,5 +34,22 @@ export async function GET(request: NextRequest) {
     await processAutomaticRefund(supabase, row.transaction_id);
   }
 
-  return NextResponse.json({ status: "ok", refunded: data ?? [] });
+  // Closes any campagne whose date_fin has passed without reaching its
+  // goal (migration 0017) -- the goal-reached path closes itself
+  // immediately via a transactions trigger, but nothing else naturally
+  // happens on a campaign's end date, so it rides this same hourly
+  // external-cron infrastructure instead.
+  const { data: closedCampagnes, error: campagnesError } = await supabase.rpc(
+    "close_expired_campagnes",
+  );
+
+  if (campagnesError) {
+    return NextResponse.json({ error: campagnesError.message }, { status: 500 });
+  }
+
+  return NextResponse.json({
+    status: "ok",
+    refunded: data ?? [],
+    campagnesClosed: closedCampagnes ?? [],
+  });
 }
