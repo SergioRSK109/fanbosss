@@ -5,7 +5,8 @@
   },
   "Nav": {
     "explorer": "Explorer",
-    "classement": "Classement"
+    "classement": "Classement",
+    "homeAriaLabel": "FanBoss -- accueil"
   },
   "Explorer": {
     "heading": "Découvrir des créateurs",
@@ -150,5 +151,232 @@
     "empty": "Personne dans ce classement pour l'instant.",
     "anonymous": "Créateur FanBoss",
     "rank": "#{rank}"
+  },
+  "Metadata": {
+    "description": "Monétisez votre relation avec vos fans : vidéos personnalisées, dons, WhatsApp."
+  },
+  "Common": {
+    "save": "Enregistrer",
+    "saving": "Enregistrement...",
+    "saved": "Enregistré.",
+    "edit": "Modifier",
+    "cancel": "Annuler",
+    "confirm": "Valider",
+    "update": "Mettre à jour",
+    "add": "Ajouter",
+    "activate": "Activer",
+    "deactivate": "désactiver",
+    "reactivate": "réactiver",
+    "close": "Fermer",
+    "unknownError": "erreur inconnue",
+    "saveError": "enregistrement impossible",
+    "zoomProfilePhotoAriaLabel": "Agrandir la photo de profil"
+  },
+  "CopyProfileLink": {
+    "button": "📋 Copier mon lien",
+    "copied": "Lien copié !",
+    "shareText": "Soutenez-moi sur FanBoss 👉 {url}",
+    "copyError": "Impossible de copier le lien."
+  },
+  "LogoutButton": {
+    "button": "🚪 Se déconnecter",
+    "loading": "Déconnexion..."
+  },
+  "Dashboard": {
+    "heading": "Mon espace FanBoss",
+    "settings": "⚙️ Réglages",
+    "publicProfileLabel": "Votre profil public : ",
+    "noPseudoYet": "pas encore de pseudo — ",
+    "choosePseudo": "en choisir un",
+    "demandesHeading": "Demandes en attente de votre réponse",
+    "nouvellesDemandes": "{count, plural, one {# nouvelle} other {# nouvelles}}",
+    "offresHeading": "Vos offres",
+    "envoyeesHeading": "Paiements envoyés à d'autres créateurs",
+    "noPaiementsEnvoyes": "Aucun paiement envoyé.",
+    "statutShort": {
+      "en_attente": "En attente",
+      "validee": "Accepté",
+      "livree": "Livré",
+      "remboursee": "Remboursé",
+      "refusee": "Refusé"
+    },
+    "transactionStatut": {
+      "enAttenteAvecDeadline": "En attente de réponse du créateur (réponse attendue avant le {date})",
+      "enAttenteSansDeadline": "En attente de réponse du créateur",
+      "valideeAvecDeadline": "Accepté, en préparation (livraison prévue avant le {date})",
+      "valideeSansDeadline": "Accepté, en préparation"
+    },
+    "classementProgres": {
+      "heading": "Ta progression vers le top 10 (30 derniers jours)",
+      "labelVolume": "Volume",
+      "labelReactivite": "Réactivité",
+      "labelProgression": "Progression",
+      "volumeQualified": "Tu es dans le top 10 volume ce mois-ci !",
+      "volumeGap": "Plus que {count, plural, one {# transaction livrée} other {# transactions livrées}} pour entrer dans le top 10 volume ce mois-ci.",
+      "reactiviteNoData": "Réponds à ta première demande pour voir ta progression réactivité.",
+      "reactiviteQualified": "Tu es dans le top 10 réactivité ce mois-ci !",
+      "reactiviteGap": "Réponds en moyenne {duree} plus vite pour entrer dans le top 10 réactivité ce mois-ci.",
+      "progressionNotEligible": "Réservé aux comptes de moins de 30 jours.",
+      "progressionQualified": "Tu es dans le top 10 progression ce mois-ci !",
+      "progressionGap": "Plus que {count, plural, one {# transaction livrée} other {# transactions livrées}} pour entrer dans le top 10 progression ce mois-ci."
+    },
+    "badgesFidelite": {
+      "heading": "Mes badges de fidélité",
+      "row": "Supporter de <b>{createur}</b> depuis {date}.",
+      "anonymousCreateur": "un créateur"
+    },
+    "demandes": {
+      "empty": "Aucune demande en attente.",
+      "row": "{type} · {montant}$ · à répondre avant {date}",
+      "accept": "Accepter",
+      "refuse": "Refuser"
+    },
+    "transactionActions": {
+      "reveal": {
+        "whatsapp": "Obtenir le lien WhatsApp",
+        "video": "Voir ma vidéo",
+        "shoutout": "Voir mon shoutout",
+        "contenu_debloque": "Débloquer le contenu",
+        "evenement_live": "Obtenir le lien du live"
+      },
+      "open": "Ouvrir →",
+      "unavailable": "indisponible"
+    }
+  },
+  "Verification": {
+    "statutLabels": {
+      "en_attente": "En attente de vérification",
+      "conflit": "En conflit -- vérification manuelle requise",
+      "approuve": "Vérifié",
+      "refuse": "Refusée"
+    },
+    "alreadyVerified": "Ton compte est vérifié.",
+    "heading": "Vérification de compte",
+    "pendingIntro": "Demande en cours pour <strong>{plateforme}</strong> (<link>voir le compte</link>).",
+    "addCodeInstruction": "Ajoute ce code à ta bio {plateforme} sous 24h :",
+    "conflictNotice": "Un autre compte revendique le même nom d'affichage. Notre équipe va vérifier ce cas manuellement -- aucun badge ne sera accordé avant résolution.",
+    "pendingNotice": "Notre équipe vérifie manuellement les demandes -- tu recevras ton badge une fois approuvée.",
+    "noDisplayName": "Ajoute d'abord un nom d'affichage ci-dessus avant de demander une vérification.",
+    "platformLabel": "Plateforme",
+    "lienCompteLabel": "Lien du compte",
+    "submitLabel": "Demander la vérification",
+    "sending": "Envoi..."
+  },
+  "Parametres": {
+    "backToDashboard": "← Retour au tableau de bord",
+    "heading": "Réglages du profil",
+    "photoLabel": "Photo de profil",
+    "editPhotoButton": "Modifier la photo de profil",
+    "photoReady": "Nouvelle photo prête à enregistrer.",
+    "photoUploading": "Envoi de la photo...",
+    "photoUploadError": "upload de la photo impossible",
+    "photoUploadHttpError": "échec de l'envoi de la photo (HTTP {status}){detail}",
+    "displayNameLabel": "Nom d'affichage",
+    "displayNamePlaceholder": "ex : Sergio, DJ Sergio...",
+    "displayNameHelp": "Le nom affiché sur ton profil public -- distinct de ton identifiant technique ci-dessous.",
+    "socialLinksLabel": "Liens réseaux sociaux (facultatifs)",
+    "socialPlaceholders": {
+      "tiktok": "TikTok -- https://tiktok.com/@...",
+      "instagram": "Instagram -- https://instagram.com/...",
+      "youtube": "YouTube -- https://youtube.com/@...",
+      "autre": "Autre lien -- https://..."
+    },
+    "classementCheckboxLabel": "Apparaître dans les classements publics",
+    "masqueExplorationCheckboxLabel": "Ne pas apparaître dans l'exploration",
+    "badgeFideliteCheckboxLabel": "Rendre mes badges de fidélité publics (visibles sur ton profil et sur celui des créateurs que tu soutiens)",
+    "pseudoLabel": "Choisis ton identifiant",
+    "pseudoPlaceholder": "ex: sergio_123, sergioRSK",
+    "pseudoAvailable": "✓ disponible",
+    "pseudoTaken": "✗ déjà pris",
+    "pseudoReserved": "✗ réservé",
+    "pseudoLinkPreview": "Ton lien : fanboss.app/@{pseudo}",
+    "pseudoLockedUntilNotice": "Modifiable à nouveau à partir du {date}.",
+    "pseudoJustSavedNotice": "Pseudo enregistré. Tu pourras le remodifier à partir du {date}.",
+    "bioLabel": "Bio",
+    "bioSavedNotice": "Bio enregistrée.",
+    "passwordLabel": "Mot de passe",
+    "editPasswordButton": "Modifier le mot de passe",
+    "newPasswordPlaceholder": "Nouveau mot de passe",
+    "confirmPasswordPlaceholder": "Confirmer le nouveau mot de passe",
+    "passwordMismatch": "Les mots de passe ne correspondent pas.",
+    "passwordSavedNotice": "Mot de passe modifié."
+  },
+  "PhotoCropper": {
+    "tooLarge": "Cette image est trop volumineuse. Choisis une photo plus légère.",
+    "unsupportedFormat": "Ce format d'image n'est pas pris en charge par ton navigateur. Essaie une photo JPEG ou PNG.",
+    "cropUnavailable": "le recadrage n'est pas disponible sur ce navigateur",
+    "exportFailed": "échec de la génération de l'image recadrée",
+    "dialogAriaLabel": "Recadrer la photo de profil",
+    "heading": "Recadrer la photo",
+    "zoomLabel": "Zoom",
+    "rotateButton": "↻ Pivoter"
+  },
+  "OffresManager": {
+    "firstOffreNotice": "Ton profil sera visible dans l'exploration publique -- tu peux changer ça dans les <link>réglages</link>.",
+    "closeNotice": "Fermer",
+    "questions": {
+      "whatsapp": "Si quelqu'un veut ton numéro WhatsApp pour te contacter directement, combien lui factures-tu ? (minimum {minimum}$)",
+      "shoutout": "Si quelqu'un veut une mention rapide dans une story ou un post, combien lui factures-tu ?",
+      "don": "Activer les dons libres (le fan choisit son propre montant)",
+      "contenu_debloque": "Quel prix pour débloquer ce contenu ?",
+      "evenement_live": "Quel prix pour rejoindre ton prochain live privé ?"
+    },
+    "videoQuestion": "Si quelqu'un te demande une vidéo personnalisée (anniversaire, félicitations, encouragement...), combien lui factures-tu ?",
+    "addVideoType": "+ Ajouter un type de vidéo",
+    "libellePlaceholder": "Ex : Anniversaire",
+    "libelleSuggestions": [
+      "Anniversaire",
+      "Félicitations",
+      "Danse",
+      "Autre"
+    ],
+    "contenuDejaTeleverse": "contenu déjà téléversé",
+    "liveUrlPlaceholder": "https://youtube.com/...",
+    "uploadImpossible": "upload impossible",
+    "campagneStatusActive": "Active",
+    "campagnesIntro": "Lance une campagne de collecte de fonds pour une cause précise (l'historique de tes campagnes reste visible sur ton profil, même une fois terminées).",
+    "addCampagne": "+ Créer une campagne",
+    "campagneMontantSlash": "{collecte}$ / {objectif}$",
+    "titreLabel": "Titre de la campagne",
+    "titrePlaceholder": "Ex : Toit pour l'église",
+    "descriptionLabel": "Description (explique la cause)",
+    "objectifLabel": "Objectif ($)",
+    "liveCalculatorText": "Une fois cet objectif atteint, tu recevras environ <b>{montant}$</b> net (commission plateforme de 17% déduite -- les frais de paiement et la TVA sont pris en charge par la plateforme, pas déduits de ta part).",
+    "dateFinLabel": "Date de fin (optionnelle)",
+    "campagneLaunch": "Lancer la campagne"
+  },
+  "Admin": {
+    "heading": "Administration",
+    "noName": "(sans nom)",
+    "deletedUser": "(utilisateur supprimé)",
+    "overviewHeading": "Vue d'ensemble -- ce mois-ci",
+    "statTransactions": "Transactions",
+    "statGmvBrut": "GMV brut",
+    "statCreateursActifs": "Créateurs actifs",
+    "remboursementsHeading": "Remboursements manuels en attente",
+    "remboursementsIntro": "Transactions remboursées côté FanBoss mais pas encore réellement remboursées via CinetPay (voir CLAUDE.md « Automatic CinetPay refunds »). Une fois le remboursement fait manuellement dans le dashboard CinetPay, marque-le comme traité ici.",
+    "verificationHeading": "Vérifications",
+    "verificationIntro": "Palier 1 (gratuit) : le créateur ajoute le code affiché à sa bio, un admin confirme visuellement. Palier 2 : un conflit (même nom d'affichage que quelqu'un d'autre) nécessite une vérification d'identité tierce (KYC) -- aucune intégration automatisée n'existe encore, voir CLAUDE.md.",
+    "topCreateursHeading": "Top 10 créateurs par volume -- ce mois-ci",
+    "topCreateursEmpty": "Aucune transaction ce mois-ci.",
+    "gestionAdminsHeading": "Gestion des admins",
+    "gestionAdmins": {
+      "grant": "Accorder le statut admin",
+      "revoke": "Retirer le statut admin"
+    },
+    "remboursements": {
+      "empty": "Aucun remboursement manuel en attente.",
+      "markTraite": "Marquer comme traité"
+    },
+    "verifications": {
+      "enAttenteHeading": "En attente",
+      "conflitsHeading": "Conflits",
+      "noneEnAttente": "Aucune demande en attente.",
+      "noneConflits": "Aucun conflit.",
+      "codeAttendu": "Code attendu :",
+      "kycNotice": "Ce cas nécessite une vérification d'identité par un prestataire tiers (KYC) -- aucun badge ne doit être accordé à aucun des comptes en conflit tant que ce n'est pas résolu manuellement.",
+      "approuver": "Approuver",
+      "refuser": "Refuser"
+    }
   }
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { useState } from "react";
 import type { OffreType } from "@/lib/validation";
 
@@ -11,14 +12,6 @@ const REVEAL_ENDPOINTS: Partial<Record<OffreType, string>> = {
   evenement_live: "live-link",
 };
 
-const REVEAL_LABELS: Partial<Record<OffreType, string>> = {
-  whatsapp: "Obtenir le lien WhatsApp",
-  video: "Voir ma vidéo",
-  shoutout: "Voir mon shoutout",
-  contenu_debloque: "Débloquer le contenu",
-  evenement_live: "Obtenir le lien du live",
-};
-
 export function TransactionActions({
   transactionId,
   type,
@@ -28,6 +21,7 @@ export function TransactionActions({
   type: OffreType;
   statut: string;
 }) {
+  const t = useTranslations("Dashboard.transactionActions");
   const [link, setLink] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const endpoint = REVEAL_ENDPOINTS[type];
@@ -42,7 +36,7 @@ export function TransactionActions({
     const body = await response.json();
 
     if (!response.ok) {
-      setErrorMessage(body.error ?? "indisponible");
+      setErrorMessage(body.error ?? t("unavailable"));
       return;
     }
 
@@ -55,7 +49,7 @@ export function TransactionActions({
         onClick={reveal}
         className="self-start text-sm font-semibold text-brand-600 dark:text-brand-300"
       >
-        {REVEAL_LABELS[type]}
+        {t(`reveal.${type}`)}
       </button>
       {link && (
         <a
@@ -64,7 +58,7 @@ export function TransactionActions({
           rel="noreferrer"
           className="self-start rounded-full bg-brand-50 px-3 py-1 text-sm font-medium text-brand-600 dark:bg-white/10 dark:text-brand-300"
         >
-          Ouvrir →
+          {t("open")}
         </a>
       )}
       {errorMessage && <p className="text-sm text-danger-600">{errorMessage}</p>}

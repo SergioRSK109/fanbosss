@@ -1,3 +1,4 @@
+import { getTranslations } from "next-intl/server";
 import { redirect, Link } from "@/i18n/navigation";
 import { LogoutButton } from "@/components/LogoutButton";
 import { ParametresForm } from "@/components/ParametresForm";
@@ -13,6 +14,7 @@ export default async function ParametresPage({
   params: Promise<{ locale: string }>;
 }) {
   const { locale } = await params;
+  const t = await getTranslations({ locale, namespace: "Parametres" });
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
@@ -65,11 +67,11 @@ export default async function ParametresPage({
           href="/dashboard"
           className="text-sm font-medium text-foreground-muted hover:text-foreground"
         >
-          ← Retour au tableau de bord
+          {t("backToDashboard")}
         </Link>
         <LogoutButton />
       </div>
-      <h1 className="mb-6 mt-2 text-2xl font-bold">Réglages du profil</h1>
+      <h1 className="mb-6 mt-2 text-2xl font-bold">{t("heading")}</h1>
       <ParametresForm
         nomAffichage={profil?.nom_affichage ?? null}
         pseudo={profil?.pseudo ?? null}

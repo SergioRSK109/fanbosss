@@ -1,3 +1,4 @@
+import { getTranslations } from "next-intl/server";
 import {
   computeProgressPercent,
   computeReactiviteProgressPercent,
@@ -42,23 +43,23 @@ function ProgressRow({
   );
 }
 
-export function ClassementProgresCard({ progres }: { progres: ProgresClassement }) {
+export async function ClassementProgresCard({ progres }: { progres: ProgresClassement }) {
+  const t = await getTranslations("Dashboard.classementProgres");
+
   return (
     <section className="card flex flex-col gap-4 px-4 py-4">
-      <h2 className="text-sm font-bold text-foreground-muted">
-        Ta progression vers le top 10 (30 derniers jours)
-      </h2>
+      <h2 className="text-sm font-bold text-foreground-muted">{t("heading")}</h2>
 
       <ProgressRow
         icon="🏆"
-        label="Volume"
+        label={t("labelVolume")}
         percent={computeProgressPercent(progres.volumeActuel, progres.volumeSeuilTop10)}
-        description={describeVolumeProgres(progres.volumeManque)}
+        description={describeVolumeProgres(progres.volumeManque, t)}
       />
 
       <ProgressRow
         icon="⚡"
-        label="Réactivité"
+        label={t("labelReactivite")}
         percent={computeReactiviteProgressPercent(
           progres.reactiviteActuelleSecondes,
           progres.reactiviteSeuilTop10Secondes,
@@ -66,12 +67,13 @@ export function ClassementProgresCard({ progres }: { progres: ProgresClassement 
         description={describeReactiviteProgres(
           progres.reactiviteActuelleSecondes,
           progres.reactiviteManqueSecondes,
+          t,
         )}
       />
 
       <ProgressRow
         icon="📈"
-        label="Progression"
+        label={t("labelProgression")}
         percent={
           progres.progressionEligible
             ? computeProgressPercent(
@@ -83,6 +85,7 @@ export function ClassementProgresCard({ progres }: { progres: ProgresClassement 
         description={describeProgressionProgres(
           progres.progressionEligible,
           progres.progressionManque,
+          t,
         )}
       />
     </section>

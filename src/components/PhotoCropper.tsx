@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 import { buttonClass } from "@/components/ui/button-styles";
 import {
@@ -38,6 +39,8 @@ export function PhotoCropper({
   onCancel: () => void;
   onConfirm: (blob: Blob) => void;
 }) {
+  const t = useTranslations("PhotoCropper");
+  const tCommon = useTranslations("Common");
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const dragStateRef = useRef<{ pointerId: number; startX: number; startY: number; startOffsetXFrac: number; startOffsetYFrac: number } | null>(null);
@@ -49,9 +52,7 @@ export function PhotoCropper({
   const [loadError, setLoadError] = useState("");
   const [exportError, setExportError] = useState("");
   const [exporting, setExporting] = useState(false);
-  const error = fileTooLarge
-    ? "Cette image est trop volumineuse. Choisis une photo plus légère."
-    : loadError || exportError;
+  const error = fileTooLarge ? t("tooLarge") : loadError || exportError;
 
   useEffect(() => {
     if (fileTooLarge) {
@@ -79,9 +80,7 @@ export function PhotoCropper({
       if (cancelled) {
         return;
       }
-      setLoadError(
-        "Ce format d'image n'est pas pris en charge par ton navigateur. Essaie une photo JPEG ou PNG.",
-      );
+      setLoadError(t("unsupportedFormat"));
     };
     img.src = objectUrl;
 
@@ -89,7 +88,7 @@ export function PhotoCropper({
       cancelled = true;
       URL.revokeObjectURL(objectUrl);
     };
-  }, [file, fileTooLarge]);
+  }, [file, fileTooLarge, t]);
 
   useEffect(() => {
     const canvas = previewCanvasRef.current;
@@ -181,7 +180,7 @@ export function PhotoCropper({
       exportCanvas.height = CROP_EXPORT_SIZE;
       const ctx = exportCanvas.getContext("2d");
       if (!ctx) {
-        throw new Error("le recadrage n'est pas disponible sur ce navigateur");
+        throw new Error(t("cropUnavailable"));
       }
       drawCropToCanvas(
         ctx,
@@ -196,12 +195,12 @@ export function PhotoCropper({
         exportCanvas.toBlob(resolve, "image/jpeg", EXPORT_QUALITY);
       });
       if (!blob) {
-        throw new Error("échec de la génération de l'image recadrée");
+        throw new Error(t("exportFailed"));
       }
 
       onConfirm(blob);
     } catch (err) {
-      setExportError(err instanceof Error ? err.message : "erreur inconnue");
+      setExportError(err instanceof Error ? err.message : tCommon("unknownError"));
       setExporting(false);
     }
   }
@@ -210,11 +209,11 @@ export function PhotoCropper({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Recadrer la photo de profil"
+      aria-label={t("dialogAriaLabel")}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
     >
       <div className="card flex w-full max-w-sm flex-col gap-4 p-4">
-        <p className="text-sm font-semibold">Recadrer la photo</p>
+        <p className="text-sm font-semibold">{t("heading")}</p>
 
         <div
           onPointerDown={handlePointerDown}
@@ -235,7 +234,7 @@ export function PhotoCropper({
         {error && <p className="text-sm text-danger-600">{error}</p>}
 
         <label className="flex flex-col gap-1 text-sm">
-          <span className="text-foreground-muted">Zoom</span>
+          <span className="text-foreground-muted">{t("zoomLabel")}</span>
           <input
             type="range"
             min={CROP_MIN_ZOOM}
@@ -255,11 +254,11 @@ export function PhotoCropper({
             disabled={!imageLoaded}
             className={buttonClass("outline", "sm")}
           >
-            ↻ Pivoter
+            {t("rotateButton")}
           </button>
           <div className="flex gap-2">
             <button type="button" onClick={onCancel} className={buttonClass("ghost", "sm")}>
-              Annuler
+              {tCommon("cancel")}
             </button>
             <button
               type="button"
@@ -267,7 +266,7 @@ export function PhotoCropper({
               disabled={!imageLoaded || exporting}
               className={buttonClass("primary", "sm")}
             >
-              {exporting ? "..." : "Valider"}
+              {exporting ? "..." : tCommon("confirm")}
             </button>
           </div>
         </div>

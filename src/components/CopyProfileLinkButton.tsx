@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { buttonClass } from "@/components/ui/button-styles";
 
@@ -10,13 +11,14 @@ import { buttonClass } from "@/components/ui/button-styles";
 // ShareCampagneButton (share-first, copy-fallback) where the button's own
 // label is "Partager".
 export function CopyProfileLinkButton({ pseudo }: { pseudo: string }) {
+  const t = useTranslations("CopyProfileLink");
   const [copied, setCopied] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
   async function handleClick() {
     setErrorMessage("");
     const url = `${window.location.origin}/@${pseudo}`;
-    const shareText = `Soutenez-moi sur FanBoss \u{1F449} ${url}`;
+    const shareText = t("shareText", { url });
 
     try {
       if (!navigator.clipboard?.writeText) {
@@ -35,7 +37,7 @@ export function CopyProfileLinkButton({ pseudo }: { pseudo: string }) {
         }
         return;
       }
-      setErrorMessage("Impossible de copier le lien.");
+      setErrorMessage(t("copyError"));
     }
   }
 
@@ -46,7 +48,7 @@ export function CopyProfileLinkButton({ pseudo }: { pseudo: string }) {
         onClick={handleClick}
         className={buttonClass("outline", "sm", "self-start")}
       >
-        {copied ? "Lien copié !" : "📋 Copier mon lien"}
+        {copied ? t("copied") : t("button")}
       </button>
       {errorMessage && <p className="text-xs text-danger-600">{errorMessage}</p>}
     </div>

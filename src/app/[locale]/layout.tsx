@@ -22,19 +22,26 @@ const poppins = Poppins({
   weight: ["400", "500", "600", "700"],
 });
 
-export const metadata: Metadata = {
-  title: "FanBoss",
-  description:
-    "Monétisez votre relation avec vos fans : vidéos personnalisées, dons, WhatsApp.",
-  manifest: "/manifest.json",
-};
-
 export const viewport: Viewport = {
   themeColor: "#7c3aed",
 };
 
 export function generateStaticParams() {
   return routing.locales.map((locale) => ({ locale }));
+}
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ locale: string }>;
+}): Promise<Metadata> {
+  const { locale } = await params;
+  const t = await getTranslations({ locale, namespace: "Metadata" });
+  return {
+    title: "FanBoss",
+    description: t("description"),
+    manifest: "/manifest.json",
+  };
 }
 
 export default async function LocaleLayout({
@@ -65,7 +72,7 @@ export default async function LocaleLayout({
         <NextIntlClientProvider>
           <ServiceWorkerRegistration />
           <div className="flex items-center justify-between px-4 py-3">
-            <Link href="/" aria-label="FanBoss -- accueil">
+            <Link href="/" aria-label={t("homeAriaLabel")}>
               <Logo className="h-7 w-auto sm:h-8" />
             </Link>
             <div className="flex items-center gap-3">

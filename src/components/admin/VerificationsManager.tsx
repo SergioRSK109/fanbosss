@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { buttonClass } from "@/components/ui/button-styles";
@@ -27,6 +28,7 @@ function DemandeRow({
   onApprouver: (id: string) => void;
   onRefuser: (id: string) => void;
 }) {
+  const t = useTranslations("Admin.verifications");
   const isConflit = demande.statut === "conflit";
   return (
     <li
@@ -49,16 +51,14 @@ function DemandeRow({
         {demande.lienCompte}
       </a>
       <p className="text-xs text-foreground-muted">
-        Code attendu :{" "}
+        {t("codeAttendu")}{" "}
         <span className="rounded bg-surface-muted px-1.5 py-0.5 font-mono font-semibold">
           {demande.codeVerification}
         </span>
       </p>
       {isConflit && (
         <p className="rounded-2xl border border-danger-500/40 bg-danger-500/10 px-3 py-2 text-xs text-danger-600">
-          Ce cas nécessite une vérification d&apos;identité par un prestataire tiers (KYC) --
-          aucun badge ne doit être accordé à aucun des comptes en conflit tant que ce n&apos;est
-          pas résolu manuellement.
+          {t("kycNotice")}
         </p>
       )}
       <div className="flex gap-2">
@@ -68,7 +68,7 @@ function DemandeRow({
           onClick={() => onApprouver(demande.id)}
           className={buttonClass("success", "sm")}
         >
-          {pendingId === demande.id ? "..." : "Approuver"}
+          {pendingId === demande.id ? "..." : t("approuver")}
         </button>
         <button
           type="button"
@@ -76,7 +76,7 @@ function DemandeRow({
           onClick={() => onRefuser(demande.id)}
           className={buttonClass("danger", "sm")}
         >
-          {pendingId === demande.id ? "..." : "Refuser"}
+          {pendingId === demande.id ? "..." : t("refuser")}
         </button>
       </div>
       {errorMessage && <p className="text-sm text-danger-600">{errorMessage}</p>}
@@ -89,6 +89,8 @@ function DemandeRow({
 // KYC-escalation notice) -- see CLAUDE.md "Créateur verification" for
 // why no automated resolution exists for conflicts.
 export function VerificationsManager({ demandes }: { demandes: DemandeVerificationAdmin[] }) {
+  const t = useTranslations("Admin.verifications");
+  const tCommon = useTranslations("Common");
   const router = useRouter();
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [errorById, setErrorById] = useState<Record<string, string>>({});
@@ -108,7 +110,7 @@ export function VerificationsManager({ demandes }: { demandes: DemandeVerificati
     const body = await response.json();
 
     if (!response.ok) {
-      setErrorById((prev) => ({ ...prev, [id]: body.error ?? "erreur inconnue" }));
+      setErrorById((prev) => ({ ...prev, [id]: body.error ?? tCommon("unknownError") }));
       setPendingId(null);
       return;
     }
@@ -121,10 +123,10 @@ export function VerificationsManager({ demandes }: { demandes: DemandeVerificati
     <div className="flex flex-col gap-6">
       <div>
         <h3 className="mb-2 text-sm font-bold text-foreground-muted">
-          En attente {enAttente.length > 0 && `(${enAttente.length})`}
+          {t("enAttenteHeading")} {enAttente.length > 0 && `(${enAttente.length})`}
         </h3>
         {enAttente.length === 0 ? (
-          <p className="text-sm text-foreground-muted">Aucune demande en attente.</p>
+          <p className="text-sm text-foreground-muted">{t("noneEnAttente")}</p>
         ) : (
           <ul className="flex flex-col gap-3">
             {enAttente.map((d) => (
@@ -143,10 +145,10 @@ export function VerificationsManager({ demandes }: { demandes: DemandeVerificati
 
       <div>
         <h3 className="mb-2 text-sm font-bold text-danger-600">
-          Conflits {conflits.length > 0 && `(${conflits.length})`}
+          {t("conflitsHeading")} {conflits.length > 0 && `(${conflits.length})`}
         </h3>
         {conflits.length === 0 ? (
-          <p className="text-sm text-foreground-muted">Aucun conflit.</p>
+          <p className="text-sm text-foreground-muted">{t("noneConflits")}</p>
         ) : (
           <ul className="flex flex-col gap-3">
             {conflits.map((d) => (

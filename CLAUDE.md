@@ -2167,17 +2167,162 @@ so it's *supposed* to go through next-intl's rewrite the same way every
 other page does; only routes deliberately living outside `[locale]`
 (`/api/**`, `/auth/**`) need to be excluded from the matcher.
 
-Fully translated (fr+en) — the pages a foreign visitor hits first: home,
-signup, login, créateur/paiement profile page, payment-return page,
-explorer. **Dashboard and `/parametres` stay French-only for now**, by design
-(lower priority for this MVP) — adding their keys to
-`messages/{fr,en}.json` later needs no structural change. Internal
-navigation must use the locale-aware `Link`/`redirect`/`useRouter` from
-`src/i18n/navigation.ts`, never plain `next/link`/`next/navigation` — a
-few redirects (`/dashboard`, `/parametres` → `/login`) needed an explicit
-`return;` after the redirect call for TypeScript to narrow correctly
-afterward (the locale-aware `redirect`'s `never` return type doesn't
-always get picked up by control-flow analysis the same way `next/navigation`'s did).
+Fully translated (fr+en) — **every page and component now goes through
+`useTranslations`/`getTranslations`, not just the ones a foreign visitor
+hits first.** Dashboard and `/parametres` used to stay French-only "for
+now, by design (lower priority for this MVP)" — that's no longer true,
+see "Full i18n coverage extension" below for what closed that gap.
+Internal navigation must use the locale-aware `Link`/`redirect`/`useRouter`
+from `src/i18n/navigation.ts`, never plain `next/link`/`next/navigation`
+— a few redirects (`/dashboard`, `/parametres` → `/login`) needed an
+explicit `return;` after the redirect call for TypeScript to narrow
+correctly afterward (the locale-aware `redirect`'s `never` return type
+doesn't always get picked up by control-flow analysis the same way
+`next/navigation`'s did).
+
+### Full i18n coverage extension — dashboard, /parametres, /admin, offres, dynamic copy
+
+The first i18n pass (above) deliberately left the dashboard, `/parametres`,
+`/admin`, and everything added in later feature sessions (fundraising
+campaigns, the fan loyalty badge, créateur verification, the ranking
+progress card) hardcoded in French. This pass closed that gap
+end-to-end, following the exact same pattern already established
+(`useTranslations` in client components, `getTranslations` in async
+Server Components, keys added to both `messages/fr.json` and
+`messages/en.json`) rather than inventing a new one.
+
+**New message namespaces**: `Common` (generic action words —
+save/saving/saved/edit/cancel/confirm/update/add/activate/deactivate/
+reactivate/close/unknownError/saveError — reused across `Parametres`,
+`OffresManager`, and `Admin` instead of duplicating the same word in
+every namespace), `Dashboard`, `Parametres`, `PhotoCropper`,
+`Verification` (shared between the `/parametres` request form and the
+`/admin` review UI — `PLATEFORME_LABELS`, i.e. TikTok/Instagram/YouTube,
+were deliberately **left untranslated**: they're brand names, identical
+in both languages), `OffresManager`, `Admin`, `CopyProfileLink`,
+`LogoutButton`. Plus a new `Metadata` namespace for the `<head>`
+description (`generateMetadata` replaces the old static `export const
+metadata`), and a `Nav.homeAriaLabel` key for the logo link's
+accessibility label.
+
+**Two Server Components were audited and converted async specifically to
+call `getTranslations`**: `ClassementProgresCard.tsx` and
+`BadgesFideliteCard.tsx` had no `"use client"` directive and no hooks, so
+they were already safe to call `await getTranslations(...)` directly
+inside — no client-boundary churn needed, since a Server Component parent
+(`/dashboard`) can render an async Server Component child exactly like a
+sync one.
+
+**Dynamic text generators — the part explicitly flagged as easy to
+forget** (`describeTransactionStatutFan` in `src/lib/transactions.ts`,
+`describeVolumeProgres`/`describeReactiviteProgres`/
+`describeProgressionProgres` in `src/lib/classementProgres.ts`): these
+returned hand-built French sentences, not JSX, so they were the one
+category a page-by-page visual sweep could plausibly miss. Fixed by
+threading a translator parameter through each function
+(`StatutFanTranslator`/`ProgresTranslator` — a minimal `(key, values?) =>
+string` shape, not next-intl's own type, specifically so these libs don't
+need to import next-intl's heavier generic machinery) instead of
+hardcoding text, with the actual French/English copy moved into
+`messages/{fr,en}.json` (`Dashboard.transactionStatut`,
+`Dashboard.statutShort`, `Dashboard.classementProgres.*`) using real ICU
+plural rules (`{count, plural, one {...} other {...}}`) for the
+"N transactions livrées" gap counts — this codebase's first use of ICU
+plural syntax; every earlier count-with-plural string
+(`nouvellesDemandes` here too) used it as well rather than a hand-rolled
+`count > 1 ? "s" : ""` ternary.
+
+**These are the two library functions with existing unit tests
+(`transactions.test.ts`, `classementProgres.test.ts`) that asserted exact
+French sentences** — updated to build a real translator via
+`createTranslator` from `use-intl/core` (a named export, not default —
+confirmed by reading `use-intl`'s own `.d.ts`, not guessed) seeded with
+the **actual `messages/fr.json`** import, not a hand-typed duplicate
+message object, so a future mistake in the message catalog fails these
+tests too. `createTranslator`'s own `const`-generic inference ties its
+`key` parameter to the literal shape of whatever `messages` object it's
+given, which is far stricter than `StatutFanTranslator`/`ProgresTranslator`
+need (and stricter than what `useTranslations`/`getTranslations` return
+in application code, since this project declares no global message-type
+augmentation) — the tests cast the constructed translator to the
+library's own loose type rather than fighting the inference, with a
+comment explaining why.
+
+**`react-hooks`-adjacent gotcha**: `OffresManager.tsx`'s `QUESTIONS`
+array (the whatsapp/shoutout/don/contenu/live copy, one of which
+interpolates `WHATSAPP_PRIX_MINIMUM`) used to be a module-level constant
+built once at import time — which can't work once the copy needs a live
+translator. Renamed to `QUESTION_TYPES` (type/kind pairing only) and the
+actual `question` string is resolved inside the component via
+`t(`questions.${type}`, ...)` per render instead. Same fix shape for the
+video-libelle `<datalist>` suggestions (`OffresManager.libelleSuggestions`,
+pulled via `t.raw("libelleSuggestions")` rather than a hardcoded array)
+and the campaign live-payout calculator sentence (`t.rich("liveCalculatorText",
+{montant, b: ...})`, bolding just the amount the same way the original
+JSX did with a `<span className="font-semibold">`).
+
+**A real, pre-existing gap found while extending `CreateurProfileView.tsx`
+— a file that was otherwise already fully translated**: the profile
+photo's zoom-overlay `aria-label` (`"Agrandir la photo de profil"`) was
+still a hardcoded French literal, missed by the original i18n pass
+because it's an accessibility attribute, not visible body text. Moved to
+`Common.zoomProfilePhotoAriaLabel` and reused from both
+`CreateurProfileView.tsx` and `ParametresForm.tsx` (which has the same
+zoom button on its own photo preview).
+
+**Two categories of hardcoded French text were found but deliberately
+NOT translated, flagged rather than guessed at:**
+1. **API route error strings** (`{ error: "..." }` JSON bodies returned
+   by `src/app/api/**` route handlers — validation failures in
+   `src/lib/validation.ts`'s zod schemas, `whatsapp-link`'s prefilled
+   `wa.me` message text, etc.). These routes live **outside** the
+   `[locale]` tree on purpose (see above — a next-intl rewrite over them
+   404s), so they have **zero locale context**: no `params.locale`, no
+   request-scoped `getTranslations`, nothing. Some of these strings are
+   genuinely user-facing (the WhatsApp prefilled message a fan sends to a
+   créateur is real content, not a dev-only error), so this isn't a
+   "doesn't matter" gap — but fixing it needs an actual design decision
+   this codebase hasn't made yet (read `Accept-Language`, or have the
+   client pass an explicit locale param, or switch to returning error
+   *codes* that the calling client component translates itself) rather
+   than a same-shape text swap. Left alone until that decision is made.
+2. **Country/province names** (`src/lib/countries.ts`'s `COUNTRIES` list,
+   consumed only by `SignupForm.tsx`, and the generated `states.json`
+   dataset behind it). These are stored verbatim in `users.pays`/`.province`
+   (see the schema section) — translating the dropdown's displayed name
+   without changing what gets stored would mean the *same* country is
+   saved under a different literal string depending on which locale the
+   visitor signed up in ("États-Unis" vs "United States"), which would
+   quietly fragment any future aggregation/analytics on that column. This
+   needs a real data-modeling decision (keep storage canonical and only
+   translate display, or move to storing an ISO code) that goes beyond
+   this task's "swap hardcoded text for a translation key" scope. Left
+   alone, flagged rather than guessed at.
+
+Also found, confirmed **genuinely dead code, not a gap**:
+`src/lib/verification.ts#STATUT_VERIFICATION_LABELS` (French-only status
+labels) has zero references anywhere outside its own declaration —
+grepped the whole `src/` tree to confirm before leaving it alone. Left
+untouched rather than translating text nothing ever renders, or deleting
+code unrelated to this task.
+
+Verified visually end-to-end (same mock-Supabase/Playwright technique
+used throughout this file, extended with two locale-scoped browser
+contexts — `{locale: "fr-FR"}` and `{locale: "en-US"}` — after an initial
+run without them gave false failures: Chromium's default
+`Accept-Language` is English, which made next-intl's automatic
+negotiation silently serve English content on the default,
+**unprefixed** French route): dashboard, `/parametres`, `/admin`,
+`/classement`, `/explorer`, and a créateur's public profile (campaign
+card, live calculator, supporters/badges sections, admin's two
+verification lists in both their "en attente" and "conflit" states) all
+render correctly in both languages, with explicit marker-string
+assertions confirming no French leaks onto the `/en/...` pages and no
+English leaks onto the default ones. A créateur's own free-text content
+(a campaign's description, in this case) deliberately stays as-authored
+regardless of viewer locale — matching real behavior, since this app has
+no machine-translation feature for user-generated content, and confirmed
+not a bug.
 
 ## Supabase migration deployment (`.github/workflows/deploy-migrations.yml`)
 

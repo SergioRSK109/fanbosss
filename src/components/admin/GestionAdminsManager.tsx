@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { buttonClass } from "@/components/ui/button-styles";
@@ -12,6 +13,8 @@ export interface AdminManageableUser {
 }
 
 export function GestionAdminsManager({ users }: { users: AdminManageableUser[] }) {
+  const t = useTranslations("Admin.gestionAdmins");
+  const tCommon = useTranslations("Common");
   const router = useRouter();
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [errorById, setErrorById] = useState<Record<string, string>>({});
@@ -28,7 +31,7 @@ export function GestionAdminsManager({ users }: { users: AdminManageableUser[] }
     const body = await response.json();
 
     if (!response.ok) {
-      setErrorById((prev) => ({ ...prev, [userId]: body.error ?? "erreur inconnue" }));
+      setErrorById((prev) => ({ ...prev, [userId]: body.error ?? tCommon("unknownError") }));
       setPendingId(null);
       return;
     }
@@ -59,8 +62,8 @@ export function GestionAdminsManager({ users }: { users: AdminManageableUser[] }
               {pendingId === u.id
                 ? "..."
                 : u.estAdmin
-                  ? "Retirer le statut admin"
-                  : "Accorder le statut admin"}
+                  ? t("revoke")
+                  : t("grant")}
             </button>
           </div>
           {errorById[u.id] && <p className="text-sm text-danger-600">{errorById[u.id]}</p>}
