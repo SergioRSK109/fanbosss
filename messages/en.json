@@ -115,6 +115,14 @@
       "dernierJour": "Last day",
       "share": "Share this campaign",
       "shareCopied": "Link copied!"
+    },
+    "badgeFidelite": {
+      "supportersHeading": "Supporters",
+      "supporterRow": "{name} — supporter since {date}",
+      "badgesHeading": "Loyalty badges",
+      "badgeRow": "Supporting {createur} since {date}",
+      "anonymousSupporter": "A supporter",
+      "anonymousCreateur": "A créateur"
     }
   },
   "PaiementRetour": {

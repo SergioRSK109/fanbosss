@@ -52,6 +52,26 @@ export interface CreateurProfileData {
     reactivite: number | null;
     progression: number | null;
   };
+  // Fan loyalty badge (migration 0022), both directions -- there's no
+  // fan/créateur role split in this app, so the same profile can have
+  // both. `supporters`: opted-in fans who support THIS profile as a
+  // créateur. `badgesFidelite`: créateurs THIS profile supports as a
+  // fan. Both come from badges_fidelite_publics, already filtered to
+  // badge_fidelite_public = true -- nothing further to check here.
+  // `depuis` is an ISO timestamp, the earliest 'livree' transaction
+  // between that specific pair, computed live (never stored).
+  supporters: {
+    fanId: string;
+    displayName: string | null;
+    pseudo: string | null;
+    depuis: string;
+  }[];
+  badgesFidelite: {
+    createurId: string;
+    displayName: string | null;
+    pseudo: string | null;
+    depuis: string;
+  }[];
 }
 
 // `don` always leads the public offre list, regardless of when the
@@ -94,6 +114,8 @@ export async function getCreateurProfileData(
     { data: volumeRow },
     { data: reactiviteRow },
     { data: progressionRow },
+    { data: supporterRows },
+    { data: badgeRows },
   ] = await Promise.all([
     supabase
       .from("profils_publics")
@@ -129,6 +151,20 @@ export async function getCreateurProfileData(
       .select("rang")
       .eq("createur_id", createurId)
       .maybeSingle(),
+    // Opted-in fans supporting this profile as a créateur.
+    supabase
+      .from("badges_fidelite_publics")
+      .select("fan_id, depuis")
+      .eq("createur_id", createurId)
+      .order("depuis", { ascending: true }),
+    // Créateurs this profile supports as a fan (only non-empty if this
+    // user's own badge_fidelite_public is true -- the view is filtered
+    // on the fan side regardless of which id we query by).
+    supabase
+      .from("badges_fidelite_publics")
+      .select("createur_id, depuis")
+      .eq("fan_id", createurId)
+      .order("depuis", { ascending: true }),
   ]);
 
   if (!profil) {
@@ -190,6 +226,44 @@ export async function getCreateurProfileData(
     })
     .filter((c): c is NonNullable<typeof c> => c !== null);
 
+  // Resolve pseudo/nom_affichage for whichever other users show up on
+  // either side of the badge lists -- a second, dependent query (needs
+  // supporterRows/badgeRows' ids first), same "only fetch when there's
+  // something to fetch" discipline as campagnes_montant_collecte above.
+  const supporterFanIds = (supporterRows ?? []).map((row) => row.fan_id);
+  const badgeCreateurIds = (badgeRows ?? []).map((row) => row.createur_id);
+  const otherProfileIds = Array.from(new Set([...supporterFanIds, ...badgeCreateurIds]));
+
+  const { data: otherProfiles } =
+    otherProfileIds.length > 0
+      ? await supabase
+          .from("profils_publics")
+          .select("id, pseudo, nom_affichage")
+          .in("id", otherProfileIds)
+      : { data: [] as { id: string; pseudo: string | null; nom_affichage: string | null }[] };
+
+  const otherProfilesById = new Map((otherProfiles ?? []).map((p) => [p.id, p]));
+
+  const supporters = (supporterRows ?? []).map((row) => {
+    const p = otherProfilesById.get(row.fan_id);
+    return {
+      fanId: row.fan_id,
+      displayName: resolveDisplayName(p?.nom_affichage ?? null, p?.pseudo ?? null),
+      pseudo: p?.pseudo ?? null,
+      depuis: row.depuis,
+    };
+  });
+
+  const badgesFidelite = (badgeRows ?? []).map((row) => {
+    const p = otherProfilesById.get(row.createur_id);
+    return {
+      createurId: row.createur_id,
+      displayName: resolveDisplayName(p?.nom_affichage ?? null, p?.pseudo ?? null),
+      pseudo: p?.pseudo ?? null,
+      depuis: row.depuis,
+    };
+  });
+
   return {
     createurId,
     displayName: resolveDisplayName(profil.nom_affichage, profil.pseudo),
@@ -209,5 +283,7 @@ export async function getCreateurProfileData(
       reactivite: reactiviteRow?.rang ?? null,
       progression: progressionRow?.rang ?? null,
     },
+    supporters,
+    badgesFidelite,
   };
 }

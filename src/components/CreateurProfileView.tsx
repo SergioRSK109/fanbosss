@@ -4,6 +4,7 @@ import { ReportButton } from "@/components/ReportButton";
 import { ShareCampagneButton } from "@/components/ShareCampagneButton";
 import { RankBadge } from "@/components/ui/RankBadge";
 import { ZoomablePhoto } from "@/components/ui/ZoomablePhoto";
+import { formatDepuis } from "@/lib/badgesFidelite";
 import {
   computeCampagneProgressPercent,
   computeCampagneStatus,
@@ -60,8 +61,18 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
     evenement_live: t("offerTypes.evenement_live"),
   };
 
-  const { createurId, displayName, bio, photoUrl, socialLinks, offres, campagnes, ranks } =
-    profile;
+  const {
+    createurId,
+    displayName,
+    bio,
+    photoUrl,
+    socialLinks,
+    offres,
+    campagnes,
+    ranks,
+    supporters,
+    badgesFidelite,
+  } = profile;
   const hasSocialLinks = Object.values(socialLinks).some(Boolean);
   const hasRanks =
     ranks.volume !== null || ranks.reactivite !== null || ranks.progression !== null;
@@ -138,8 +149,32 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
         </div>
       )}
 
+      {/* Opted-in fans supporting this créateur (migration 0022) --
+          badges_fidelite_publics already filters to badge_fidelite_public
+          = true, so every row here is already safe to show; nothing
+          further to check in this component. */}
+      {supporters.length > 0 && (
+        <section className={`flex flex-col gap-2 px-5 ${hasRanks ? "mt-6" : "mt-8"}`}>
+          <h2 className="text-lg font-bold">{t("badgeFidelite.supportersHeading")}</h2>
+          <ul className="flex flex-col gap-1.5">
+            {supporters.map((supporter) => (
+              <li key={supporter.fanId} className="card px-3 py-2 text-sm">
+                {t("badgeFidelite.supporterRow", {
+                  name: supporter.displayName ?? t("badgeFidelite.anonymousSupporter"),
+                  date: formatDepuis(supporter.depuis, locale),
+                })}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {campagnes.length > 0 && (
-        <section className={`flex flex-col gap-3 px-5 ${hasRanks ? "mt-6" : "mt-8"}`}>
+        <section
+          className={`flex flex-col gap-3 px-5 ${
+            supporters.length > 0 || hasRanks ? "mt-6" : "mt-8"
+          }`}
+        >
           <h2 className="text-lg font-bold">{t("campagnes.heading")}</h2>
           {campagnes.map((campagne) => {
             const status = computeCampagneStatus({
@@ -233,7 +268,11 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
         </section>
       )}
 
-      <ul className={`flex flex-col gap-3 px-5 ${campagnes.length > 0 ? "mt-6" : hasRanks ? "mt-6" : "mt-8"}`}>
+      <ul
+        className={`flex flex-col gap-3 px-5 ${
+          campagnes.length > 0 || supporters.length > 0 || hasRanks ? "mt-6" : "mt-8"
+        }`}
+      >
         {offres.map((offre) => (
           <li key={offre.id} className="card flex flex-col gap-3 p-4">
             <div className="flex items-center gap-3">
@@ -275,6 +314,29 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
           </p>
         )}
       </ul>
+
+      {/* Créateurs THIS profile supports as a fan (migration 0022) --
+          only ever non-empty when this profile owner's own
+          badge_fidelite_public is true, since badges_fidelite_publics is
+          filtered on the fan side regardless of which id it's queried
+          by. Can co-exist with the "Supporters" section above -- this
+          app has no fan/créateur role split, so the same person can
+          both receive support and support others. */}
+      {badgesFidelite.length > 0 && (
+        <section className="mt-6 flex flex-col gap-2 px-5">
+          <h2 className="text-lg font-bold">{t("badgeFidelite.badgesHeading")}</h2>
+          <ul className="flex flex-col gap-1.5">
+            {badgesFidelite.map((badge) => (
+              <li key={badge.createurId} className="card px-3 py-2 text-sm">
+                {t("badgeFidelite.badgeRow", {
+                  createur: badge.displayName ?? t("badgeFidelite.anonymousCreateur"),
+                  date: formatDepuis(badge.depuis, locale),
+                })}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </main>
   );
 }

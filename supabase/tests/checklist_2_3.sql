@@ -1710,6 +1710,116 @@ begin
   end;
 end $$;
 
+-- ---------------------------------------------------------------------
+-- Fan loyalty badge (migration 0022): badges_fidelite_publics exposes
+-- exactly {fan_id, createur_id, depuis} -- no montant, no transaction
+-- count -- and only for fans who opted in via badge_fidelite_public.
+-- Explicitly tests both directions of the privacy toggle (on AND back
+-- off), not just the "on" state.
+-- ---------------------------------------------------------------------
+insert into users (id) values
+  ('ba4de001-0001-0001-0001-000000000001'), -- fan A
+  ('ba4de002-0002-0002-0002-000000000002'), -- créateur B
+  ('ba4de003-0003-0003-0003-000000000003'), -- créateur C, no transactions from A
+  ('ba4de004-0004-0004-0004-000000000004'); -- fan D, never opts in
+
+insert into offres (id, createur_id, type) values
+  ('ba4de010-0010-0010-0010-000000000010', 'ba4de002-0002-0002-0002-000000000002', 'don');
+
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut, created_at) values
+  ('ba4de020-0020-0020-0020-000000000020',
+   'ba4de001-0001-0001-0001-000000000001',
+   'ba4de002-0002-0002-0002-000000000002',
+   'ba4de010-0010-0010-0010-000000000010', 5, 'livree', now() - interval '10 days'),
+  ('ba4de021-0021-0021-0021-000000000021',
+   'ba4de001-0001-0001-0001-000000000001',
+   'ba4de002-0002-0002-0002-000000000002',
+   'ba4de010-0010-0010-0010-000000000010', 5, 'livree', now() - interval '2 days'),
+  ('ba4de022-0022-0022-0022-000000000022',
+   'ba4de004-0004-0004-0004-000000000004',
+   'ba4de002-0002-0002-0002-000000000002',
+   'ba4de010-0010-0010-0010-000000000010', 5, 'livree', now());
+
+do $$
+begin
+  if exists (
+    select 1 from badges_fidelite_publics
+    where fan_id = 'ba4de001-0001-0001-0001-000000000001'
+      and createur_id = 'ba4de002-0002-0002-0002-000000000002'
+  ) then
+    raise exception 'TEST FAILED: badges_fidelite_publics exposed a badge before the fan opted in';
+  end if;
+  raise notice 'PASS: badges_fidelite_publics hides a fan''s badge by default (badge_fidelite_public = false)';
+end $$;
+
+update users set badge_fidelite_public = true where id = 'ba4de001-0001-0001-0001-000000000001';
+
+do $$
+declare
+  v_depuis timestamptz;
+  v_count integer;
+begin
+  select depuis into v_depuis from badges_fidelite_publics
+    where fan_id = 'ba4de001-0001-0001-0001-000000000001'
+      and createur_id = 'ba4de002-0002-0002-0002-000000000002';
+
+  if v_depuis is null then
+    raise exception 'TEST FAILED: badges_fidelite_publics still hides the badge after opting in';
+  end if;
+
+  -- Must be the EARLIEST of the two livree transactions (~10 days ago),
+  -- not the latest (~2 days ago) -- allow a minute of slack for however
+  -- long this test run has taken, not days.
+  if abs(extract(epoch from (v_depuis - (now() - interval '10 days')))) > 60 then
+    raise exception 'TEST FAILED: badges_fidelite_publics depuis is %, expected ~10 days ago (the earliest livree transaction, not the latest)', v_depuis;
+  end if;
+
+  select count(*) into v_count from badges_fidelite_publics
+    where createur_id = 'ba4de002-0002-0002-0002-000000000002';
+  if v_count != 1 then
+    raise exception 'TEST FAILED: expected exactly 1 opted-in supporter for créateur B, got %', v_count;
+  end if;
+
+  raise notice 'PASS: badges_fidelite_publics shows the badge once opted in, with depuis = the earliest livree transaction, and excludes fan D (never opted in)';
+end $$;
+
+do $$
+begin
+  if exists (
+    select 1 from badges_fidelite_publics where createur_id = 'ba4de003-0003-0003-0003-000000000003'
+  ) then
+    raise exception 'TEST FAILED: badges_fidelite_publics returned a row for a créateur with zero delivered transactions';
+  end if;
+  raise notice 'PASS: badges_fidelite_publics never fabricates a row for a créateur/fan pair with no delivered transactions';
+end $$;
+
+update users set badge_fidelite_public = false where id = 'ba4de001-0001-0001-0001-000000000001';
+
+do $$
+begin
+  if exists (
+    select 1 from badges_fidelite_publics where fan_id = 'ba4de001-0001-0001-0001-000000000001'
+  ) then
+    raise exception 'TEST FAILED: badges_fidelite_publics still exposed the badge after the fan turned the setting back off';
+  end if;
+  raise notice 'PASS: turning badge_fidelite_public back off immediately hides the badge again';
+end $$;
+
+do $$
+declare
+  v_columns text;
+begin
+  select string_agg(column_name, ',' order by column_name) into v_columns
+    from information_schema.columns
+    where table_schema = 'public' and table_name = 'badges_fidelite_publics';
+
+  if v_columns != 'createur_id,depuis,fan_id' then
+    raise exception 'TEST FAILED: badges_fidelite_publics exposes unexpected columns (%), expected exactly createur_id, depuis, fan_id -- never a montant or transaction count', v_columns;
+  end if;
+
+  raise notice 'PASS: badges_fidelite_publics exposes exactly fan_id, createur_id, depuis -- no montant, no transaction count (%)', v_columns;
+end $$;
+
 do $$
 begin
   raise notice 'ALL SQL CHECKLIST TESTS PASSED';

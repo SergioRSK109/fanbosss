@@ -1298,6 +1298,116 @@ expected French copy and fill percentages computed from a fixed
 `mes_progres_classement()` fixture (e.g. "Plus que 3 transactions livrées
 pour entrer dans le top 10 volume ce mois-ci" at a 4-of-7 fill).
 
+## Fan loyalty badge (`badge_fidelite_public`, migration `0022`)
+
+Non-monetary "Supporter de [créateur] depuis [date]" badge, opt-in, same
+pattern as `classement_public`/`masque_exploration`: `users` gained a
+single `badge_fidelite_public boolean not null default false` column,
+toggled from `/parametres`. There is no fan/créateur role split in this
+app (removed in migration `0006`), so the same person can simultaneously
+have supporters (as a créateur) and hold badges of their own (as a fan
+of other créateurs) — both directions are built here.
+
+**The date is never stored.** It's always `min(created_at)` of the
+`livree` transactions between one specific fan/créateur pair, computed
+live — the exact same principle already applied to
+`campagnes_montant_collecte` (migration `0017`): a second copy of a
+derivable number/date is a real bug waiting to happen (it can drift out
+of sync with the transactions it's supposed to summarize), not a
+convenience.
+
+**`badges_fidelite_publics` — a view, not a `SECURITY DEFINER` function,
+and deliberately so.** Unlike `mes_progres_classement()` (which has to
+compare the caller against a cross-user threshold, and therefore needs a
+function that reads `auth.uid()` internally), this needs no per-caller
+logic at all: it's a plain aggregate over `transactions`/`users`,
+filtered once, by a column value, not by who's asking.
+
+```sql
+create view public.badges_fidelite_publics as
+  select t.fan_id, t.createur_id, min(t.created_at) as depuis
+  from transactions t
+  join users u on u.id = t.fan_id
+  where t.statut = 'livree' and u.badge_fidelite_public = true
+  group by t.fan_id, t.createur_id;
+```
+
+Same shape as `profils_explorables`/`classement_volume` (migrations
+0008/0009): owned by the migration role (bypassrls in a real Supabase
+project), so it can freely read `transactions`/`users` to compute the
+aggregate, but the `where u.badge_fidelite_public = true` clause is the
+entire safety guarantee — a fan's row only ever appears here once they've
+opted in, and there is no parameter to ask for a non-opted-in fan's row
+instead. **This is the point flagged as a priority given the
+`accept_transaction` history (migrations 0020/0021): a plain view has no
+`EXECUTE` grant to even get wrong** — the vulnerable pattern was
+specifically about a `SECURITY DEFINER` function's missing `revoke ...
+from public`, which doesn't apply here at all since there's no function.
+`grant select ... to authenticated, anon` is safe precisely because the
+view's own `WHERE` clause, not the grant, is what restricts which rows
+come back.
+
+Exposes exactly three columns — `fan_id, createur_id, depuis` — never a
+transaction count or a montant, same "aggregate rank/date only, never
+the underlying number" discipline as `classement_volume`. Used in two
+directions by the application, both reading the same view:
+- Filtered by `createur_id` → a créateur's public "Supporters" section
+  (`CreateurProfileView`, added alongside the existing `campagnes`/`offres`
+  sections in `src/lib/profil.ts#getCreateurProfileData`).
+- Filtered by `fan_id` → that same user's own public profile section
+  listing which créateurs *they* support (same component, same page —
+  there's no separate "fan profile" route).
+
+**The private dashboard card is a completely different code path, on
+purpose.** `badges_fidelite_publics` is filtered by
+`badge_fidelite_public = true`, which is exactly the thing a fan's own
+private view must never be gated by — a fan must always see their own
+support history regardless of whether they've chosen to make it public.
+So the dashboard reads `transactions` directly (`fan_id = auth.uid(),
+statut = 'livree'`, already covered by the existing
+`transactions_select_fan` RLS policy — no new grant needed) and computes
+the earliest date per créateur in application code
+(`computePremieresTransactionsParPartenaire`, `src/lib/badgesFidelite.ts`,
+pure and unit-tested). Rendered by `BadgesFideliteCard.tsx`, shown only
+once there's at least one badge — no empty/zero state, matching the
+brief ("rien à afficher avant ça").
+
+**Security-definer audit performed alongside this feature** (explicitly
+requested, given the `accept_transaction` history): every other
+`SECURITY DEFINER` function in the project was already checked in
+migration `0021` (see that section above) — this feature added no new
+`SECURITY DEFINER` function at all, so there was nothing new to audit
+here beyond confirming that fact.
+
+Verified in `checklist_2_3.sql` with real inserts, **both directions of
+the privacy toggle, not just "on"**: a fan's badge is hidden by default
+(`badge_fidelite_public = false`), appears the moment they opt in (with
+`depuis` = the earliest of two `livree` transactions, not the latest),
+never fabricates a row for a créateur with zero delivered transactions,
+and disappears again immediately when the fan turns the setting back
+off — plus an `information_schema.columns` check that the view exposes
+exactly `créateur_id, depuis, fan_id`, never a montant or count (same
+style as `classement_volume`'s "exposes rank only" test).
+`profil.test.ts` additionally spies on `getCreateurProfileData`'s own
+`.select()` calls to prove the application code asks for exactly
+`fan_id, depuis` / `createur_id, depuis`, and that the final
+`supporters`/`badgesFidelite` arrays it returns never carry a montant or
+count field either.
+
+Verified visually end-to-end (same throwaway mock-Supabase technique as
+`/classement`): the private dashboard card renders "Supporter de
+marie_creatrice depuis 16 juin 2026" (correctly the earliest of two
+fixture transactions, not the 3-days-ago one); a créateur's public
+profile shows both the "Supporters" section (an opted-in fan supporting
+them) and their own "Badges de fidélité" section (créateurs they
+support) at once, proving the two directions can coexist on one profile;
+and the full toggle round-trip was driven through the real UI, not
+simulated: unchecking "Rendre mes badges de fidélité publics" in
+`/parametres` and saving made the "Badges de fidélité" section vanish
+from the public profile on reload (while the unrelated "Supporters"
+section, gated by a *different* user's flag, stayed put), and re-checking
+it brought the section back.
+
 ## Signup: province/ville + password confirmation (migration `0012`)
 
 **Province** is a dropdown dependent on the selected country, backed by
@@ -1968,7 +2078,15 @@ into chat).
   `classement_progression`/`profils_publics`, never `users`/`transactions`
   directly, and that it selects exactly `createur_id, rang` from the
   classement views and exactly the four public display columns from
-  `profils_publics` — never a count or amount).
+  `profils_publics` — never a count or amount); the fan loyalty badge
+  helpers (`badgesFidelite.test.ts` — `computePremieresTransactionsParPartenaire`
+  keeps the earliest date per créateur regardless of input order, tracks
+  several créateurs independently, and `formatDepuis` in both locales);
+  and `getCreateurProfileData`'s badge queries (`profil.test.ts` — spies
+  on `badges_fidelite_publics`' two `.select()` calls to assert they ask
+  for exactly `fan_id, depuis` / `createur_id, depuis`, never a montant
+  or count, and that the resulting `supporters`/`badgesFidelite` arrays
+  never carry one either).
 - `npm run test:sql` (`supabase/tests/run_sql_tests.sh` +
   `checklist_2_3.sql`): creates a throwaway Postgres database (via
   `sudo -u postgres psql`, **not** Docker — Docker's daemon isn't running
@@ -2047,7 +2165,15 @@ into chat).
   left any trace, a positive check confirms `service_role`/
   `authenticated` still hold `EXECUTE` on their respective functions, and
   `handle_new_auth_user()` is confirmed uncallable directly (Postgres's
-  own trigger-function restriction, not a grant).
+  own trigger-function restriction, not a grant). Also covers the fan
+  loyalty badge (0022) with real inserts: `badges_fidelite_publics` hides
+  a fan's badge by default, shows it (with `depuis` = the earliest of two
+  `livree` transactions, not the latest) once `badge_fidelite_public` is
+  turned on, excludes a fan who never opted in even though they also
+  delivered a transaction to the same créateur, never fabricates a row
+  for a créateur with zero delivered transactions, hides the badge again
+  immediately once the setting is turned back off, and exposes exactly
+  `createur_id, depuis, fan_id` — never a montant or transaction count.
 - `supabase/tests/stub_auth.sql` fakes just enough of Supabase's `auth`
   schema (an `auth.uid()` reading `app.current_user_id`, plus the
   `authenticated`/`anon`/`service_role` roles) for the real migrations to

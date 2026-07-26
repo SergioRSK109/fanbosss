@@ -1,4 +1,5 @@
 import { redirect, Link } from "@/i18n/navigation";
+import { BadgesFideliteCard } from "@/components/BadgesFideliteCard";
 import { ClassementProgresCard } from "@/components/ClassementProgresCard";
 import { CopyProfileLinkButton } from "@/components/CopyProfileLinkButton";
 import { DemandesEnAttente } from "@/components/DemandesEnAttente";
@@ -6,7 +7,9 @@ import { LogoutButton } from "@/components/LogoutButton";
 import { OffresManager } from "@/components/OffresManager";
 import { TransactionActions } from "@/components/TransactionActions";
 import { RankBadge } from "@/components/ui/RankBadge";
+import { computePremieresTransactionsParPartenaire } from "@/lib/badgesFidelite";
 import type { ProgresClassement } from "@/lib/classementProgres";
+import { resolveDisplayName } from "@/lib/profil";
 import { describeTransactionStatutFan } from "@/lib/transactions";
 import type { OffreType } from "@/lib/validation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -60,6 +63,7 @@ export default async function DashboardPage({
     { data: reactiviteRow },
     { data: progressionRow },
     { data: progresRows },
+    { data: transactionsLivrees },
   ] = await Promise.all([
     supabase
       .from("offres")
@@ -93,6 +97,16 @@ export default async function DashboardPage({
       .eq("createur_id", user.id)
       .maybeSingle(),
     supabase.rpc("mes_progres_classement"),
+    // Private fan loyalty badge (migration 0022) -- own RLS-visible
+    // transactions (transactions_select_fan: fan_id = auth.uid()), never
+    // the badges_fidelite_publics view: that view is filtered by
+    // badge_fidelite_public, which must never gate what a fan sees of
+    // their own activity, opted in or not.
+    supabase
+      .from("transactions")
+      .select("createur_id, created_at")
+      .eq("fan_id", user.id)
+      .eq("statut", "livree"),
   ]);
 
   const progresRow = progresRows?.[0] as
@@ -124,6 +138,38 @@ export default async function DashboardPage({
         progressionManque: progresRow.progression_manque,
       }
     : null;
+
+  // Private loyalty badges: earliest delivered transaction per créateur
+  // supported, computed live from the fan's own transactions (never
+  // stored -- same principle as campagnes_montant_collecte below).
+  // Unconditional on badge_fidelite_public -- that flag only controls
+  // whether OTHERS see this, never the fan's own private view of it.
+  const premieresParCreateur = computePremieresTransactionsParPartenaire(
+    (transactionsLivrees ?? []).map((t) => ({
+      partenaireId: t.createur_id,
+      createdAt: t.created_at,
+    })),
+  );
+  const createurIdsSupportes = Array.from(premieresParCreateur.keys());
+  const { data: createursSupportes } =
+    createurIdsSupportes.length > 0
+      ? await supabase
+          .from("profils_publics")
+          .select("id, pseudo, nom_affichage")
+          .in("id", createurIdsSupportes)
+      : { data: [] as { id: string; pseudo: string | null; nom_affichage: string | null }[] };
+  const createurProfilById = new Map((createursSupportes ?? []).map((p) => [p.id, p]));
+
+  const mesBadges = createurIdsSupportes
+    .map((createurId) => {
+      const p = createurProfilById.get(createurId);
+      return {
+        createurId,
+        displayName: resolveDisplayName(p?.nom_affichage ?? null, p?.pseudo ?? null),
+        depuis: premieresParCreateur.get(createurId)!,
+      };
+    })
+    .sort((a, b) => new Date(a.depuis).getTime() - new Date(b.depuis).getTime());
 
   // Montant collecté per campagne, computed live via
   // campagnes_montant_collecte (migration 0017) -- same view the public
@@ -204,6 +250,8 @@ export default async function DashboardPage({
       )}
 
       {progres && <ClassementProgresCard progres={progres} />}
+
+      {mesBadges.length > 0 && <BadgesFideliteCard badges={mesBadges} />}
 
       <section>
         <h2 className="mb-3 flex items-center gap-2 text-lg font-bold">
