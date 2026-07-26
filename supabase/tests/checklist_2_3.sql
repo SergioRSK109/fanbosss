@@ -1820,6 +1820,269 @@ begin
   raise notice 'PASS: badges_fidelite_publics exposes exactly fan_id, createur_id, depuis -- no montant, no transaction count (%)', v_columns;
 end $$;
 
+-- ---------------------------------------------------------------------
+-- Créateur verification (migration 0023): conflict detection compares
+-- LIVE, normalized nom_affichage (case/accents/whitespace-insensitive)
+-- across different créateurs -- tested with a real scenario, per brief,
+-- not just described. Also confirms the badge never appears before an
+-- admin actually approves, and that resolving one side of a conflict
+-- never auto-touches the other.
+-- ---------------------------------------------------------------------
+insert into users (id, nom_affichage) values
+  ('face1d01-0001-0001-0001-000000000001', 'Sergio Créateur'),
+  ('face1d02-0002-0002-0002-000000000002', '  sergio   créateur  '),
+  ('face1d03-0003-0003-0003-000000000003', 'Marie Totalement Différente'),
+  ('face1d09-0009-0009-0009-000000000009', null);
+
+-- Dedicated admin for this section only -- no auth.uid() context, same
+-- bootstrap mechanism as the very first admin (see migration 0015).
+update users set est_admin = true where id = 'face1d09-0009-0009-0009-000000000009';
+
+-- Créateur A requests first -- no conflict yet.
+select set_config('app.current_user_id', 'face1d01-0001-0001-0001-000000000001', false);
+do $$
+declare
+  v_row record;
+begin
+  select * into v_row from creer_demande_verification('tiktok', 'https://tiktok.com/@sergioA');
+  if v_row.statut != 'en_attente' then
+    raise exception 'TEST FAILED: first request for a unique nom_affichage should be en_attente, got %', v_row.statut;
+  end if;
+  if v_row.code_verification !~ '^FanBoss-[A-Z0-9]{10}$' then
+    raise exception 'TEST FAILED: unexpected code_verification format: %', v_row.code_verification;
+  end if;
+  raise notice 'PASS: first verification request for a unique nom_affichage starts en_attente with a well-formed code';
+end $$;
+select set_config('app.current_user_id', '', false);
+
+-- Créateur C, a genuinely different display name, also requests -- must
+-- not conflict with anyone.
+select set_config('app.current_user_id', 'face1d03-0003-0003-0003-000000000003', false);
+select creer_demande_verification('youtube', 'https://youtube.com/@marie');
+select set_config('app.current_user_id', '', false);
+
+do $$
+declare
+  v_statut_a text;
+  v_statut_c text;
+begin
+  select statut into v_statut_a from demandes_verification where createur_id = 'face1d01-0001-0001-0001-000000000001';
+  select statut into v_statut_c from demandes_verification where createur_id = 'face1d03-0003-0003-0003-000000000003';
+  if v_statut_a != 'en_attente' or v_statut_c != 'en_attente' then
+    raise exception 'TEST FAILED: two genuinely different nom_affichage values incorrectly conflicted (a=%, c=%)', v_statut_a, v_statut_c;
+  end if;
+  raise notice 'PASS: two créateurs with genuinely different display names never conflict';
+end $$;
+
+-- Créateur B requests with a normalized-equal name (different case,
+-- accents, extra whitespace) -- must conflict immediately, AND must
+-- flip créateur A's still-pending request to conflit too.
+select set_config('app.current_user_id', 'face1d02-0002-0002-0002-000000000002', false);
+do $$
+declare
+  v_row record;
+begin
+  select * into v_row from creer_demande_verification('instagram', 'https://instagram.com/sergioB');
+  if v_row.statut != 'conflit' then
+    raise exception 'TEST FAILED: a normalized-equal display name should conflict immediately, got %', v_row.statut;
+  end if;
+  raise notice 'PASS: a normalized-equal display name (different case/accents/whitespace) is detected as a conflict on insertion';
+end $$;
+select set_config('app.current_user_id', '', false);
+
+do $$
+declare
+  v_statut_a text;
+  v_statut_c text;
+begin
+  select statut into v_statut_a from demandes_verification where createur_id = 'face1d01-0001-0001-0001-000000000001';
+  select statut into v_statut_c from demandes_verification where createur_id = 'face1d03-0003-0003-0003-000000000003';
+  if v_statut_a != 'conflit' then
+    raise exception 'TEST FAILED: créateur A''s still-pending request should have flipped to conflit too, got %', v_statut_a;
+  end if;
+  if v_statut_c != 'en_attente' then
+    raise exception 'TEST FAILED: an unrelated créateur''s request was incorrectly touched by another pair''s conflict (got %)', v_statut_c;
+  end if;
+  raise notice 'PASS: the conflict flips the OTHER matching créateur''s still-pending request too, and never touches an unrelated créateur''s request';
+end $$;
+
+-- Badge must never appear before admin approval.
+do $$
+declare
+  v_verifie_a boolean;
+  v_verifie_b boolean;
+begin
+  select createur_verifie into v_verifie_a from users where id = 'face1d01-0001-0001-0001-000000000001';
+  select createur_verifie into v_verifie_b from users where id = 'face1d02-0002-0002-0002-000000000002';
+  if v_verifie_a or v_verifie_b then
+    raise exception 'TEST FAILED: createur_verifie was set before any admin approval';
+  end if;
+  raise notice 'PASS: createur_verifie stays false for both conflicting créateurs until an admin actually approves one';
+end $$;
+
+-- Admin approves créateur A's (conflict) request -- a human, having
+-- looked into it, IS the "manual resolution" palier 2 waits for. Must
+-- succeed, and must NOT auto-touch créateur B's still-conflicting request.
+select set_config('app.current_user_id', 'face1d09-0009-0009-0009-000000000009', false);
+select approuver_verification(
+  (select id from demandes_verification where createur_id = 'face1d01-0001-0001-0001-000000000001')
+);
+select set_config('app.current_user_id', '', false);
+
+do $$
+declare
+  v_verifie_a boolean;
+  v_verifie_b boolean;
+  v_statut_b text;
+begin
+  select createur_verifie into v_verifie_a from users where id = 'face1d01-0001-0001-0001-000000000001';
+  select createur_verifie into v_verifie_b from users where id = 'face1d02-0002-0002-0002-000000000002';
+  select statut into v_statut_b from demandes_verification where createur_id = 'face1d02-0002-0002-0002-000000000002';
+
+  if not v_verifie_a then
+    raise exception 'TEST FAILED: approuver_verification did not set createur_verifie for the approved créateur';
+  end if;
+  if v_verifie_b then
+    raise exception 'TEST FAILED: approving créateur A automatically verified créateur B too -- conflicts must never auto-resolve';
+  end if;
+  if v_statut_b != 'conflit' then
+    raise exception 'TEST FAILED: créateur B''s conflicting request should remain conflit, untouched, got %', v_statut_b;
+  end if;
+  raise notice 'PASS: approving one side of a conflict never auto-verifies or auto-touches the other side';
+end $$;
+
+-- Refusing créateur B's conflicting request: allowed, never touches
+-- createur_verifie.
+select set_config('app.current_user_id', 'face1d09-0009-0009-0009-000000000009', false);
+select refuser_verification(
+  (select id from demandes_verification where createur_id = 'face1d02-0002-0002-0002-000000000002')
+);
+select set_config('app.current_user_id', '', false);
+
+do $$
+declare
+  v_statut_b text;
+  v_verifie_b boolean;
+begin
+  select statut into v_statut_b from demandes_verification where createur_id = 'face1d02-0002-0002-0002-000000000002';
+  select createur_verifie into v_verifie_b from users where id = 'face1d02-0002-0002-0002-000000000002';
+  if v_statut_b != 'refuse' then
+    raise exception 'TEST FAILED: refuser_verification did not mark the request refuse (got %)', v_statut_b;
+  end if;
+  if v_verifie_b then
+    raise exception 'TEST FAILED: refuser_verification incorrectly set createur_verifie';
+  end if;
+  raise notice 'PASS: refuser_verification marks the request refuse without ever setting createur_verifie';
+end $$;
+
+-- Public exposure: profils_publics shows the badge only for the
+-- approved créateur, never the refused/conflicting one.
+do $$
+declare
+  v_verifie_publics_a boolean;
+  v_verifie_publics_b boolean;
+begin
+  select createur_verifie into v_verifie_publics_a from profils_publics where id = 'face1d01-0001-0001-0001-000000000001';
+  select createur_verifie into v_verifie_publics_b from profils_publics where id = 'face1d02-0002-0002-0002-000000000002';
+  if not v_verifie_publics_a then
+    raise exception 'TEST FAILED: profils_publics does not expose the approved créateur''s badge';
+  end if;
+  if v_verifie_publics_b then
+    raise exception 'TEST FAILED: profils_publics exposes a badge for the refused/conflicting créateur';
+  end if;
+  raise notice 'PASS: profils_publics exposes createur_verifie correctly (true only for the approved créateur)';
+end $$;
+
+-- Security, same safe pattern as migration 0019/0020/0021 -- anon has no
+-- EXECUTE at all on any of the three new functions, and each rejects a
+-- NULL auth.uid() (creer_demande_verification) or a non-admin caller
+-- (approuver_verification/refuser_verification). Literal, non-existent
+-- uuids are used as arguments throughout: each function's own auth
+-- check runs before it ever looks up the target row, so a real target
+-- id is never needed to prove the rejection.
+set role anon;
+
+do $$
+begin
+  begin
+    perform creer_demande_verification('tiktok', 'https://tiktok.com/@attacker');
+    raise exception 'TEST FAILED: anon was able to call creer_demande_verification()';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE privilege on creer_demande_verification()';
+  end;
+end $$;
+
+do $$
+begin
+  begin
+    perform approuver_verification('00000000-0000-0000-0000-000000000000');
+    raise exception 'TEST FAILED: anon was able to call approuver_verification()';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE privilege on approuver_verification()';
+  end;
+end $$;
+
+do $$
+begin
+  begin
+    perform refuser_verification('00000000-0000-0000-0000-000000000000');
+    raise exception 'TEST FAILED: anon was able to call refuser_verification()';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE privilege on refuser_verification()';
+  end;
+end $$;
+
+reset role;
+
+set role authenticated;
+
+select set_config('app.current_user_id', '', false);
+do $$
+begin
+  begin
+    perform creer_demande_verification('tiktok', 'https://tiktok.com/@attacker');
+    raise exception 'TEST FAILED: creer_demande_verification() succeeded with auth.uid() IS NULL';
+  exception when others then
+    if sqlerrm != 'not authenticated' then
+      raise exception 'TEST FAILED: unexpected error calling creer_demande_verification() with a NULL auth.uid(): %', sqlerrm;
+    end if;
+    raise notice 'PASS: creer_demande_verification() rejects a call with auth.uid() IS NULL';
+  end;
+end $$;
+
+-- A genuinely authenticated but non-admin user cannot approve/refuse --
+-- rejected before the target row is even looked up, so a fake id is fine.
+select set_config('app.current_user_id', 'face1d03-0003-0003-0003-000000000003', false);
+
+do $$
+begin
+  begin
+    perform approuver_verification('00000000-0000-0000-0000-000000000000');
+    raise exception 'TEST FAILED: a non-admin authenticated user was able to call approuver_verification()';
+  exception when others then
+    if sqlerrm != 'not authorized' then
+      raise exception 'TEST FAILED: unexpected error: %', sqlerrm;
+    end if;
+    raise notice 'PASS: approuver_verification rejects a non-admin authenticated caller';
+  end;
+end $$;
+
+do $$
+begin
+  begin
+    perform refuser_verification('00000000-0000-0000-0000-000000000000');
+    raise exception 'TEST FAILED: a non-admin authenticated user was able to call refuser_verification()';
+  exception when others then
+    if sqlerrm != 'not authorized' then
+      raise exception 'TEST FAILED: unexpected error: %', sqlerrm;
+    end if;
+    raise notice 'PASS: refuser_verification rejects a non-admin authenticated caller';
+  end;
+end $$;
+
+select set_config('app.current_user_id', '', false);
+reset role;
+
 do $$
 begin
   raise notice 'ALL SQL CHECKLIST TESTS PASSED';
