@@ -1,12 +1,13 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 // Proves the public /classement page never reads a column beyond what
-// classement_volume/reactivite/progression and profils_publics already
-// expose publicly (migration 0008/0009): rank only from the classement
-// views (never a count or amount), and only the public display columns
-// from profils_publics (never telephone or anything monetary -- those
-// aren't even in the view, but this pins down what this page's own
-// query explicitly asks for too).
+// classement_volume/reactivite and profils_publics already expose
+// publicly (migration 0008/0009): rank only from the classement views
+// (never a count or amount), and only the public display columns from
+// profils_publics (never telephone or anything monetary -- those aren't
+// even in the view, but this pins down what this page's own query
+// explicitly asks for too). classement_progression is deliberately
+// excluded from this page (product decision) -- see classementPublic.ts.
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServerClient: vi.fn(),
 }));
@@ -37,7 +38,7 @@ function buildProfilesChain(rows: Profil[]) {
 function buildClient(
   fromSpy: (table: string) => void,
   selectCalls: { table: string; columns: string }[],
-  rows: { volume: Row[]; reactivite: Row[]; progression: Row[]; profils: Profil[] },
+  rows: { volume: Row[]; reactivite: Row[]; profils: Profil[] },
 ) {
   return {
     from: (table: string) => {
@@ -50,7 +51,6 @@ function buildClient(
           }
           if (table === "classement_volume") return buildRankChain(rows.volume);
           if (table === "classement_reactivite") return buildRankChain(rows.reactivite);
-          if (table === "classement_progression") return buildRankChain(rows.progression);
           throw new Error(`unexpected table queried: ${table}`);
         },
       };
@@ -67,12 +67,11 @@ describe("getClassementPublicData", () => {
     selectCalls = [];
   });
 
-  it("only ever queries the three public classement views and profils_publics -- never users/transactions directly", async () => {
+  it("only ever queries the two public classement views and profils_publics -- never users/transactions/classement_progression", async () => {
     vi.mocked(createSupabaseServerClient).mockResolvedValue(
       buildClient(fromSpy, selectCalls, {
         volume: [{ createur_id: "a", rang: 1 }],
         reactivite: [],
-        progression: [],
         profils: [{ id: "a", pseudo: "sergio", nom_affichage: null, photo_r2_key: null }],
       }) as unknown as Awaited<ReturnType<typeof createSupabaseServerClient>>,
     );
@@ -81,16 +80,12 @@ describe("getClassementPublicData", () => {
 
     const tablesQueried = fromSpy.mock.calls.map((call) => call[0]);
     expect(new Set(tablesQueried)).toEqual(
-      new Set([
-        "classement_volume",
-        "classement_reactivite",
-        "classement_progression",
-        "profils_publics",
-      ]),
+      new Set(["classement_volume", "classement_reactivite", "profils_publics"]),
     );
     expect(tablesQueried).not.toContain("users");
     expect(tablesQueried).not.toContain("transactions");
     expect(tablesQueried).not.toContain("paiements");
+    expect(tablesQueried).not.toContain("classement_progression");
   });
 
   it("selects only createur_id and rang from the classement views -- never a count or amount", async () => {
@@ -98,7 +93,6 @@ describe("getClassementPublicData", () => {
       buildClient(fromSpy, selectCalls, {
         volume: [{ createur_id: "a", rang: 1 }],
         reactivite: [{ createur_id: "a", rang: 2 }],
-        progression: [{ createur_id: "a", rang: 3 }],
         profils: [{ id: "a", pseudo: "sergio", nom_affichage: null, photo_r2_key: null }],
       }) as unknown as Awaited<ReturnType<typeof createSupabaseServerClient>>,
     );
@@ -106,7 +100,7 @@ describe("getClassementPublicData", () => {
     await getClassementPublicData();
 
     const rankSelects = selectCalls.filter((call) => call.table.startsWith("classement_"));
-    expect(rankSelects).toHaveLength(3);
+    expect(rankSelects).toHaveLength(2);
     for (const call of rankSelects) {
       expect(call.columns).toBe("createur_id, rang");
     }
@@ -117,7 +111,6 @@ describe("getClassementPublicData", () => {
       buildClient(fromSpy, selectCalls, {
         volume: [{ createur_id: "a", rang: 1 }],
         reactivite: [],
-        progression: [],
         profils: [{ id: "a", pseudo: "sergio", nom_affichage: null, photo_r2_key: null }],
       }) as unknown as Awaited<ReturnType<typeof createSupabaseServerClient>>,
     );
@@ -133,7 +126,6 @@ describe("getClassementPublicData", () => {
       buildClient(fromSpy, selectCalls, {
         volume: [{ createur_id: "a", rang: 1 }],
         reactivite: [],
-        progression: [],
         profils: [{ id: "a", pseudo: "sergio", nom_affichage: "Sergio", photo_r2_key: null }],
       }) as unknown as Awaited<ReturnType<typeof createSupabaseServerClient>>,
     );
@@ -150,7 +142,6 @@ describe("getClassementPublicData", () => {
       buildClient(fromSpy, selectCalls, {
         volume: [{ createur_id: "a", rang: 1 }],
         reactivite: [],
-        progression: [],
         profils: [{ id: "a", pseudo: "sergio", nom_affichage: null, photo_r2_key: "photos/a.jpg" }],
       }) as unknown as Awaited<ReturnType<typeof createSupabaseServerClient>>,
     );

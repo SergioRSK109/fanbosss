@@ -123,7 +123,8 @@
       "badgeRow": "Supporting {createur} since {date}",
       "anonymousSupporter": "A supporter",
       "anonymousCreateur": "A créateur"
-    }
+    },
+    "participer": "Participate"
   },
   "PaiementRetour": {
     "heading": "Thank you!",
@@ -144,7 +145,6 @@
     "subheading": "The most active créateurs over the last 30 days, sorted by current rank.",
     "sectionVolume": "🏆 Top 10 volume",
     "sectionReactivite": "⚡ Top 10 responsiveness",
-    "sectionProgression": "📈 Top 10 growth",
     "empty": "Nobody on this leaderboard yet.",
     "anonymous": "FanBoss créateur",
     "rank": "#{rank}"

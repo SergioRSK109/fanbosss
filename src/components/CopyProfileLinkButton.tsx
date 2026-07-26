@@ -16,7 +16,7 @@ export function CopyProfileLinkButton({ pseudo }: { pseudo: string }) {
   async function handleClick() {
     setErrorMessage("");
     const url = `${window.location.origin}/@${pseudo}`;
-    const shareText = `Soutiens-moi sur FanBoss \u{1F449} ${url}`;
+    const shareText = `Soutenez-moi sur FanBoss \u{1F449} ${url}`;
 
     try {
       if (!navigator.clipboard?.writeText) {

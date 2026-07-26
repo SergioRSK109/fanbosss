@@ -1256,23 +1256,36 @@ migrations, relying on `auth.uid()`'s stubbed session variable alone) —
 it's what makes the `EXECUTE` grant a genuinely-enforced check in the
 test rather than just descriptive.
 
-**2. `/classement` — public leaderboard page (no auth required).** Three
-sections (Top 10 volume/réactivité/progression), each reading straight
-from the existing public `classement_volume`/`classement_reactivite`/
-`classement_progression` views (`rang <= 10`, ordered by `rang`) plus
-`profils_publics` for the display bits (photo/pseudo/nom_affichage) —
-the exact same public view `/explorer` and `/@pseudo` already read from.
-`src/lib/classementPublic.ts#getClassementPublicData()` is the only
-place this page queries from; it never touches `users`/`transactions`
-directly and never selects a column beyond `createur_id, rang` from the
-classement views or the four display columns from `profils_publics` —
-asserted directly in `classementPublic.test.ts` by spying on every
-`.from()`/`.select()` call, the same "prove the view/query never
-leaks more than it should" discipline this codebase already applies to
-`profils_explorables` (via SQL) — here via a mocked Supabase client
-instead, since the property being proven is about this page's own query
-shape, not a database view. Cards link to `/@pseudo` when set, else
-`/createur/[id]`, same fallback as `/explorer`'s cards.
+**2. `/classement` — public leaderboard page (no auth required).**
+**Updated after initial ship (still migration `0019`'s feature, no new
+migration): dropped the Top 10 progression section from this page
+specifically**, per explicit product instruction — the per-profile
+progression rank badge on `CreateurProfileView` (fed by a completely
+separate query in `src/lib/profil.ts`) is untouched, only this public
+leaderboard page's own third section was removed. Now two sections (Top
+10 volume/réactivité), laid out side by side in two columns on desktop
+(`grid md:grid-cols-2`) and stacked on mobile — the classement_progression
+view itself is untouched (still used by `CreateurProfileView`'s rank
+badge), but `getClassementPublicData()` no longer queries it at all,
+since fetching a table this page never renders would be pointless, not
+just unused code.
+
+Each remaining section reads straight from the existing public
+`classement_volume`/`classement_reactivite` views (`rang <= 10`, ordered
+by `rang`) plus `profils_publics` for the display bits
+(photo/pseudo/nom_affichage) — the exact same public view `/explorer`
+and `/@pseudo` already read from. `src/lib/classementPublic.ts#getClassementPublicData()`
+is the only place this page queries from; it never touches
+`users`/`transactions` directly and never selects a column beyond
+`createur_id, rang` from the classement views or the four display
+columns from `profils_publics` — asserted directly in
+`classementPublic.test.ts` by spying on every `.from()`/`.select()`
+call, the same "prove the view/query never leaks more than it should"
+discipline this codebase already applies to `profils_explorables` (via
+SQL) — here via a mocked Supabase client instead, since the property
+being proven is about this page's own query shape, not a database view.
+Cards link to `/@pseudo` when set, else `/createur/[id]`, same fallback
+as `/explorer`'s cards.
 
 Reserved pseudo: `'classement'` added to both
 `users_pseudo_not_reserved` (migration `0019`) and
@@ -1291,8 +1304,9 @@ in this file.
 
 Verified visually (Playwright against a throwaway mock of the Supabase
 REST/Auth endpoints, same investigative technique as the "Logo-click
-'logout' bug" section above): `/classement` renders three populated
-sections with photo/name/rank and correct `/@pseudo` links, and the
+'logout' bug" section above): `/classement` renders its (now two)
+populated sections with photo/name/rank and correct `/@pseudo` links,
+side by side on a desktop viewport and stacked on mobile; and the
 dashboard's new progress card renders three progress bars with the
 expected French copy and fill percentages computed from a fixed
 `mes_progres_classement()` fixture (e.g. "Plus que 3 transactions livrées
@@ -1556,7 +1570,9 @@ Three independent, unrelated additions bundled in one request, each with
 its own section below.
 
 **"Copier mon lien" (`CopyProfileLinkButton.tsx`)** — a share-text-first
-button (`Soutiens-moi sur FanBoss 👉 {origin}/@{pseudo}`), shown on the
+button (`Soutenez-moi sur FanBoss 👉 {origin}/@{pseudo}` — vouvoiement,
+deliberately inconsistent with the rest of the app's tutoiement, per
+explicit instruction, for this one string only), shown on the
 dashboard's public-profile card and in `/parametres`'s pseudo block,
 **only** once a pseudo is actually set (both call sites already had
 their own "no pseudo yet" fallback UI; this button just slots in next to
@@ -2075,7 +2091,7 @@ into chat).
   one); and the public `/classement` page's data query
   (`classementPublic.test.ts` — spies on every `.from()`/`.select()` call
   to assert it only ever touches `classement_volume`/`classement_reactivite`/
-  `classement_progression`/`profils_publics`, never `users`/`transactions`
+  `profils_publics`, never `users`/`transactions`/`classement_progression`
   directly, and that it selects exactly `createur_id, rang` from the
   classement views and exactly the four public display columns from
   `profils_publics` — never a count or amount); the fan loyalty badge
