@@ -341,7 +341,7 @@
     "titrePlaceholder": "Ex : Toit pour l'église",
     "descriptionLabel": "Description (explique la cause)",
     "objectifLabel": "Objectif ($)",
-    "liveCalculatorText": "Une fois cet objectif atteint, tu recevras environ <b>{montant}$</b> net (commission plateforme de 17% déduite -- les frais de paiement et la TVA sont pris en charge par la plateforme, pas déduits de ta part).",
+    "liveCalculatorText": "Une fois cet objectif atteint, tu recevras environ <b>{montant}$</b> net (commission plateforme de 15% + TVA (16%) déduites -- les frais de paiement restent pris en charge par la plateforme).",
     "dateFinLabel": "Date de fin (optionnelle)",
     "campagneLaunch": "Lancer la campagne"
   },
