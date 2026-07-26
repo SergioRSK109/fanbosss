@@ -1,3 +1,4 @@
+import { getTranslations } from "next-intl/server";
 import { redirect, Link } from "@/i18n/navigation";
 import { BadgesFideliteCard } from "@/components/BadgesFideliteCard";
 import { ClassementProgresCard } from "@/components/ClassementProgresCard";
@@ -27,23 +28,14 @@ const STATUT_STYLES: Record<string, string> = {
   refusee: "bg-danger-500/15 text-danger-600",
 };
 
-// Short at-a-glance badge -- the concrete deadline/detail sentence
-// (describeTransactionStatutFan) is shown separately below it, never the
-// raw technical statut string.
-const STATUT_SHORT_LABELS: Record<string, string> = {
-  en_attente: "En attente",
-  validee: "Accepté",
-  livree: "Livré",
-  remboursee: "Remboursé",
-  refusee: "Refusé",
-};
-
 export default async function DashboardPage({
   params,
 }: {
   params: Promise<{ locale: string }>;
 }) {
   const { locale } = await params;
+  const t = await getTranslations({ locale, namespace: "Dashboard" });
+  const tRanks = await getTranslations({ locale, namespace: "CreateurProfile" });
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
@@ -206,13 +198,13 @@ export default async function DashboardPage({
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-8 p-5 pb-16 sm:p-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Mon espace FanBoss</h1>
+        <h1 className="text-2xl font-bold">{t("heading")}</h1>
         <div className="flex items-center gap-2">
           <Link
             href="/parametres"
             className="rounded-full border border-border px-3 py-1.5 text-sm font-medium text-foreground-muted transition-transform active:scale-95 hover:text-foreground"
           >
-            ⚙️ Réglages
+            {t("settings")}
           </Link>
           <LogoutButton className="rounded-full border border-border px-3 py-1.5 text-sm font-medium text-foreground-muted transition-transform active:scale-95 hover:text-danger-600 disabled:opacity-50" />
         </div>
@@ -220,16 +212,16 @@ export default async function DashboardPage({
 
       <div className="card flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm">
         <div>
-          <span className="text-foreground-muted">Votre profil public : </span>
+          <span className="text-foreground-muted">{t("publicProfileLabel")}</span>
           {profil?.pseudo ? (
             <Link href={`/@${profil.pseudo}`} className="font-semibold text-brand-600 dark:text-brand-300">
               fanboss.app/@{profil.pseudo}
             </Link>
           ) : (
             <>
-              <span className="text-foreground-muted">pas encore de pseudo — </span>
+              <span className="text-foreground-muted">{t("noPseudoYet")}</span>
               <Link href="/parametres" className="font-semibold text-brand-600 dark:text-brand-300">
-                en choisir un
+                {t("choosePseudo")}
               </Link>
             </>
           )}
@@ -239,12 +231,20 @@ export default async function DashboardPage({
 
       {profil?.classement_public && (volumeRow || reactiviteRow || progressionRow) && (
         <div className="flex flex-wrap gap-2">
-          {volumeRow && <RankBadge kind="volume" label={`#${volumeRow.rang} volume (30j)`} />}
+          {volumeRow && (
+            <RankBadge kind="volume" label={tRanks("rankVolume", { rank: volumeRow.rang })} />
+          )}
           {reactiviteRow && (
-            <RankBadge kind="reactivite" label={`#${reactiviteRow.rang} réactivité (30j)`} />
+            <RankBadge
+              kind="reactivite"
+              label={tRanks("rankReactivite", { rank: reactiviteRow.rang })}
+            />
           )}
           {progressionRow && (
-            <RankBadge kind="progression" label={`#${progressionRow.rang} progression (30j)`} />
+            <RankBadge
+              kind="progression"
+              label={tRanks("rankProgression", { rank: progressionRow.rang })}
+            />
           )}
         </div>
       )}
@@ -255,10 +255,10 @@ export default async function DashboardPage({
 
       <section>
         <h2 className="mb-3 flex items-center gap-2 text-lg font-bold">
-          Demandes en attente de votre réponse
+          {t("demandesHeading")}
           {nouvellesDemandes > 0 && (
             <span className="rounded-full bg-accent-500 px-2 py-0.5 text-xs font-bold text-white">
-              {nouvellesDemandes} nouvelle{nouvellesDemandes > 1 ? "s" : ""}
+              {t("nouvellesDemandes", { count: nouvellesDemandes })}
             </span>
           )}
         </h2>
@@ -280,7 +280,7 @@ export default async function DashboardPage({
       </section>
 
       <section>
-        <h2 className="mb-3 text-lg font-bold">Vos offres</h2>
+        <h2 className="mb-3 text-lg font-bold">{t("offresHeading")}</h2>
         <OffresManager
           offres={(
             (offres ?? []) as {
@@ -300,9 +300,7 @@ export default async function DashboardPage({
       </section>
 
       <section>
-        <h2 className="mb-3 text-lg font-bold">
-          Paiements envoyés à d&apos;autres créateurs
-        </h2>
+        <h2 className="mb-3 text-lg font-bold">{t("envoyeesHeading")}</h2>
         <ul className="flex flex-col gap-3">
           {(envoyees ?? []).map((transaction) => {
             const offre = Array.isArray(transaction.offres)
@@ -323,15 +321,21 @@ export default async function DashboardPage({
                       STATUT_STYLES[transaction.statut] ?? "bg-foreground-muted/15 text-foreground-muted"
                     }`}
                   >
-                    {STATUT_SHORT_LABELS[transaction.statut] ?? transaction.statut}
+                    {t.has(`statutShort.${transaction.statut}`)
+                      ? t(`statutShort.${transaction.statut}`)
+                      : transaction.statut}
                   </span>
                 </div>
                 <p className="text-xs text-foreground-muted">
-                  {describeTransactionStatutFan({
-                    statut: transaction.statut,
-                    deadlineAcceptation: transaction.deadline_acceptation,
-                    deadlineLivraison: transaction.deadline_livraison,
-                  })}
+                  {describeTransactionStatutFan(
+                    {
+                      statut: transaction.statut,
+                      deadlineAcceptation: transaction.deadline_acceptation,
+                      deadlineLivraison: transaction.deadline_livraison,
+                    },
+                    t,
+                    locale,
+                  )}
                 </p>
                 {offre?.type && (
                   <TransactionActions
@@ -344,7 +348,7 @@ export default async function DashboardPage({
             );
           })}
           {(envoyees ?? []).length === 0 && (
-            <p className="text-sm text-foreground-muted">Aucun paiement envoyé.</p>
+            <p className="text-sm text-foreground-muted">{t("noPaiementsEnvoyes")}</p>
           )}
         </ul>
       </section>

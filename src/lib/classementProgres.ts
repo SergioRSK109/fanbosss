@@ -1,7 +1,12 @@
 // Pure helpers for the créateur-only "progress towards the leaderboard"
 // card on the dashboard (migration 0019's mes_progres_classement() RPC).
 // Kept DOM/database-free and unit-tested, same discipline as
-// describeTransactionStatutFan/computeCampagneStatus.
+// describeTransactionStatutFan/computeCampagneStatus. The describe*
+// functions below take a translator (next-intl's `t`, or an equivalent
+// stand-in in tests) rather than hardcoding French, so the copy can be
+// localized -- the messages themselves (with ICU plural rules) live in
+// messages/{fr,en}.json under "Dashboard.classementProgres".
+export type ProgresTranslator = (key: string, values?: Record<string, string | number>) => string;
 
 export interface ProgresClassement {
   volumeActuel: number;
@@ -16,41 +21,39 @@ export interface ProgresClassement {
   progressionManque: number | null;
 }
 
-function pluralTransactions(count: number): string {
-  return `transaction${count > 1 ? "s" : ""} livrée${count > 1 ? "s" : ""}`;
-}
-
-export function describeVolumeProgres(manque: number): string {
+export function describeVolumeProgres(manque: number, t: ProgresTranslator): string {
   if (manque <= 0) {
-    return "Tu es dans le top 10 volume ce mois-ci !";
+    return t("volumeQualified");
   }
-  return `Plus que ${manque} ${pluralTransactions(manque)} pour entrer dans le top 10 volume ce mois-ci.`;
+  return t("volumeGap", { count: manque });
 }
 
 export function describeReactiviteProgres(
   actuelleSecondes: number | null,
   manqueSecondes: number | null,
+  t: ProgresTranslator,
 ): string {
   if (actuelleSecondes === null) {
-    return "Réponds à ta première demande pour voir ta progression réactivité.";
+    return t("reactiviteNoData");
   }
   if (manqueSecondes === null || manqueSecondes <= 0) {
-    return "Tu es dans le top 10 réactivité ce mois-ci !";
+    return t("reactiviteQualified");
   }
-  return `Réponds en moyenne ${formatDureeSecondes(manqueSecondes)} plus vite pour entrer dans le top 10 réactivité ce mois-ci.`;
+  return t("reactiviteGap", { duree: formatDureeSecondes(manqueSecondes) });
 }
 
 export function describeProgressionProgres(
   eligible: boolean,
   manque: number | null,
+  t: ProgresTranslator,
 ): string {
   if (!eligible) {
-    return "Réservé aux comptes de moins de 30 jours.";
+    return t("progressionNotEligible");
   }
   if (manque === null || manque <= 0) {
-    return "Tu es dans le top 10 progression ce mois-ci !";
+    return t("progressionQualified");
   }
-  return `Plus que ${manque} ${pluralTransactions(manque)} pour entrer dans le top 10 progression ce mois-ci.`;
+  return t("progressionGap", { count: manque });
 }
 
 // Rounds up to the nearest minute -- a gap of a few seconds should never

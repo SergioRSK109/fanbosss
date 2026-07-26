@@ -16,6 +16,17 @@ vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServiceRoleClient: vi.fn(),
 }));
 
+// AdminPage calls getTranslations("Admin") directly in its own body
+// (for the noName/deletedUser fallback labels) before any JSX is ever
+// constructed -- unlike a translated *client* component (only ever
+// referenced as a JSX element here, never actually invoked, since this
+// test calls the page function directly rather than rendering through
+// React), this call happens unconditionally and needs a real mock, same
+// pattern as the Home page test.
+vi.mock("next-intl/server", () => ({
+  getTranslations: vi.fn(async () => (key: string) => key),
+}));
+
 vi.mock("@/components/admin/GestionAdminsManager", () => ({
   GestionAdminsManager: () => null,
 }));

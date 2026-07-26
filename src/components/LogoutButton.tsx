@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { useRouter } from "@/i18n/navigation";
 import { buttonClass } from "@/components/ui/button-styles";
@@ -22,6 +23,7 @@ export async function signOutAndRedirect(supabase: SignOutClient, router: Naviga
 }
 
 export function LogoutButton({ className }: { className?: string }) {
+  const t = useTranslations("LogoutButton");
   const router = useRouter();
   const [loading, setLoading] = useState(false);
 
@@ -37,7 +39,7 @@ export function LogoutButton({ className }: { className?: string }) {
       disabled={loading}
       className={className ?? buttonClass("ghost", "sm")}
     >
-      {loading ? "Déconnexion..." : "🚪 Se déconnecter"}
+      {loading ? t("loading") : t("button")}
     </button>
   );
 }

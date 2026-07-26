@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { buttonClass } from "@/components/ui/button-styles";
@@ -32,6 +33,8 @@ export function VerificationForm({
   createurVerifie: boolean;
   demandeActuelle: DemandeActuelle | null;
 }) {
+  const t = useTranslations("Verification");
+  const tCommon = useTranslations("Common");
   const router = useRouter();
   const [plateforme, setPlateforme] = useState<PlateformeVerification>("tiktok");
   const [lienCompte, setLienCompte] = useState("");
@@ -52,7 +55,7 @@ export function VerificationForm({
 
     if (!response.ok) {
       setStatus("error");
-      setErrorMessage(typeof body.error === "string" ? body.error : "erreur inconnue");
+      setErrorMessage(typeof body.error === "string" ? body.error : tCommon("unknownError"));
       return;
     }
 
@@ -64,7 +67,7 @@ export function VerificationForm({
     return (
       <section className="card flex items-center gap-2 px-4 py-4">
         <span aria-hidden>✓</span>
-        <p className="text-sm font-semibold">Ton compte est vérifié.</p>
+        <p className="text-sm font-semibold">{t("alreadyVerified")}</p>
       </section>
     );
   }
@@ -72,35 +75,35 @@ export function VerificationForm({
   if (demandeActuelle) {
     return (
       <section className="card flex flex-col gap-2 px-4 py-4">
-        <h2 className="text-sm font-bold text-foreground-muted">Vérification de compte</h2>
+        <h2 className="text-sm font-bold text-foreground-muted">{t("heading")}</h2>
         <p className="text-sm">
-          Demande en cours pour <strong>{PLATEFORME_LABELS[demandeActuelle.plateforme]}</strong> (
-          <a
-            href={demandeActuelle.lienCompte}
-            target="_blank"
-            rel="noreferrer"
-            className="text-brand-600 underline dark:text-brand-300"
-          >
-            voir le compte
-          </a>
-          ).
+          {t.rich("pendingIntro", {
+            plateforme: PLATEFORME_LABELS[demandeActuelle.plateforme],
+            strong: (chunks) => <strong>{chunks}</strong>,
+            link: (chunks) => (
+              <a
+                href={demandeActuelle.lienCompte}
+                target="_blank"
+                rel="noreferrer"
+                className="text-brand-600 underline dark:text-brand-300"
+              >
+                {chunks}
+              </a>
+            ),
+          })}
         </p>
         <p className="text-sm">
-          Ajoute ce code à ta bio {PLATEFORME_LABELS[demandeActuelle.plateforme]} sous 24h :{" "}
+          {t("addCodeInstruction", { plateforme: PLATEFORME_LABELS[demandeActuelle.plateforme] })}{" "}
           <span className="rounded bg-surface-muted px-2 py-0.5 font-mono font-bold">
             {demandeActuelle.codeVerification}
           </span>
         </p>
         {demandeActuelle.statut === "conflit" ? (
           <p className="rounded-2xl border border-danger-500/40 bg-danger-500/10 px-3 py-2 text-sm text-danger-600">
-            Un autre compte revendique le même nom d&apos;affichage. Notre équipe va vérifier ce
-            cas manuellement -- aucun badge ne sera accordé avant résolution.
+            {t("conflictNotice")}
           </p>
         ) : (
-          <p className="text-sm text-foreground-muted">
-            Notre équipe vérifie manuellement les demandes -- tu recevras ton badge une fois
-            approuvée.
-          </p>
+          <p className="text-sm text-foreground-muted">{t("pendingNotice")}</p>
         )}
       </section>
     );
@@ -108,16 +111,13 @@ export function VerificationForm({
 
   return (
     <section className="card flex flex-col gap-3 px-4 py-4">
-      <h2 className="text-sm font-bold text-foreground-muted">Vérification de compte</h2>
+      <h2 className="text-sm font-bold text-foreground-muted">{t("heading")}</h2>
       {!nomAffichage ? (
-        <p className="text-sm text-foreground-muted">
-          Ajoute d&apos;abord un nom d&apos;affichage ci-dessus avant de demander une
-          vérification.
-        </p>
+        <p className="text-sm text-foreground-muted">{t("noDisplayName")}</p>
       ) : (
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           <label className={labelClass}>
-            <span>Plateforme</span>
+            <span>{t("platformLabel")}</span>
             <select
               value={plateforme}
               onChange={(event) => setPlateforme(event.target.value as PlateformeVerification)}
@@ -131,7 +131,7 @@ export function VerificationForm({
             </select>
           </label>
           <label className={labelClass}>
-            <span>Lien du compte</span>
+            <span>{t("lienCompteLabel")}</span>
             <input
               type="url"
               required
@@ -147,7 +147,7 @@ export function VerificationForm({
             disabled={status === "saving"}
             className={buttonClass("outline", "sm", "self-start")}
           >
-            {status === "saving" ? "Envoi..." : "Demander la vérification"}
+            {status === "saving" ? t("sending") : t("submitLabel")}
           </button>
         </form>
       )}

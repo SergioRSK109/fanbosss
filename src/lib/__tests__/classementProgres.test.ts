@@ -1,4 +1,6 @@
+import { createTranslator } from "use-intl/core";
 import { describe, expect, it } from "vitest";
+import frMessages from "../../../messages/fr.json";
 import {
   computeProgressPercent,
   computeReactiviteProgressPercent,
@@ -6,47 +8,64 @@ import {
   describeReactiviteProgres,
   describeVolumeProgres,
   formatDureeSecondes,
+  type ProgresTranslator,
 } from "@/lib/classementProgres";
+
+// Built from the REAL messages/fr.json (not a hand-typed duplicate) so a
+// mistake in the message catalog fails this test too, same discipline as
+// every other "never drift from the real source" helper in this codebase
+// (pseudoLockedUntil, calculerRepartitionPaiement...). Cast to the
+// library's own loose translator type: next-intl's `const`-inferred
+// Translator type ties `key` to the exact literal shape of whatever
+// messages object it was built from, which is far stricter than
+// ProgresTranslator needs (and than what next-intl's own
+// useTranslations/getTranslations return without a global message-type
+// augmentation, which this project doesn't declare).
+const t = createTranslator({
+  locale: "fr",
+  messages: frMessages,
+  namespace: "Dashboard.classementProgres",
+}) as unknown as ProgresTranslator;
 
 describe("describeVolumeProgres", () => {
   it("shows the exact gap when not yet in the top 10", () => {
-    expect(describeVolumeProgres(3)).toBe(
+    expect(describeVolumeProgres(3, t)).toBe(
       "Plus que 3 transactions livrées pour entrer dans le top 10 volume ce mois-ci.",
     );
   });
 
   it("uses singular wording for a gap of exactly 1", () => {
-    expect(describeVolumeProgres(1)).toBe(
+    expect(describeVolumeProgres(1, t)).toBe(
       "Plus que 1 transaction livrée pour entrer dans le top 10 volume ce mois-ci.",
     );
   });
 
   it("celebrates once the gap is closed", () => {
-    expect(describeVolumeProgres(0)).toBe("Tu es dans le top 10 volume ce mois-ci !");
+    expect(describeVolumeProgres(0, t)).toBe("Tu es dans le top 10 volume ce mois-ci !");
   });
 });
 
 describe("describeReactiviteProgres", () => {
   it("asks for a first response when there is no data yet", () => {
-    expect(describeReactiviteProgres(null, null)).toBe(
+    expect(describeReactiviteProgres(null, null, t)).toBe(
       "Réponds à ta première demande pour voir ta progression réactivité.",
     );
   });
 
   it("celebrates when already qualifying", () => {
-    expect(describeReactiviteProgres(120, 0)).toBe(
+    expect(describeReactiviteProgres(120, 0, t)).toBe(
       "Tu es dans le top 10 réactivité ce mois-ci !",
     );
   });
 
   it("celebrates when there is no real gap (null manque)", () => {
-    expect(describeReactiviteProgres(120, null)).toBe(
+    expect(describeReactiviteProgres(120, null, t)).toBe(
       "Tu es dans le top 10 réactivité ce mois-ci !",
     );
   });
 
   it("states the duration to shave off otherwise", () => {
-    expect(describeReactiviteProgres(600, 125)).toBe(
+    expect(describeReactiviteProgres(600, 125, t)).toBe(
       "Réponds en moyenne 3 min plus vite pour entrer dans le top 10 réactivité ce mois-ci.",
     );
   });
@@ -54,19 +73,19 @@ describe("describeReactiviteProgres", () => {
 
 describe("describeProgressionProgres", () => {
   it("flags accounts older than 30 days as not applicable", () => {
-    expect(describeProgressionProgres(false, null)).toBe(
+    expect(describeProgressionProgres(false, null, t)).toBe(
       "Réservé aux comptes de moins de 30 jours.",
     );
   });
 
   it("shows the exact gap for an eligible account", () => {
-    expect(describeProgressionProgres(true, 2)).toBe(
+    expect(describeProgressionProgres(true, 2, t)).toBe(
       "Plus que 2 transactions livrées pour entrer dans le top 10 progression ce mois-ci.",
     );
   });
 
   it("celebrates once the gap is closed", () => {
-    expect(describeProgressionProgres(true, 0)).toBe(
+    expect(describeProgressionProgres(true, 0, t)).toBe(
       "Tu es dans le top 10 progression ce mois-ci !",
     );
   });

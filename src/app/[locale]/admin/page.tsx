@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { getTranslations } from "next-intl/server";
 import { GestionAdminsManager, type AdminManageableUser } from "@/components/admin/GestionAdminsManager";
 import {
   RemboursementsManuelsManager,
@@ -19,6 +20,7 @@ import type { PlateformeVerification } from "@/lib/verification";
 // and is auth-gated, exactly the kind of leak brief explicitly asked to
 // avoid.
 export default async function AdminPage() {
+  const t = await getTranslations("Admin");
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
@@ -81,7 +83,7 @@ export default async function AdminPage() {
   const userLabelById = new Map(
     (allUsers ?? []).map((u) => [
       u.id,
-      resolveDisplayName(u.nom_affichage, u.pseudo) ?? "(sans nom)",
+      resolveDisplayName(u.nom_affichage, u.pseudo) ?? t("noName"),
     ]),
   );
 
@@ -110,16 +112,16 @@ export default async function AdminPage() {
     .slice(0, 10)
     .map(([createurId, volume]) => ({
       createurId,
-      label: userLabelById.get(createurId) ?? "(utilisateur supprimé)",
+      label: userLabelById.get(createurId) ?? t("deletedUser"),
       volume,
     }));
 
-  const remboursementsManuels: RemboursementManuel[] = (manualRefundRows ?? []).map((t) => ({
-    id: t.id,
-    montant: Number(t.montant),
-    createdAt: t.created_at,
-    createurLabel: userLabelById.get(t.createur_id) ?? "(utilisateur supprimé)",
-    fanLabel: userLabelById.get(t.fan_id) ?? "(utilisateur supprimé)",
+  const remboursementsManuels: RemboursementManuel[] = (manualRefundRows ?? []).map((row) => ({
+    id: row.id,
+    montant: Number(row.montant),
+    createdAt: row.created_at,
+    createurLabel: userLabelById.get(row.createur_id) ?? t("deletedUser"),
+    fanLabel: userLabelById.get(row.fan_id) ?? t("deletedUser"),
   }));
 
   const emailById = new Map(
@@ -137,7 +139,7 @@ export default async function AdminPage() {
 
   const verifications: DemandeVerificationAdmin[] = (verificationRows ?? []).map((d) => ({
     id: d.id,
-    createurLabel: userLabelById.get(d.createur_id) ?? "(utilisateur supprimé)",
+    createurLabel: userLabelById.get(d.createur_id) ?? t("deletedUser"),
     plateforme: d.plateforme as PlateformeVerification,
     lienCompte: d.lien_compte,
     codeVerification: d.code_verification,
@@ -146,60 +148,49 @@ export default async function AdminPage() {
 
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-8 p-5 pb-16 sm:p-6">
-      <h1 className="text-2xl font-bold">Administration</h1>
+      <h1 className="text-2xl font-bold">{t("heading")}</h1>
 
       <section>
-        <h2 className="mb-3 text-lg font-bold">Vue d&apos;ensemble -- ce mois-ci</h2>
+        <h2 className="mb-3 text-lg font-bold">{t("overviewHeading")}</h2>
         <div className="grid grid-cols-3 gap-3">
           <div className="card px-4 py-3 text-center">
             <div className="text-2xl font-bold">{transactionCount}</div>
-            <div className="text-xs text-foreground-muted">Transactions</div>
+            <div className="text-xs text-foreground-muted">{t("statTransactions")}</div>
           </div>
           <div className="card px-4 py-3 text-center">
             <div className="text-2xl font-bold">{gmvBrut.toFixed(0)}$</div>
-            <div className="text-xs text-foreground-muted">GMV brut</div>
+            <div className="text-xs text-foreground-muted">{t("statGmvBrut")}</div>
           </div>
           <div className="card px-4 py-3 text-center">
             <div className="text-2xl font-bold">{createursActifsCount}</div>
-            <div className="text-xs text-foreground-muted">Créateurs actifs</div>
+            <div className="text-xs text-foreground-muted">{t("statCreateursActifs")}</div>
           </div>
         </div>
       </section>
 
       <section>
         <h2 className="mb-3 text-lg font-bold">
-          Remboursements manuels en attente
+          {t("remboursementsHeading")}
           {remboursementsManuels.length > 0 && (
             <span className="ml-2 rounded-full bg-accent-500 px-2 py-0.5 text-xs font-bold text-white">
               {remboursementsManuels.length}
             </span>
           )}
         </h2>
-        <p className="mb-3 text-sm text-foreground-muted">
-          Transactions remboursées côté FanBoss mais pas encore réellement
-          remboursées via CinetPay (voir CLAUDE.md &laquo;&nbsp;Automatic
-          CinetPay refunds&nbsp;&raquo;). Une fois le remboursement fait
-          manuellement dans le dashboard CinetPay, marque-le comme traité
-          ici.
-        </p>
+        <p className="mb-3 text-sm text-foreground-muted">{t("remboursementsIntro")}</p>
         <RemboursementsManuelsManager remboursements={remboursementsManuels} />
       </section>
 
       <section>
-        <h2 className="mb-3 text-lg font-bold">Vérifications</h2>
-        <p className="mb-3 text-sm text-foreground-muted">
-          Palier 1 (gratuit) : le créateur ajoute le code affiché à sa bio, un admin confirme
-          visuellement. Palier 2 : un conflit (même nom d&apos;affichage que quelqu&apos;un
-          d&apos;autre) nécessite une vérification d&apos;identité tierce (KYC) -- aucune
-          intégration automatisée n&apos;existe encore, voir CLAUDE.md.
-        </p>
+        <h2 className="mb-3 text-lg font-bold">{t("verificationHeading")}</h2>
+        <p className="mb-3 text-sm text-foreground-muted">{t("verificationIntro")}</p>
         <VerificationsManager demandes={verifications} />
       </section>
 
       <section>
-        <h2 className="mb-3 text-lg font-bold">Top 10 créateurs par volume -- ce mois-ci</h2>
+        <h2 className="mb-3 text-lg font-bold">{t("topCreateursHeading")}</h2>
         {topCreateurs.length === 0 ? (
-          <p className="text-sm text-foreground-muted">Aucune transaction ce mois-ci.</p>
+          <p className="text-sm text-foreground-muted">{t("topCreateursEmpty")}</p>
         ) : (
           <ol className="flex flex-col gap-2">
             {topCreateurs.map((c, index) => (
@@ -220,7 +211,7 @@ export default async function AdminPage() {
       </section>
 
       <section>
-        <h2 className="mb-3 text-lg font-bold">Gestion des admins</h2>
+        <h2 className="mb-3 text-lg font-bold">{t("gestionAdminsHeading")}</h2>
         <GestionAdminsManager users={manageableUsers} />
       </section>
     </main>

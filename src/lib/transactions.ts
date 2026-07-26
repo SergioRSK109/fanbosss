@@ -30,14 +30,16 @@ function round2(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-function formatDeadline(iso: string): string {
-  return new Date(iso).toLocaleString("fr-FR", {
+function formatDeadline(iso: string, locale: string): string {
+  return new Date(iso).toLocaleString(locale, {
     day: "numeric",
     month: "short",
     hour: "2-digit",
     minute: "2-digit",
   });
 }
+
+export type StatutFanTranslator = (key: string, values?: Record<string, string | number>) => string;
 
 // Human-readable status for a fan's own sent payment (dashboard's
 // "Paiements envoyés" list), replacing the raw statut string with real
@@ -46,28 +48,36 @@ function formatDeadline(iso: string): string {
 // en_attente, deadlineLivraison only to validee (and only ever set for
 // video/shoutout -- every other type moves straight past validee to
 // livree, see the transaction lifecycle).
-export function describeTransactionStatutFan(params: {
-  statut: string;
-  deadlineAcceptation: string | null;
-  deadlineLivraison: string | null;
-}): string {
+export function describeTransactionStatutFan(
+  params: {
+    statut: string;
+    deadlineAcceptation: string | null;
+    deadlineLivraison: string | null;
+  },
+  t: StatutFanTranslator,
+  locale: string,
+): string {
   const { statut, deadlineAcceptation, deadlineLivraison } = params;
 
   switch (statut) {
     case "en_attente":
       return deadlineAcceptation
-        ? `En attente de réponse du créateur (réponse attendue avant le ${formatDeadline(deadlineAcceptation)})`
-        : "En attente de réponse du créateur";
+        ? t("transactionStatut.enAttenteAvecDeadline", {
+            date: formatDeadline(deadlineAcceptation, locale),
+          })
+        : t("transactionStatut.enAttenteSansDeadline");
     case "validee":
       return deadlineLivraison
-        ? `Accepté, en préparation (livraison prévue avant le ${formatDeadline(deadlineLivraison)})`
-        : "Accepté, en préparation";
+        ? t("transactionStatut.valideeAvecDeadline", {
+            date: formatDeadline(deadlineLivraison, locale),
+          })
+        : t("transactionStatut.valideeSansDeadline");
     case "livree":
-      return "Livré";
+      return t("statutShort.livree");
     case "remboursee":
-      return "Remboursé";
+      return t("statutShort.remboursee");
     case "refusee":
-      return "Refusé";
+      return t("statutShort.refusee");
     default:
       return statut;
   }

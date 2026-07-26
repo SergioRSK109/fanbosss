@@ -52,6 +52,7 @@ const SOCIAL_LINK_ICONS = {
 
 export function CreateurProfileView({ profile }: { profile: CreateurProfileData }) {
   const t = useTranslations("CreateurProfile");
+  const tCommon = useTranslations("Common");
   const locale = useLocale();
   const labels: Record<string, string> = {
     video: t("offerTypes.video"),
@@ -90,7 +91,7 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
           {photoUrl ? (
             <ZoomablePhoto
               src={photoUrl}
-              ariaLabel="Agrandir la photo de profil"
+              ariaLabel={tCommon("zoomProfilePhotoAriaLabel")}
               thumbnailClassName="h-24 w-24 rounded-full object-cover ring-4 ring-white/80 shadow-lg"
             />
           ) : (

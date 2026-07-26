@@ -1,5 +1,6 @@
 "use client";
 
+import { useLocale, useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Link } from "@/i18n/navigation";
@@ -33,41 +34,24 @@ type Offre = {
 // conversational question with its own field, rather than a repeatable
 // "create offer" form with a type dropdown. A créateur only activates the
 // ones they're interested in. `video` is the one exception -- see
-// VideoOffresList below -- it's a repeatable list, not a single row.
-const QUESTIONS: {
+// VideoOffresList below -- it's a repeatable list, not a single row. The
+// question copy itself is resolved via `t("questions.<type>")` inside the
+// component (translated) -- this array only holds the type/kind pairing,
+// since the copy needs a live translator, not a module-load-time literal.
+const QUESTION_TYPES: {
   type: Exclude<OffreType, "video">;
-  question: string;
   kind: "prix" | "don" | "contenu" | "live";
 }[] = [
-  {
-    type: "whatsapp",
-    question: `Si quelqu'un veut ton numéro WhatsApp pour te contacter directement, combien lui factures-tu ? (minimum ${WHATSAPP_PRIX_MINIMUM}$)`,
-    kind: "prix",
-  },
-  {
-    type: "shoutout",
-    question:
-      "Si quelqu'un veut une mention rapide dans une story ou un post, combien lui factures-tu ?",
-    kind: "prix",
-  },
-  {
-    type: "don",
-    question: "Activer les dons libres (le fan choisit son propre montant)",
-    kind: "don",
-  },
-  {
-    type: "contenu_debloque",
-    question: "Quel prix pour débloquer ce contenu ?",
-    kind: "contenu",
-  },
-  {
-    type: "evenement_live",
-    question: "Quel prix pour rejoindre ton prochain live privé ?",
-    kind: "live",
-  },
+  { type: "whatsapp", kind: "prix" },
+  { type: "shoutout", kind: "prix" },
+  { type: "don", kind: "don" },
+  { type: "contenu_debloque", kind: "contenu" },
+  { type: "evenement_live", kind: "live" },
 ];
 
 export function OffresManager({ offres }: { offres: Offre[] }) {
+  const t = useTranslations("OffresManager");
+  const tCommon = useTranslations("Common");
   const router = useRouter();
   const byType = new Map(offres.map((offre) => [offre.type, offre]));
   const videoOffres = offres.filter((offre) => offre.type === "video");
@@ -94,18 +78,19 @@ export function OffresManager({ offres }: { offres: Offre[] }) {
           </span>
           <div className="flex-1 text-sm">
             <p>
-              Ton profil sera visible dans l&apos;exploration publique -- tu
-              peux changer ça dans les{" "}
-              <Link href="/parametres" className="font-semibold underline">
-                réglages
-              </Link>
-              .
+              {t.rich("firstOffreNotice", {
+                link: (chunks) => (
+                  <Link href="/parametres" className="font-semibold underline">
+                    {chunks}
+                  </Link>
+                ),
+              })}
             </p>
           </div>
           <button
             type="button"
             onClick={() => setShowFirstOffreNotice(false)}
-            aria-label="Fermer"
+            aria-label={tCommon("close")}
             className="text-foreground-muted hover:text-foreground"
           >
             ✕
@@ -114,10 +99,16 @@ export function OffresManager({ offres }: { offres: Offre[] }) {
       )}
       <VideoOffresList videoOffres={videoOffres} onSaved={handleSaved} />
       <CampagnesList campagneOffres={campagneOffres} onSaved={handleSaved} />
-      {QUESTIONS.map((question) => (
+      {QUESTION_TYPES.map((question) => (
         <OffreRow
           key={question.type}
-          question={question}
+          question={{
+            ...question,
+            question:
+              question.type === "whatsapp"
+                ? t("questions.whatsapp", { minimum: WHATSAPP_PRIX_MINIMUM })
+                : t(`questions.${question.type}`),
+          }}
           existing={byType.get(question.type)}
           onSaved={handleSaved}
         />
@@ -126,10 +117,6 @@ export function OffresManager({ offres }: { offres: Offre[] }) {
   );
 }
 
-// Suggestions pré-remplies pour le libellé, mais le champ reste libre --
-// un <datalist> propose sans forcer.
-const LIBELLE_SUGGESTIONS = ["Anniversaire", "Félicitations", "Danse", "Autre"];
-
 function VideoOffresList({
   videoOffres,
   onSaved,
@@ -137,6 +124,12 @@ function VideoOffresList({
   videoOffres: Offre[];
   onSaved: (opts?: SavedOptions) => void;
 }) {
+  const t = useTranslations("OffresManager");
+  // Suggestions pré-remplies pour le libellé, mais le champ reste libre --
+  // un <datalist> propose sans forcer. Pulled straight from the message
+  // catalog (t.raw) rather than a hardcoded array, so the suggestions
+  // shown are in the visitor's own language.
+  const libelleSuggestions = t.raw("libelleSuggestions") as string[];
   const [draftIds, setDraftIds] = useState<string[]>([]);
 
   function addDraft() {
@@ -149,10 +142,7 @@ function VideoOffresList({
 
   return (
     <div className="flex flex-col gap-2">
-      <p className="text-sm font-semibold">
-        Si quelqu&apos;un te demande une vidéo personnalisée (anniversaire,
-        félicitations, encouragement...), combien lui factures-tu ?
-      </p>
+      <p className="text-sm font-semibold">{t("videoQuestion")}</p>
       {videoOffres.map((offre) => (
         <VideoOffreRow key={offre.id} existing={offre} onSaved={onSaved} />
       ))}
@@ -171,10 +161,10 @@ function VideoOffresList({
         onClick={addDraft}
         className="self-start text-sm font-semibold text-brand-600 dark:text-brand-300"
       >
-        + Ajouter un type de vidéo
+        {t("addVideoType")}
       </button>
       <datalist id="video-libelle-suggestions">
-        {LIBELLE_SUGGESTIONS.map((suggestion) => (
+        {libelleSuggestions.map((suggestion) => (
           <option key={suggestion} value={suggestion} />
         ))}
       </datalist>
@@ -189,6 +179,8 @@ function VideoOffreRow({
   existing: Offre | undefined;
   onSaved: (opts?: SavedOptions) => void;
 }) {
+  const t = useTranslations("OffresManager");
+  const tCommon = useTranslations("Common");
   const [libelle, setLibelle] = useState(existing?.libelle ?? "");
   const [prix, setPrix] = useState(existing?.prix?.toString() ?? "");
   const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
@@ -213,7 +205,7 @@ function VideoOffreRow({
 
       if (!response.ok) {
         throw new Error(
-          typeof body.error === "string" ? body.error : "enregistrement impossible",
+          typeof body.error === "string" ? body.error : tCommon("saveError"),
         );
       }
 
@@ -221,7 +213,7 @@ function VideoOffreRow({
       onSaved({ isFirstOffre: body.isFirstOffre });
     } catch (err) {
       setStatus("error");
-      setErrorMessage(err instanceof Error ? err.message : "erreur inconnue");
+      setErrorMessage(err instanceof Error ? err.message : tCommon("unknownError"));
     }
   }
 
@@ -238,7 +230,7 @@ function VideoOffreRow({
           type="text"
           list="video-libelle-suggestions"
           required
-          placeholder="Ex : Anniversaire"
+          placeholder={t("libellePlaceholder")}
           value={libelle}
           onChange={(event) => setLibelle(event.target.value)}
           className={`${inputClass} flex-1 min-w-[10rem]`}
@@ -259,7 +251,7 @@ function VideoOffreRow({
           disabled={status === "saving"}
           className={buttonClass("primary", "sm", "ml-auto")}
         >
-          {status === "saving" ? "..." : existing ? "Mettre à jour" : "Ajouter"}
+          {status === "saving" ? "..." : existing ? tCommon("update") : tCommon("add")}
         </button>
 
         {existing && (
@@ -269,7 +261,7 @@ function VideoOffreRow({
             onClick={() => submit(!existing.actif)}
             className="text-sm text-foreground-muted hover:text-foreground"
           >
-            {existing.actif ? "désactiver" : "réactiver"}
+            {existing.actif ? tCommon("deactivate") : tCommon("reactivate")}
           </button>
         )}
       </div>
@@ -277,12 +269,6 @@ function VideoOffreRow({
     </form>
   );
 }
-
-const CAMPAGNE_STATUS_LABELS: Record<CampagneStatus, string> = {
-  active: "Active",
-  objectif_atteint: "Objectif atteint 🎉",
-  terminee: "Campagne terminée",
-};
 
 const CAMPAGNE_STATUS_STYLES: Record<CampagneStatus, string> = {
   active: "bg-brand-500/15 text-brand-600 dark:text-brand-300",
@@ -300,6 +286,7 @@ function CampagnesList({
   campagneOffres: Offre[];
   onSaved: (opts?: SavedOptions) => void;
 }) {
+  const t = useTranslations("OffresManager");
   const [draftIds, setDraftIds] = useState<string[]>([]);
 
   function addDraft() {
@@ -312,11 +299,7 @@ function CampagnesList({
 
   return (
     <div className="flex flex-col gap-2">
-      <p className="text-sm font-semibold">
-        Lance une campagne de collecte de fonds pour une cause précise
-        (l&apos;historique de tes campagnes reste visible sur ton profil,
-        même une fois terminées).
-      </p>
+      <p className="text-sm font-semibold">{t("campagnesIntro")}</p>
       {campagneOffres.map((offre) => (
         <CampagneRow key={offre.id} existing={offre} onSaved={onSaved} />
       ))}
@@ -335,7 +318,7 @@ function CampagnesList({
         onClick={addDraft}
         className="self-start text-sm font-semibold text-brand-600 dark:text-brand-300"
       >
-        + Créer une campagne
+        {t("addCampagne")}
       </button>
     </div>
   );
@@ -348,6 +331,10 @@ function CampagneRow({
   existing: Offre | undefined;
   onSaved: (opts?: SavedOptions) => void;
 }) {
+  const t = useTranslations("OffresManager");
+  const tCommon = useTranslations("Common");
+  const tCreateurProfile = useTranslations("CreateurProfile");
+  const locale = useLocale();
   const existingConfig = (existing?.config ?? {}) as {
     description?: string;
     objectif?: number;
@@ -400,7 +387,7 @@ function CampagneRow({
 
       if (!response.ok) {
         throw new Error(
-          typeof body.error === "string" ? body.error : "enregistrement impossible",
+          typeof body.error === "string" ? body.error : tCommon("saveError"),
         );
       }
 
@@ -408,9 +395,17 @@ function CampagneRow({
       onSaved({ isFirstOffre: body.isFirstOffre });
     } catch (err) {
       setStatus("error");
-      setErrorMessage(err instanceof Error ? err.message : "erreur inconnue");
+      setErrorMessage(err instanceof Error ? err.message : tCommon("unknownError"));
     }
   }
+
+  const campagneStatusLabel = campagneStatus
+    ? campagneStatus === "active"
+      ? t("campagneStatusActive")
+      : campagneStatus === "objectif_atteint"
+        ? tCreateurProfile("campagnes.badgeObjectifAtteint")
+        : tCreateurProfile("campagnes.badgeTerminee")
+    : null;
 
   return (
     <form
@@ -428,11 +423,13 @@ function CampagneRow({
               <span
                 className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${CAMPAGNE_STATUS_STYLES[campagneStatus]}`}
               >
-                {CAMPAGNE_STATUS_LABELS[campagneStatus]}
+                {campagneStatusLabel}
               </span>
               <span className="text-xs text-foreground-muted">
-                {formatMontant(existing.montantCollecte ?? 0)}$ /{" "}
-                {formatMontant(Number(existingConfig.objectif) || 0)}$
+                {t("campagneMontantSlash", {
+                  collecte: formatMontant(existing.montantCollecte ?? 0, locale),
+                  objectif: formatMontant(Number(existingConfig.objectif) || 0, locale),
+                })}
               </span>
             </div>
           </div>
@@ -448,11 +445,11 @@ function CampagneRow({
       )}
 
       <label className={labelClass}>
-        <span>Titre de la campagne</span>
+        <span>{t("titreLabel")}</span>
         <input
           type="text"
           required
-          placeholder="Ex : Toit pour l'église"
+          placeholder={t("titrePlaceholder")}
           value={titre}
           onChange={(event) => setTitre(event.target.value)}
           className={`${inputClass} w-full`}
@@ -460,7 +457,7 @@ function CampagneRow({
       </label>
 
       <label className={labelClass}>
-        <span>Description (explique la cause)</span>
+        <span>{t("descriptionLabel")}</span>
         <textarea
           required
           rows={3}
@@ -471,7 +468,7 @@ function CampagneRow({
       </label>
 
       <label className={labelClass}>
-        <span>Objectif ($)</span>
+        <span>{t("objectifLabel")}</span>
         <input
           type="number"
           min={1}
@@ -485,18 +482,15 @@ function CampagneRow({
 
       {repartition && (
         <p className="text-xs text-foreground-muted">
-          Une fois cet objectif atteint, tu recevras environ{" "}
-          <span className="font-semibold text-foreground">
-            {formatMontant(repartition.montantNetCreateur)}$
-          </span>{" "}
-          net (commission plateforme de 17% déduite -- les frais de paiement
-          et la TVA sont pris en charge par la plateforme, pas déduits de
-          ta part).
+          {t.rich("liveCalculatorText", {
+            montant: formatMontant(repartition.montantNetCreateur, locale),
+            b: (chunks) => <span className="font-semibold text-foreground">{chunks}</span>,
+          })}
         </p>
       )}
 
       <label className={labelClass}>
-        <span>Date de fin (optionnelle)</span>
+        <span>{t("dateFinLabel")}</span>
         <input
           type="date"
           value={dateFin ?? ""}
@@ -511,7 +505,7 @@ function CampagneRow({
           disabled={status === "saving"}
           className={buttonClass("primary", "sm", "ml-auto")}
         >
-          {status === "saving" ? "..." : existing ? "Mettre à jour" : "Lancer la campagne"}
+          {status === "saving" ? "..." : existing ? tCommon("update") : t("campagneLaunch")}
         </button>
 
         {existing && (
@@ -521,7 +515,7 @@ function CampagneRow({
             onClick={() => submit(!existing.actif)}
             className="text-sm text-foreground-muted hover:text-foreground"
           >
-            {existing.actif ? "désactiver" : "réactiver"}
+            {existing.actif ? tCommon("deactivate") : tCommon("reactivate")}
           </button>
         )}
       </div>
@@ -535,10 +529,12 @@ function OffreRow({
   existing,
   onSaved,
 }: {
-  question: (typeof QUESTIONS)[number];
+  question: (typeof QUESTION_TYPES)[number] & { question: string };
   existing: Offre | undefined;
   onSaved: (opts?: SavedOptions) => void;
 }) {
+  const t = useTranslations("OffresManager");
+  const tCommon = useTranslations("Common");
   const [prix, setPrix] = useState(existing?.prix?.toString() ?? "");
   const [donActif, setDonActif] = useState(existing?.actif ?? false);
   const [lienLive, setLienLive] = useState(
@@ -576,7 +572,7 @@ function OffreRow({
 
       if (!response.ok) {
         throw new Error(
-          typeof body.error === "string" ? body.error : "enregistrement impossible",
+          typeof body.error === "string" ? body.error : tCommon("saveError"),
         );
       }
 
@@ -592,7 +588,7 @@ function OffreRow({
         );
         const uploadUrlBody = await uploadUrlResponse.json();
         if (!uploadUrlResponse.ok) {
-          throw new Error(uploadUrlBody.error ?? "upload impossible");
+          throw new Error(uploadUrlBody.error ?? t("uploadImpossible"));
         }
 
         await fetch(uploadUrlBody.uploadUrl, {
@@ -613,7 +609,7 @@ function OffreRow({
       onSaved({ isFirstOffre: body.isFirstOffre });
     } catch (err) {
       setStatus("error");
-      setErrorMessage(err instanceof Error ? err.message : "erreur inconnue");
+      setErrorMessage(err instanceof Error ? err.message : tCommon("unknownError"));
     }
   }
 
@@ -641,7 +637,7 @@ function OffreRow({
           disabled={status === "saving"}
           className={buttonClass("primary", "sm", "self-start")}
         >
-          {status === "saving" ? "..." : "Enregistrer"}
+          {status === "saving" ? tCommon("saving") : tCommon("save")}
         </button>
       </form>
     );
@@ -676,7 +672,9 @@ function OffreRow({
               className="text-sm text-foreground-muted file:mr-2 file:rounded-full file:border-0 file:bg-brand-50 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-brand-600 dark:file:bg-white/10 dark:file:text-brand-300"
             />
             {hasContent && !file && (
-              <span className="text-sm text-foreground-muted">contenu déjà téléversé</span>
+              <span className="text-sm text-foreground-muted">
+                {t("contenuDejaTeleverse")}
+              </span>
             )}
           </>
         )}
@@ -685,7 +683,7 @@ function OffreRow({
           <input
             type="url"
             required
-            placeholder="https://youtube.com/..."
+            placeholder={t("liveUrlPlaceholder")}
             value={lienLive}
             onChange={(event) => setLienLive(event.target.value)}
             className={`${inputClass} flex-1 min-w-[12rem]`}
@@ -697,7 +695,7 @@ function OffreRow({
           disabled={status === "saving"}
           className={buttonClass("primary", "sm", "ml-auto")}
         >
-          {status === "saving" ? "..." : existing ? "Mettre à jour" : "Activer"}
+          {status === "saving" ? "..." : existing ? tCommon("update") : tCommon("activate")}
         </button>
 
         {existing && (
@@ -707,7 +705,7 @@ function OffreRow({
             onClick={() => submitOffre(!existing.actif)}
             className="text-sm text-foreground-muted hover:text-foreground"
           >
-            {existing.actif ? "désactiver" : "réactiver"}
+            {existing.actif ? tCommon("deactivate") : tCommon("reactivate")}
           </button>
         )}
       </div>

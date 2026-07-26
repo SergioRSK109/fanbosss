@@ -1,5 +1,6 @@
 "use client";
 
+import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { buttonClass } from "@/components/ui/button-styles";
@@ -12,8 +13,8 @@ export interface RemboursementManuel {
   fanLabel: string;
 }
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("fr-FR", {
+function formatDate(iso: string, locale: string): string {
+  return new Date(iso).toLocaleDateString(locale, {
     day: "numeric",
     month: "short",
     year: "numeric",
@@ -27,6 +28,9 @@ export function RemboursementsManuelsManager({
 }: {
   remboursements: RemboursementManuel[];
 }) {
+  const t = useTranslations("Admin.remboursements");
+  const tCommon = useTranslations("Common");
+  const locale = useLocale();
   const router = useRouter();
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [errorById, setErrorById] = useState<Record<string, string>>({});
@@ -43,7 +47,7 @@ export function RemboursementsManuelsManager({
     const body = await response.json();
 
     if (!response.ok) {
-      setErrorById((prev) => ({ ...prev, [id]: body.error ?? "erreur inconnue" }));
+      setErrorById((prev) => ({ ...prev, [id]: body.error ?? tCommon("unknownError") }));
       setPendingId(null);
       return;
     }
@@ -57,7 +61,7 @@ export function RemboursementsManuelsManager({
   }
 
   if (remboursements.length === 0) {
-    return <p className="text-sm text-foreground-muted">Aucun remboursement manuel en attente.</p>;
+    return <p className="text-sm text-foreground-muted">{t("empty")}</p>;
   }
 
   return (
@@ -68,7 +72,9 @@ export function RemboursementsManuelsManager({
             <span className="text-sm font-medium">
               {r.montant}$ · {r.createurLabel} ← {r.fanLabel}
             </span>
-            <span className="shrink-0 text-xs text-foreground-muted">{formatDate(r.createdAt)}</span>
+            <span className="shrink-0 text-xs text-foreground-muted">
+              {formatDate(r.createdAt, locale)}
+            </span>
           </div>
           <button
             type="button"
@@ -76,7 +82,7 @@ export function RemboursementsManuelsManager({
             onClick={() => handleMarquerTraite(r.id)}
             className={buttonClass("outline", "sm", "self-start")}
           >
-            {pendingId === r.id ? "Enregistrement..." : "Marquer comme traité"}
+            {pendingId === r.id ? tCommon("saving") : t("markTraite")}
           </button>
           {errorById[r.id] && <p className="text-sm text-danger-600">{errorById[r.id]}</p>}
         </li>

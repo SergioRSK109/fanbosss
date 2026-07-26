@@ -1,5 +1,6 @@
 "use client";
 
+import { useLocale, useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { CopyProfileLinkButton } from "@/components/CopyProfileLinkButton";
@@ -14,15 +15,15 @@ const PSEUDO_CHECK_DEBOUNCE_MS = 400;
 
 const SAVED_MESSAGE_TIMEOUT_MS = 3000;
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("fr-FR", {
+function formatDate(iso: string, locale: string): string {
+  return new Date(iso).toLocaleDateString(locale, {
     day: "numeric",
     month: "long",
     year: "numeric",
   });
 }
 
-async function patchProfil(payload: Record<string, unknown>) {
+async function patchProfil(payload: Record<string, unknown>, saveErrorFallback: string) {
   const response = await fetch("/api/profil", {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -31,7 +32,7 @@ async function patchProfil(payload: Record<string, unknown>) {
   const body = await response.json();
 
   if (!response.ok) {
-    throw new Error(typeof body.error === "string" ? body.error : "enregistrement impossible");
+    throw new Error(typeof body.error === "string" ? body.error : saveErrorFallback);
   }
 
   return body as { profil: Record<string, unknown> };
@@ -48,6 +49,7 @@ async function patchProfil(payload: Record<string, unknown>) {
 // flow (upload photo, then PATCH) reports into the same error path as
 // pseudo/bio's single PATCH.
 function useSaveStatus() {
+  const tCommon = useTranslations("Common");
   const router = useRouter();
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState("");
@@ -77,7 +79,7 @@ function useSaveStatus() {
       return result;
     } catch (err) {
       setStatus("error");
-      setErrorMessage(err instanceof Error ? err.message : "erreur inconnue");
+      setErrorMessage(err instanceof Error ? err.message : tCommon("unknownError"));
       return null;
     }
   }
@@ -115,6 +117,9 @@ export function ParametresForm({
   badgeFidelitePublic: boolean;
   photoUrl: string | null;
 }) {
+  const t = useTranslations("Parametres");
+  const tCommon = useTranslations("Common");
+  const locale = useLocale();
   const [nomAffichageValue, setNomAffichageValue] = useState(nomAffichage ?? "");
   const [lienTiktokValue, setLienTiktokValue] = useState(lienTiktok ?? "");
   const [lienInstagramValue, setLienInstagramValue] = useState(lienInstagram ?? "");
@@ -236,7 +241,7 @@ export function ParametresForm({
 
   async function handlePseudoSave() {
     const result = await pseudoSave.run(() =>
-      patchProfil({ pseudo: pseudoValue.trim() || null }),
+      patchProfil({ pseudo: pseudoValue.trim() || null }, tCommon("saveError")),
     );
     if (result) {
       const unlockAt = new Date(Date.now() + PSEUDO_COOLDOWN_MS).toISOString();
@@ -253,7 +258,9 @@ export function ParametresForm({
   const [bioUnlocked, setBioUnlocked] = useState(!bio);
 
   async function handleBioSave() {
-    const result = await bioSave.run(() => patchProfil({ bio: bioValue.trim() || null }));
+    const result = await bioSave.run(() =>
+      patchProfil({ bio: bioValue.trim() || null }, tCommon("saveError")),
+    );
     if (result) {
       setBioUnlocked(false);
     }
@@ -273,7 +280,7 @@ export function ParametresForm({
   async function handlePasswordSave() {
     const result = await passwordSave.run(async () => {
       if (newPassword !== confirmNewPassword) {
-        throw new Error("Les mots de passe ne correspondent pas.");
+        throw new Error(t("passwordMismatch"));
       }
       // No previous-password prompt -- the already-active session is what
       // authorizes this on Supabase's side, same as the rest of /parametres.
@@ -314,7 +321,7 @@ export function ParametresForm({
         });
         const uploadUrlBody = await uploadUrlResponse.json();
         if (!uploadUrlResponse.ok) {
-          throw new Error(uploadUrlBody.error ?? "upload de la photo impossible");
+          throw new Error(uploadUrlBody.error ?? t("photoUploadError"));
         }
 
         const putResponse = await fetch(uploadUrlBody.uploadUrl, {
@@ -329,16 +336,17 @@ export function ParametresForm({
           // nothing behind it. Surface exactly what happened instead.
           const detail = await putResponse.text().catch(() => "");
           throw new Error(
-            `échec de l'envoi de la photo (HTTP ${putResponse.status})${
-              detail ? ` : ${detail.slice(0, 200)}` : ""
-            }`,
+            t("photoUploadHttpError", {
+              status: putResponse.status,
+              detail: detail ? ` : ${detail.slice(0, 200)}` : "",
+            }),
           );
         }
 
         payload.photo_r2_key = uploadUrlBody.r2Key;
       }
 
-      return patchProfil(payload);
+      return patchProfil(payload, tCommon("saveError"));
     });
 
     if (result) {
@@ -375,13 +383,13 @@ export function ParametresForm({
 
       <form onSubmit={handleMainSubmit} className="flex flex-col gap-4">
         <div className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium text-foreground">Photo de profil</span>
+          <span className="text-sm font-medium text-foreground">{t("photoLabel")}</span>
           <div className="flex items-center gap-3">
             {previewUrl ?? photoUrl ? (
               <div className="relative shrink-0">
                 <ZoomablePhoto
                   src={(previewUrl ?? photoUrl)!}
-                  ariaLabel="Agrandir la photo de profil"
+                  ariaLabel={tCommon("zoomProfilePhotoAriaLabel")}
                   thumbnailClassName={`h-16 w-16 rounded-full border border-border object-cover transition-opacity ${
                     isUploadingPhoto ? "opacity-40" : ""
                   }`}
@@ -406,16 +414,14 @@ export function ParametresForm({
               disabled={isUploadingPhoto}
               className={buttonClass("outline", "sm")}
             >
-              Modifier la photo de profil
+              {t("editPhotoButton")}
             </button>
           </div>
           {file && !isUploadingPhoto && (
-            <span className="text-sm text-foreground-muted">
-              Nouvelle photo prête à enregistrer.
-            </span>
+            <span className="text-sm text-foreground-muted">{t("photoReady")}</span>
           )}
           {isUploadingPhoto && (
-            <span className="text-sm text-foreground-muted">Envoi de la photo...</span>
+            <span className="text-sm text-foreground-muted">{t("photoUploading")}</span>
           )}
           <input
             ref={fileInputRef}
@@ -433,7 +439,7 @@ export function ParametresForm({
         </div>
 
         <label className={labelClass}>
-          <span>Nom d&apos;affichage</span>
+          <span>{t("displayNameLabel")}</span>
           <input
             type="text"
             value={nomAffichageValue}
@@ -441,18 +447,15 @@ export function ParametresForm({
               setNomAffichageValue(event.target.value);
               mainSave.dismiss();
             }}
-            placeholder="ex : Sergio, DJ Sergio..."
+            placeholder={t("displayNamePlaceholder")}
             maxLength={60}
             className={`${inputClass} w-full`}
           />
-          <span className="text-sm text-foreground-muted">
-            Le nom affiché sur ton profil public -- distinct de ton identifiant
-            technique ci-dessous.
-          </span>
+          <span className="text-sm text-foreground-muted">{t("displayNameHelp")}</span>
         </label>
 
         <div className={labelClass}>
-          <span>Liens réseaux sociaux (facultatifs)</span>
+          <span>{t("socialLinksLabel")}</span>
           <input
             type="url"
             value={lienTiktokValue}
@@ -460,7 +463,7 @@ export function ParametresForm({
               setLienTiktokValue(event.target.value);
               mainSave.dismiss();
             }}
-            placeholder="TikTok -- https://tiktok.com/@..."
+            placeholder={t("socialPlaceholders.tiktok")}
             className={`${inputClass} w-full`}
           />
           <input
@@ -470,7 +473,7 @@ export function ParametresForm({
               setLienInstagramValue(event.target.value);
               mainSave.dismiss();
             }}
-            placeholder="Instagram -- https://instagram.com/..."
+            placeholder={t("socialPlaceholders.instagram")}
             className={`${inputClass} w-full`}
           />
           <input
@@ -480,7 +483,7 @@ export function ParametresForm({
               setLienYoutubeValue(event.target.value);
               mainSave.dismiss();
             }}
-            placeholder="YouTube -- https://youtube.com/@..."
+            placeholder={t("socialPlaceholders.youtube")}
             className={`${inputClass} w-full`}
           />
           <input
@@ -490,7 +493,7 @@ export function ParametresForm({
               setLienAutreValue(event.target.value);
               mainSave.dismiss();
             }}
-            placeholder="Autre lien -- https://..."
+            placeholder={t("socialPlaceholders.autre")}
             className={`${inputClass} w-full`}
           />
         </div>
@@ -505,7 +508,7 @@ export function ParametresForm({
             }}
             className="h-5 w-5 accent-brand-500"
           />
-          <span className="text-sm">Apparaître dans les classements publics</span>
+          <span className="text-sm">{t("classementCheckboxLabel")}</span>
         </label>
 
         <label className="flex items-center gap-3">
@@ -518,7 +521,7 @@ export function ParametresForm({
             }}
             className="h-5 w-5 accent-brand-500"
           />
-          <span className="text-sm">Ne pas apparaître dans l&apos;exploration</span>
+          <span className="text-sm">{t("masqueExplorationCheckboxLabel")}</span>
         </label>
 
         <label className="flex items-center gap-3">
@@ -531,17 +534,14 @@ export function ParametresForm({
             }}
             className="h-5 w-5 accent-brand-500"
           />
-          <span className="text-sm">
-            Rendre mes badges de fidélité publics (visibles sur ton profil et
-            sur celui des créateurs que tu soutiens)
-          </span>
+          <span className="text-sm">{t("badgeFideliteCheckboxLabel")}</span>
         </label>
 
         {mainSave.status === "error" && (
           <p className="text-sm text-danger-600">{mainSave.errorMessage}</p>
         )}
         {mainSave.status === "saved" && (
-          <p className="text-sm text-success-600">Enregistré.</p>
+          <p className="text-sm text-success-600">{tCommon("saved")}</p>
         )}
 
         <button
@@ -549,7 +549,7 @@ export function ParametresForm({
           disabled={mainSave.status === "saving"}
           className={buttonClass("primary", "lg", "mt-2")}
         >
-          {mainSave.status === "saving" ? "Enregistrement..." : "Enregistrer"}
+          {mainSave.status === "saving" ? tCommon("saving") : tCommon("save")}
         </button>
       </form>
 
@@ -557,7 +557,7 @@ export function ParametresForm({
           independently via its own "Enregistrer" button (product brief),
           not as part of the global submit above. */}
       <div className={`${labelClass} mt-4`}>
-        <span>Choisis ton identifiant</span>
+        <span>{t("pseudoLabel")}</span>
         <div className="flex gap-2">
           <input
             type="text"
@@ -567,7 +567,7 @@ export function ParametresForm({
               setPseudoValue(event.target.value);
               pseudoSave.dismiss();
             }}
-            placeholder="ex: sergio_123, sergioRSK"
+            placeholder={t("pseudoPlaceholder")}
             className={`${inputClass} w-full flex-1 ${
               pseudoUnlocked ? "" : "bg-surface-muted text-foreground-muted"
             }`}
@@ -579,21 +579,21 @@ export function ParametresForm({
               onClick={() => setPseudoUnlocked(true)}
               className={buttonClass("outline", "sm")}
             >
-              Modifier
+              {tCommon("edit")}
             </button>
           )}
         </div>
         {pseudoUnlocked && pseudoDisplayStatus === "available" && (
-          <span className="text-xs font-medium text-success-600">✓ disponible</span>
+          <span className="text-xs font-medium text-success-600">{t("pseudoAvailable")}</span>
         )}
         {pseudoUnlocked && pseudoDisplayStatus === "taken" && (
-          <span className="text-xs font-medium text-danger-600">✗ déjà pris</span>
+          <span className="text-xs font-medium text-danger-600">{t("pseudoTaken")}</span>
         )}
         {pseudoUnlocked && pseudoDisplayStatus === "reserved" && (
-          <span className="text-xs font-medium text-danger-600">✗ réservé</span>
+          <span className="text-xs font-medium text-danger-600">{t("pseudoReserved")}</span>
         )}
         <span className="text-sm text-foreground-muted">
-          Ton lien : fanboss.app/@{pseudoValue || "..."}
+          {t("pseudoLinkPreview", { pseudo: pseudoValue || "..." })}
         </span>
         {/* Uses the saved `pseudo` prop, not the live-editing pseudoValue
             -- copying an unsaved draft would share a link that doesn't
@@ -601,7 +601,7 @@ export function ParametresForm({
         {pseudo && <CopyProfileLinkButton pseudo={pseudo} />}
         {pseudoLockedUntilValue && (
           <span className="text-sm text-accent-600">
-            Modifiable à nouveau à partir du {formatDate(pseudoLockedUntilValue)}.
+            {t("pseudoLockedUntilNotice", { date: formatDate(pseudoLockedUntilValue, locale) })}
           </span>
         )}
         {pseudoUnlocked && (
@@ -611,7 +611,7 @@ export function ParametresForm({
             onClick={handlePseudoSave}
             className={buttonClass("primary", "sm", "self-start")}
           >
-            {pseudoSave.status === "saving" ? "Enregistrement..." : "Enregistrer"}
+            {pseudoSave.status === "saving" ? tCommon("saving") : tCommon("save")}
           </button>
         )}
         {pseudoSave.status === "error" && (
@@ -619,14 +619,13 @@ export function ParametresForm({
         )}
         {pseudoSave.status === "saved" && pseudoJustSavedUntil && (
           <p className="text-sm text-success-600">
-            Pseudo enregistré. Tu pourras le remodifier à partir du{" "}
-            {formatDate(pseudoJustSavedUntil)}.
+            {t("pseudoJustSavedNotice", { date: formatDate(pseudoJustSavedUntil, locale) })}
           </p>
         )}
       </div>
 
       <div className={`${labelClass} mt-4`}>
-        <span>Bio</span>
+        <span>{t("bioLabel")}</span>
         <textarea
           value={bioValue}
           readOnly={!bioUnlocked}
@@ -646,7 +645,7 @@ export function ParametresForm({
             onClick={() => setBioUnlocked(true)}
             className={`${buttonClass("outline", "sm")} self-start`}
           >
-            Modifier
+            {tCommon("edit")}
           </button>
         )}
         {bioUnlocked && (
@@ -656,26 +655,26 @@ export function ParametresForm({
             onClick={handleBioSave}
             className={buttonClass("primary", "sm", "self-start")}
           >
-            {bioSave.status === "saving" ? "Enregistrement..." : "Enregistrer"}
+            {bioSave.status === "saving" ? tCommon("saving") : tCommon("save")}
           </button>
         )}
         {bioSave.status === "error" && (
           <p className="text-sm text-danger-600">{bioSave.errorMessage}</p>
         )}
         {bioSave.status === "saved" && (
-          <p className="text-sm text-success-600">Bio enregistrée.</p>
+          <p className="text-sm text-success-600">{t("bioSavedNotice")}</p>
         )}
       </div>
 
       <div className={`${labelClass} mt-4`}>
-        <span>Mot de passe</span>
+        <span>{t("passwordLabel")}</span>
         {!passwordUnlocked ? (
           <button
             type="button"
             onClick={() => setPasswordUnlocked(true)}
             className={`${buttonClass("outline", "sm")} self-start`}
           >
-            Modifier le mot de passe
+            {t("editPasswordButton")}
           </button>
         ) : (
           <>
@@ -686,7 +685,7 @@ export function ParametresForm({
                 setNewPassword(event.target.value);
                 passwordSave.dismiss();
               }}
-              placeholder="Nouveau mot de passe"
+              placeholder={t("newPasswordPlaceholder")}
               minLength={8}
               className={`${inputClass} w-full`}
             />
@@ -697,7 +696,7 @@ export function ParametresForm({
                 setConfirmNewPassword(event.target.value);
                 passwordSave.dismiss();
               }}
-              placeholder="Confirmer le nouveau mot de passe"
+              placeholder={t("confirmPasswordPlaceholder")}
               minLength={8}
               className={`${inputClass} w-full`}
             />
@@ -707,7 +706,7 @@ export function ParametresForm({
               onClick={handlePasswordSave}
               className={buttonClass("primary", "sm", "self-start")}
             >
-              {passwordSave.status === "saving" ? "Enregistrement..." : "Enregistrer"}
+              {passwordSave.status === "saving" ? tCommon("saving") : tCommon("save")}
             </button>
           </>
         )}
@@ -715,7 +714,7 @@ export function ParametresForm({
           <p className="text-sm text-danger-600">{passwordSave.errorMessage}</p>
         )}
         {passwordSave.status === "saved" && (
-          <p className="text-sm text-success-600">Mot de passe modifié.</p>
+          <p className="text-sm text-success-600">{t("passwordSavedNotice")}</p>
         )}
       </div>
     </>
