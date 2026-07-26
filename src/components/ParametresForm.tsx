@@ -8,7 +8,9 @@ import { inputClass, labelClass } from "@/components/ui/field-styles";
 import { ZoomablePhoto } from "@/components/ui/ZoomablePhoto";
 import { PhotoCropper } from "@/components/PhotoCropper";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
-import { PSEUDO_COOLDOWN_MS } from "@/lib/validation";
+import { PSEUDO_COOLDOWN_MS, PSEUDO_FORMAT_REGEX, PSEUDO_MOTS_RESERVES } from "@/lib/validation";
+
+const PSEUDO_CHECK_DEBOUNCE_MS = 400;
 
 const SAVED_MESSAGE_TIMEOUT_MS = 3000;
 
@@ -160,6 +162,78 @@ export function ParametresForm({
   const [pseudoLockedUntilValue, setPseudoLockedUntilValue] = useState(pseudoLockedUntil);
   const [pseudoJustSavedUntil, setPseudoJustSavedUntil] = useState<string | null>(null);
 
+  // Real-time availability check (debounced) -- "invalid"/"idle" show no
+  // badge at all (format/reserved-word errors that can't be checked
+  // against the DB yet, or an empty field about to clear the pseudo);
+  // only "available"/"taken"/"reserved" render feedback, per brief.
+  // Format and reserved-word checks are derived synchronously at render
+  // time below (`pseudoDisplayStatus`) using the exact same
+  // PSEUDO_FORMAT_REGEX/PSEUDO_MOTS_RESERVES the DB constraints and
+  // /api/pseudo/disponibilite itself use -- only a pseudo that passes
+  // both ever reaches the network check. This state only ever holds the
+  // *network* check's result, tagged with the value it was checked
+  // against (so a stale response for an already-superseded value is
+  // never shown as current) -- it's set only from inside the debounced
+  // fetch's async callback, never synchronously inside the effect body.
+  const [pseudoNetworkCheck, setPseudoNetworkCheck] = useState<{
+    value: string;
+    status: "available" | "taken";
+  } | null>(null);
+
+  const pseudoTrimmed = pseudoValue.trim();
+  const pseudoLocalStatus: "idle" | "invalid" | "reserved" | "ok" =
+    pseudoTrimmed === ""
+      ? "idle"
+      : !PSEUDO_FORMAT_REGEX.test(pseudoTrimmed)
+        ? "invalid"
+        : PSEUDO_MOTS_RESERVES.includes(pseudoTrimmed.toLowerCase())
+          ? "reserved"
+          : "ok";
+
+  const pseudoDisplayStatus: "idle" | "checking" | "available" | "taken" | "reserved" | "invalid" =
+    pseudoLocalStatus !== "ok"
+      ? pseudoLocalStatus
+      : pseudoNetworkCheck && pseudoNetworkCheck.value === pseudoTrimmed
+        ? pseudoNetworkCheck.status
+        : "checking";
+
+  useEffect(() => {
+    if (!pseudoUnlocked || pseudoLocalStatus !== "ok") {
+      return;
+    }
+
+    let cancelled = false;
+    const timeout = setTimeout(async () => {
+      try {
+        const response = await fetch(
+          `/api/pseudo/disponibilite?pseudo=${encodeURIComponent(pseudoTrimmed)}`,
+        );
+        const body = await response.json();
+        if (cancelled) {
+          return;
+        }
+        setPseudoNetworkCheck({
+          value: pseudoTrimmed,
+          status: response.ok && body.disponible ? "available" : "taken",
+        });
+      } catch {
+        if (!cancelled) {
+          setPseudoNetworkCheck(null);
+        }
+      }
+    }, PSEUDO_CHECK_DEBOUNCE_MS);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeout);
+    };
+  }, [pseudoTrimmed, pseudoLocalStatus, pseudoUnlocked]);
+
+  // Clearing the pseudo (empty value) is always allowed -- otherwise
+  // saving requires a confirmed "available" check for the value
+  // currently typed, never a stale result from a previous value.
+  const canSavePseudo = pseudoTrimmed === "" || pseudoDisplayStatus === "available";
+
   async function handlePseudoSave() {
     const result = await pseudoSave.run(() =>
       patchProfil({ pseudo: pseudoValue.trim() || null }),
@@ -169,6 +243,7 @@ export function ParametresForm({
       setPseudoLockedUntilValue(unlockAt);
       setPseudoJustSavedUntil(unlockAt);
       setPseudoUnlocked(false);
+      setPseudoNetworkCheck(null);
     }
   }
 
@@ -508,6 +583,15 @@ export function ParametresForm({
             </button>
           )}
         </div>
+        {pseudoUnlocked && pseudoDisplayStatus === "available" && (
+          <span className="text-xs font-medium text-success-600">✓ disponible</span>
+        )}
+        {pseudoUnlocked && pseudoDisplayStatus === "taken" && (
+          <span className="text-xs font-medium text-danger-600">✗ déjà pris</span>
+        )}
+        {pseudoUnlocked && pseudoDisplayStatus === "reserved" && (
+          <span className="text-xs font-medium text-danger-600">✗ réservé</span>
+        )}
         <span className="text-sm text-foreground-muted">
           Ton lien : fanboss.app/@{pseudoValue || "..."}
         </span>
@@ -523,7 +607,7 @@ export function ParametresForm({
         {pseudoUnlocked && (
           <button
             type="button"
-            disabled={pseudoSave.status === "saving"}
+            disabled={pseudoSave.status === "saving" || !canSavePseudo}
             onClick={handlePseudoSave}
             className={buttonClass("primary", "sm", "self-start")}
           >

@@ -1830,6 +1830,82 @@ stakes of getting it right the first time, not just when they later try
 to change it again. Bio has no such notice (no cooldown to explain), just
 a plain "Bio enregistrée."
 
+**Real-time pseudo availability check** (`GET
+/api/pseudo/disponibilite`) — while the pseudo field is unlocked,
+`ParametresForm.tsx` debounces the typed value (`PSEUDO_CHECK_DEBOUNCE_MS
+= 400`) and asks this endpoint whether it's free, rendering a small
+"✓ disponible" / "✗ déjà pris" / "✗ réservé" line under the field and
+disabling "Enregistrer" until the *currently typed* value has a confirmed
+positive check (clearing the pseudo entirely is always allowed — there's
+nothing to check when unsetting it).
+
+The endpoint returns **exactly `{ disponible: boolean }`, nothing else**
+— no id, no indication of *whose* account holds the pseudo, not even on
+a genuine hit. This isn't a new information leak either way: `pseudo` is
+already public via `profils_publics`/`/@pseudo`, so confirming "this
+exact handle is taken" reveals nothing a visitor couldn't already learn
+by guessing a handle and loading `/@<guess>` directly — the endpoint just
+saves that round trip during signup-time typing. It still requires a
+real session (`401` for a logged-out caller) purely to identify the
+caller for the self-exclusion check below, not because the boolean
+itself is sensitive.
+
+**Applies the exact same rules as the real DB constraints, from the same
+source, never a hand-copied approximation**: `PSEUDO_FORMAT_REGEX`
+(`src/lib/validation.ts`, extracted out of `parametresProfilSchema`'s
+inline regex specifically so this route and the schema can't drift) and
+`PSEUDO_MOTS_RESERVES` are checked first, entirely locally — a request
+for a pseudo that could never pass `users_pseudo_format`/
+`users_pseudo_not_reserved` never even reaches `profils_publics`. Only a
+pseudo that clears both goes to a case-insensitive `ilike` lookup
+(`escapeIlike()`, same escaping `/@pseudo`/`/explorer`'s search already
+need) against `profils_publics`, mirroring
+`users_pseudo_lower_unique_idx`'s `lower(pseudo)` semantics exactly. This
+symmetry is the actual point: a pseudo this endpoint ever calls
+`disponible: true` can never fail at real save time via `/api/profil`,
+and vice versa — same discipline as `pseudoLockedUntil` mirroring the
+cooldown trigger's 30-day window.
+
+**Self-exclusion uses the caller's own authenticated id, never a
+client-supplied one** — `match.id === user.id` (from `supabase.auth
+.getUser()`), so typing your own current pseudo back reads as
+"disponible" (it's already yours) without opening a way to ask "does
+pseudo X belong to account Y" for an arbitrary Y. Selects only `id` from
+`profils_publics`, discarded after the comparison — never returned to
+the client.
+
+**Can't be used to enumerate accounts at scale** — covered explicitly in
+`route.test.ts` (9 tests): the response is always exactly one key,
+`disponible`, a boolean, for a single requested pseudo; there is no
+batch/list mode, no wildcard, and a request for a name that fails
+format/reserved checks never even touches the database, so there's no
+per-pseudo timing signal either from a query that didn't run.
+
+The debounce and format/reserved-word classification are computed at
+**render time** from a small `pseudoNetworkCheck` state
+(`{value, status: "available" | "taken"} | null`, tagged with the value
+it was actually checked against so a late response for an
+already-superseded value is never shown as current) — not from a
+separate `useState` set synchronously inside the `useEffect` body. An
+earlier draft did set a `"checking"/"invalid"/"reserved"/"idle"` status
+state directly inside the effect and was rejected by
+`react-hooks/set-state-in-effect` (calling `setState` synchronously
+inside an effect risks a cascading extra render); the fix derives
+`pseudoDisplayStatus` from the local format/reserved classification plus
+`pseudoNetworkCheck` on every render instead, leaving the effect to only
+ever call `setPseudoNetworkCheck` from inside its `setTimeout`'s async
+callback, which is not synchronous with respect to the effect's own
+execution.
+
+Verified visually end-to-end (same mock-Supabase/Playwright technique
+used throughout this file): typing the créateur's own current pseudo
+unchanged shows "✓ disponible"; a pseudo already held by another account
+shows "✗ déjà pris"; a reserved word shows "✗ réservé"; a genuinely free
+pseudo shows "✓ disponible" with exactly one network request fired only
+after typing paused for the debounce window (not one per keystroke); and
+"Enregistrer" is disabled for a taken value, enabled once a positive
+check lands for the currently-typed one.
+
 Bio's textarea is `resize-none` — the native resize handle looked
 unpolished; `rows={4}` gives it a fixed, reasonable height instead.
 
