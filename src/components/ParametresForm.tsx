@@ -94,6 +94,7 @@ export function ParametresForm({
   lienAutre,
   classementPublic,
   masqueExploration,
+  badgeFidelitePublic,
   photoUrl,
 }: {
   nomAffichage: string | null;
@@ -109,6 +110,7 @@ export function ParametresForm({
   lienAutre: string | null;
   classementPublic: boolean;
   masqueExploration: boolean;
+  badgeFidelitePublic: boolean;
   photoUrl: string | null;
 }) {
   const [nomAffichageValue, setNomAffichageValue] = useState(nomAffichage ?? "");
@@ -118,6 +120,7 @@ export function ParametresForm({
   const [lienAutreValue, setLienAutreValue] = useState(lienAutre ?? "");
   const [classementValue, setClassementValue] = useState(classementPublic);
   const [masqueExplorationValue, setMasqueExplorationValue] = useState(masqueExploration);
+  const [badgeFideliteValue, setBadgeFideliteValue] = useState(badgeFidelitePublic);
   const [file, setFile] = useState<File | null>(null);
   // The raw file straight from the OS picker, before cropping -- opens
   // PhotoCropper when set. Never uploaded directly: `file` (above) only
@@ -225,6 +228,7 @@ export function ParametresForm({
         lien_autre: lienAutreValue.trim() || null,
         classement_public: classementValue,
         masque_exploration: masqueExplorationValue,
+        badge_fidelite_public: badgeFideliteValue,
       };
 
       if (file) {
@@ -440,6 +444,22 @@ export function ParametresForm({
             className="h-5 w-5 accent-brand-500"
           />
           <span className="text-sm">Ne pas apparaître dans l&apos;exploration</span>
+        </label>
+
+        <label className="flex items-center gap-3">
+          <input
+            type="checkbox"
+            checked={badgeFideliteValue}
+            onChange={(event) => {
+              setBadgeFideliteValue(event.target.checked);
+              mainSave.dismiss();
+            }}
+            className="h-5 w-5 accent-brand-500"
+          />
+          <span className="text-sm">
+            Rendre mes badges de fidélité publics (visibles sur ton profil et
+            sur celui des créateurs que tu soutiens)
+          </span>
         </label>
 
         {mainSave.status === "error" && (

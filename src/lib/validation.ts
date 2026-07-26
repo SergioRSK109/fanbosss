@@ -204,6 +204,11 @@ export const parametresProfilSchema = z
     // exploration visibility defaults ON once a créateur has an active
     // offre, the opposite default direction from the (opt-in) leaderboards.
     masque_exploration: z.boolean().optional(),
+    // Fan loyalty badge opt-in (migration 0022) -- same opt-in pattern as
+    // classement_public: off by default, controls whether
+    // badges_fidelite_publics exposes this user's badges (as a
+    // supporter, and as a créateur's list of supporters) publicly.
+    badge_fidelite_public: z.boolean().optional(),
     // Set after a successful upload via POST /api/profil/photo-upload-url
     // + PUT to R2 -- never accepted directly from arbitrary client input
     // without that round-trip, but the schema itself doesn't need to know
