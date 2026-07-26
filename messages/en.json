@@ -341,7 +341,7 @@
     "titrePlaceholder": "E.g.: Roof for the church",
     "descriptionLabel": "Description (explain the cause)",
     "objectifLabel": "Goal ($)",
-    "liveCalculatorText": "Once this goal is reached, you'll receive about <b>${montant}</b> net (17% platform commission deducted -- payment fees and VAT are covered by the platform, not deducted from your share).",
+    "liveCalculatorText": "Once this goal is reached, you'll receive about <b>${montant}</b> net (15% platform commission + VAT (16%) deducted -- payment processing fees are still covered by the platform).",
     "dateFinLabel": "End date (optional)",
     "campagneLaunch": "Launch campaign"
   },

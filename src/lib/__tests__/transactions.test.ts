@@ -18,21 +18,21 @@ const t = createTranslator({
   namespace: "Dashboard",
 }) as unknown as StatutFanTranslator;
 
-describe("calculerRepartitionPaiement (brief 4.5, commission 17% since migration 0018)", () => {
-  it("computes commission (17%), frais (3%) and tva (16% of commission) for bookkeeping", () => {
+describe("calculerRepartitionPaiement (commission 15% HT + TVA répercutée since migration 0024)", () => {
+  it("computes commission (15% HT), frais (3%) and tva (16% of commission)", () => {
     const result = calculerRepartitionPaiement(100);
 
-    expect(result.commissionPlateforme).toBeCloseTo(17, 2);
+    expect(result.commissionPlateforme).toBeCloseTo(15, 2);
     expect(result.fraisAgregateur).toBeCloseTo(3, 2);
-    expect(result.tva).toBeCloseTo(2.72, 2);
+    expect(result.tva).toBeCloseTo(2.4, 2);
   });
 
-  it("deducts only the commission from the créateur's net -- frais/tva are absorbed by the platform, not passed through", () => {
+  it("deducts both the commission AND its tva from the créateur's net -- only frais_agregateur is absorbed by the platform", () => {
     const result = calculerRepartitionPaiement(100);
 
-    expect(result.montantNetCreateur).toBeCloseTo(83, 2);
+    expect(result.montantNetCreateur).toBeCloseTo(82.6, 2);
     expect(result.montantNetCreateur).toBeCloseTo(
-      100 - result.commissionPlateforme,
+      100 - result.commissionPlateforme - result.tva,
       2,
     );
   });

@@ -66,12 +66,15 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------
--- Commission rate (migration 0018): 17%, not the previous 20% -- and
--- frais_agregateur/tva are still computed and stored for bookkeeping,
--- but the platform now absorbs both instead of deducting them from the
--- créateur. Verified with a real transaction reaching 'validee' (the
--- moment create_paiement_on_validation() actually fires), not just read
--- from the function's source.
+-- Commission rate (migration 0024): 15% HT + TVA (16%) répercutée au
+-- créateur, not the previous 17%-absorbed model (migration 0018).
+-- frais_agregateur is still computed and stored for bookkeeping and
+-- still absorbed by the platform (unchanged), but tva is now deducted
+-- from the créateur's share again, alongside the commission itself --
+-- standard marketplace-intermediation model. Verified with a real
+-- transaction reaching 'validee' (the moment
+-- create_paiement_on_validation() actually fires), not just read from
+-- the function's source.
 -- ---------------------------------------------------------------------
 insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
   ('ffffffff-1111-1111-1111-111111111111',
@@ -93,21 +96,21 @@ begin
     into v_commission, v_frais, v_tva, v_net
     from paiements where transaction_id = 'ffffffff-1111-1111-1111-111111111111';
 
-  if v_commission != 17 then
-    raise exception 'TEST FAILED: commission_plateforme was % instead of 17 (100 * 17%%)', v_commission;
+  if v_commission != 15 then
+    raise exception 'TEST FAILED: commission_plateforme was % instead of 15 (100 * 15%% HT)', v_commission;
   end if;
   if v_frais != 3 then
     raise exception 'TEST FAILED: frais_agregateur was % instead of 3 (100 * 3%%, unchanged)', v_frais;
   end if;
-  if v_tva != 2.72 then
-    raise exception 'TEST FAILED: tva was % instead of 2.72 (17 * 16%%, unchanged formula on the new commission)', v_tva;
+  if v_tva != 2.4 then
+    raise exception 'TEST FAILED: tva was % instead of 2.4 (15 * 16%%, unchanged formula on the new 15%% commission)', v_tva;
   end if;
-  if v_net != 83 then
+  if v_net != 82.6 then
     raise exception
-      'TEST FAILED: montant_net_createur was % instead of 83 -- frais_agregateur/tva must no longer be deducted from the créateur''s share',
+      'TEST FAILED: montant_net_createur was % instead of 82.6 -- commission AND tva must both be deducted from the créateur''s share (15 + 2.4 = 17.4 TTC withheld from 100)',
       v_net;
   end if;
-  raise notice 'PASS: create_paiement_on_validation() charges 17%% commission and no longer deducts frais_agregateur/tva from montant_net_createur';
+  raise notice 'PASS: create_paiement_on_validation() charges 15%% HT commission + TVA (16%%), both deducted from montant_net_createur (frais_agregateur still absorbed by the platform, unchanged)';
 end $$;
 
 -- ---------------------------------------------------------------------

@@ -615,6 +615,56 @@ fixed: typing `1000` into a campaign's objectif field now shows "environ
 changes needed to the campaign feature's own code since it was already
 calling the shared formula rather than a duplicated one.
 
+## Commission rate: 17% (absorbed) → 15% HT + TVA répercutée (migration `0024`)
+
+Reverses migration `0018`'s "platform absorbs `tva`" decision, switching
+to the standard marketplace-intermediation model: the platform's
+commission is now a **15% HT (hors-taxes) rate**, `tva` (still 16% of the
+commission, unchanged formula) is added on top of it, and that HT+TVA
+total is what the créateur actually pays — so `tva` is deducted from
+their share again, not absorbed by the platform.
+`frais_agregateur` (CinetPay's own fee) is **untouched by this
+migration** — still 3% of brut, still absorbed by the platform, never
+passed through to the créateur; only the `tva` treatment changes here.
+
+`create_paiement_on_validation()`:
+`v_commission := round(new.montant * 0.15, 2)` (down from 0.17),
+`v_tva := round(v_commission * 0.16, 2)` (same formula, now on the new
+15% base), and — the real mechanical change, not just the rate —
+`montant_net_createur := new.montant - v_commission - v_tva` instead of
+`new.montant - v_commission` alone.
+
+Both the SQL formula (migration `0024`) and its JS mirror
+(`calculerRepartitionPaiement()`, `src/lib/transactions.ts` —
+`COMMISSION_PLATEFORME_TAUX = 0.15`, `montantNetCreateur = round2(montant
+- commissionPlateforme - tva)`) were updated together, same "never drift
+from the real DB formula" discipline as `0018`. Verified with a real
+transaction reaching `validee` against a throwaway database
+(`checklist_2_3.sql`): a $100 transaction now produces
+`commission_plateforme = 15`, `frais_agregateur = 3` (unchanged),
+`tva = 2.4`, and `montant_net_createur = 82.6` (100 − 15 − 2.4) —
+proving both the new rate and that `tva` is deducted from the créateur's
+net again while `frais_agregateur` still isn't. `transactions.test.ts`
+covers the same math for `calculerRepartitionPaiement` directly.
+
+`OffresManager.tsx`'s campaign live-calculator copy (`OffresManager.
+liveCalculatorText` in `messages/{fr,en}.json`) was updated to match:
+"commission plateforme de 15% + TVA (16%) déduites — les frais de
+paiement restent pris en charge par la plateforme" — dropping the old
+claim that TVA was absorbed by the platform (true under `0018`, false
+now), without spelling out the HT/TTC mechanics in the UI itself (too
+technical for a créateur-facing screen) — just being honest that TVA is
+now part of what's deducted. No calculator-side code change was needed
+beyond the copy: `CampagneRow` already calls the shared
+`calculerRepartitionPaiement()` rather than a duplicated calculation, so
+once the underlying formula changed, the displayed net amount updated
+automatically.
+
+Out of scope for this migration, unchanged: `frais_agregateur` (still 3%,
+still absorbed), the `modele_rentabilite_plateforme.xlsx` spreadsheet
+(maintained separately, not by Claude Code), and the IS 30%/prélèvement
+14% question (still a separate, not-yet-addressed topic).
+
 ## Fundraising campaigns (offre type `campagne`, migration `0017`)
 
 A créateur can run one or more time-limited fundraising campaigns

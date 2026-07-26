@@ -2,12 +2,14 @@ export const DELAI_ACCEPTATION_VIDEO_HEURES = 24;
 export const DELAI_ACCEPTATION_WHATSAPP_HEURES = 48;
 export const DELAI_LIVRAISON_VIDEO_HEURES = 48;
 
-// Migration 0018: commission dropped from 20% to 17%, and the platform
-// now absorbs frais_agregateur/tva instead of deducting them from the
-// créateur -- mirrors create_paiement_on_validation() exactly. Both are
-// still computed and returned below (real bookkeeping, stored on every
-// paiements row), just no longer subtracted from montantNetCreateur.
-export const COMMISSION_PLATEFORME_TAUX = 0.17;
+// Migration 0024: commission dropped from 17% (absorbed frais/tva) to
+// 15% HT + TVA (16%) répercutée -- standard marketplace-intermediation
+// model. COMMISSION_PLATEFORME_TAUX is now a HT (hors-taxes) rate; tva is
+// added on top of it and the HT+TVA total is deducted from the
+// créateur's share -- mirrors create_paiement_on_validation() exactly.
+// frais_agregateur is unchanged (still absorbed by the platform, never
+// passed through) -- only the tva treatment changes here.
+export const COMMISSION_PLATEFORME_TAUX = 0.15;
 export const FRAIS_AGREGATEUR_TAUX = 0.03;
 export const TVA_TAUX = 0.16;
 
@@ -15,7 +17,7 @@ export function calculerRepartitionPaiement(montant: number) {
   const commissionPlateforme = round2(montant * COMMISSION_PLATEFORME_TAUX);
   const fraisAgregateur = round2(montant * FRAIS_AGREGATEUR_TAUX);
   const tva = round2(commissionPlateforme * TVA_TAUX);
-  const montantNetCreateur = round2(montant - commissionPlateforme);
+  const montantNetCreateur = round2(montant - commissionPlateforme - tva);
 
   return {
     montantBrut: montant,
