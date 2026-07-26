@@ -15,6 +15,10 @@ export interface CreateurProfileData {
   // their pseudo, else null (callers fall back to a generic translated
   // label; see CreateurProfileView).
   displayName: string | null;
+  // Set exclusively by approuver_verification() (migration 0023) --
+  // never true just because a verification request exists or was
+  // submitted; see "Créateur verification" in CLAUDE.md.
+  createurVerifie: boolean;
   bio: string | null;
   photoUrl: string | null;
   // The original signup-time link, kept for manual identity verification
@@ -120,7 +124,7 @@ export async function getCreateurProfileData(
     supabase
       .from("profils_publics")
       .select(
-        "id, bio, photo_r2_key, lien_reseau_social, pseudo, nom_affichage, lien_tiktok, lien_instagram, lien_youtube, lien_autre",
+        "id, bio, photo_r2_key, lien_reseau_social, pseudo, nom_affichage, lien_tiktok, lien_instagram, lien_youtube, lien_autre, createur_verifie",
       )
       .eq("id", createurId)
       .single(),
@@ -267,6 +271,7 @@ export async function getCreateurProfileData(
   return {
     createurId,
     displayName: resolveDisplayName(profil.nom_affichage, profil.pseudo),
+    createurVerifie: profil.createur_verifie,
     bio: profil.bio,
     photoUrl,
     lienReseauSocial: profil.lien_reseau_social,

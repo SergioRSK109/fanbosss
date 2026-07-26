@@ -1,9 +1,11 @@
 import { redirect, Link } from "@/i18n/navigation";
 import { LogoutButton } from "@/components/LogoutButton";
 import { ParametresForm } from "@/components/ParametresForm";
+import { VerificationForm } from "@/components/VerificationForm";
 import { getSignedDownloadUrl } from "@/lib/r2";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { pseudoLockedUntil } from "@/lib/validation";
+import type { PlateformeVerification } from "@/lib/verification";
 
 export default async function ParametresPage({
   params,
@@ -21,17 +23,40 @@ export default async function ParametresPage({
     return;
   }
 
-  const { data: profil } = await supabase
-    .from("users")
-    .select(
-      "nom_affichage, pseudo, pseudo_modifie_at, bio, lien_tiktok, lien_instagram, lien_youtube, lien_autre, classement_public, masque_exploration, badge_fidelite_public, photo_r2_key",
-    )
-    .eq("id", user.id)
-    .single();
+  const [{ data: profil }, { data: demandeRows }] = await Promise.all([
+    supabase
+      .from("users")
+      .select(
+        "nom_affichage, pseudo, pseudo_modifie_at, bio, lien_tiktok, lien_instagram, lien_youtube, lien_autre, classement_public, masque_exploration, badge_fidelite_public, createur_verifie, photo_r2_key",
+      )
+      .eq("id", user.id)
+      .single(),
+    // Self-only (demandes_verification_select_own RLS) -- the most
+    // recent request only, since only its state matters for what this
+    // page shows (see VerificationForm's three states).
+    supabase
+      .from("demandes_verification")
+      .select("plateforme, lien_compte, code_verification, statut")
+      .eq("createur_id", user.id)
+      .order("created_at", { ascending: false })
+      .limit(1),
+  ]);
 
   const photoUrl = profil?.photo_r2_key
     ? await getSignedDownloadUrl(profil.photo_r2_key, 60 * 60 * 24)
     : null;
+
+  const derniereDemandeRow = demandeRows?.[0];
+  const demandeActuelle =
+    derniereDemandeRow &&
+    (derniereDemandeRow.statut === "en_attente" || derniereDemandeRow.statut === "conflit")
+      ? {
+          plateforme: derniereDemandeRow.plateforme as PlateformeVerification,
+          lienCompte: derniereDemandeRow.lien_compte,
+          codeVerification: derniereDemandeRow.code_verification,
+          statut: derniereDemandeRow.statut as "en_attente" | "conflit",
+        }
+      : null;
 
   return (
     <main className="mx-auto max-w-sm p-6">
@@ -59,6 +84,13 @@ export default async function ParametresPage({
         badgeFidelitePublic={profil?.badge_fidelite_public ?? false}
         photoUrl={photoUrl}
       />
+      <div className="mt-4">
+        <VerificationForm
+          nomAffichage={profil?.nom_affichage ?? null}
+          createurVerifie={profil?.createur_verifie ?? false}
+          demandeActuelle={demandeActuelle}
+        />
+      </div>
     </main>
   );
 }

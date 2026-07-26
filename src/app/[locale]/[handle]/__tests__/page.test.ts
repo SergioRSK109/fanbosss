@@ -48,6 +48,7 @@ describe("GET /[locale]/[handle] (percent-encoded '@' bug)", () => {
     vi.mocked(getCreateurProfileData).mockResolvedValue({
       createurId: "createur-1",
       displayName: null,
+      createurVerifie: false,
       bio: null,
       photoUrl: null,
       lienReseauSocial: null,

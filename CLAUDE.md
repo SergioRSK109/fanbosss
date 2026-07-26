@@ -1027,6 +1027,152 @@ state stayed stuck showing its loading label forever. Fixed by clearing
 `pendingId` back to `null` on success, not just on error, in both
 `RemboursementsManuelsManager` and `GestionAdminsManager`.
 
+## Créateur verification (`demandes_verification`, migration `0023`)
+
+Two-tier, non-monetary trust signal: a "✓ Vérifié" badge, opt-in only in
+the sense that a créateur has to actively request it — there's no
+"public until you hide it" direction here at all, unlike
+`classement_public`/`badge_fidelite_public`.
+
+### Palier 1 — free, self-serve, works today
+
+`users.createur_verifie boolean default false` gates the badge, rendered
+via the shared `VerifiedBadge` component on `CreateurProfileView`
+(header, `tone="onDark"` since it sits on the brand-gradient banner —
+the default brand-tinted style would be nearly invisible there, same
+reasoning as the header's social-link chips) and `/explorer`'s cards
+(`tone="light"`, the default). **Set exclusively by
+`approuver_verification()`** — never by requesting, never by anything
+else; this is asserted directly in `checklist_2_3.sql`, not just assumed
+from reading the trigger-free column.
+
+A créateur requests verification from `/parametres` (`VerificationForm.tsx`,
+its own independent card, same "each concern saves on its own" principle
+as the pseudo/bio blocks on that page): pick a platform (TikTok/Instagram/
+YouTube), give a profile link, and `creer_demande_verification()` — a
+`SECURITY DEFINER` RPC, **not** a plain client-side INSERT — atomically
+generates a random `FanBoss-XXXXXXXXXX` code, runs the conflict check
+below, and inserts the row with the correct initial `statut` in one
+transaction. This can't be a plain INSERT because the conflict check
+needs to read *other* créateurs' `nom_affichage` and their own pending/
+approved requests, which `demandes_verification_select_own`'s RLS would
+otherwise block a plain authenticated caller from seeing — there is
+deliberately no INSERT/UPDATE policy on this table for authenticated
+users at all, exactly the same "state machine only via a vetted RPC"
+shape already used for `transactions`. **The code is generated once and
+never regenerated** — `/parametres` always reads back the stored row
+(`code_verification`), so reloading the page shows the same code, per
+explicit instruction.
+
+**Conflict detection** compares *live* `nom_affichage`, normalized
+(`normaliser_nom_affichage()`: lowercase, accents stripped via Postgres's
+`unaccent` extension, whitespace collapsed), across every *other*
+créateur who already has a request in `en_attente` or `approuve`. A
+match inserts the new request directly as `conflit` **and** flips any of
+the matched créateur's own still-`en_attente` requests to `conflit` too
+— an already-`approuve` request is deliberately left alone by this
+automated step; silently un-verifying someone based on a same-name
+collision with a brand-new signup would be exactly the kind of
+unreviewed automated decision palier 2 (below) exists to avoid.
+**Deliberately compares the live `users.nom_affichage` via a join, not a
+snapshotted column on `demandes_verification`** — same "never store what
+a live query already gives you" principle as
+`campagnes_montant_collecte` and `badges_fidelite_publics.depuis`; a
+créateur's claimed identity is whatever their current public display
+name is, not a frozen copy that could quietly drift from it.
+
+`/admin`'s "Vérifications" section (`VerificationsManager.tsx`) shows two
+separate lists — "En attente" and "Conflits" (the latter with a visibly
+distinct red border plus the KYC notice, see below) — each row showing
+the créateur's label, platform, a clickable link to the claimed account,
+the expected code, and Approuver/Refuser buttons. Approving a `conflit`
+row is deliberately still allowed through the same button: a human admin
+actually looking into both accounts *is* the "manual resolution" palier
+2 is waiting for (see below) — there is no separate, gated "resolve
+conflict" action, and approving one side never auto-touches the other.
+
+### Palier 2 — conflict escalation: structure only, deliberately not built further
+
+**No automated video/selfie verification was built, per explicit
+product decision, and none should be added later without discussing it
+first.** The instruction that shaped this feature was explicit that
+DIY video-based liveness checks (record yourself saying a code) are no
+longer considered a reliable defense against 2026-era deepfake/injection
+attacks against webcam and upload pipelines — this codebase takes that
+as a given product/security decision, not something independently
+re-verified via research here (unlike the CinetPay refund investigation
+below, which *did* involve an actual documentation search). No upload
+flow, no liveness-check UI, no "say this code out loud" prompt exists
+anywhere in this codebase, and none should be added as a stand-in for
+real KYC.
+
+**What happens instead, and why nothing automated calls out to a KYC
+provider**: exactly the same situation as `refundCinetPayPayment()`
+(migration `0014`, see "Automatic CinetPay refunds" above) —
+**no third-party KYC provider is integrated, and no credentials for one
+exist in this project.** Rather than fabricate a call to a nonexistent
+API or silently no-op, a `conflit` row simply sits in `/admin`'s
+"Conflits" list, permanently, with the message: *"Ce cas nécessite une
+vérification d'identité par un prestataire tiers (KYC) — aucun badge ne
+doit être accordé à aucun des comptes en conflit tant que ce n'est pas
+résolu manuellement."* There is no stub function analogous to
+`refundCinetPayPayment()` here, and deliberately so: unlike the refund
+flow (which already has a real code path that *attempts* the call and
+needs something to throw in its place), nothing in this feature ever
+tries to reach a KYC vendor at all — there's no call site to stub. The
+entire "integration" is: flag it clearly, then wait for a human.
+
+**Before wiring in a real KYC provider**: confirm a provider, get real
+credentials, and only then add an actual API call — following the exact
+same discipline as the CinetPay refund stub (never fabricate a
+confirmation, never simulate success for a call that doesn't really
+happen). A future session finding a `conflit` row that's been sitting
+for a while is not a bug to "fix" by quietly approving it or by writing
+a fake automated resolution — that row is doing exactly what it's
+supposed to do until someone with real KYC tooling looks at it.
+
+### Testing
+
+Tested end-to-end in `checklist_2_3.sql` with a real scenario, not
+described in prose: two créateurs with normalized-equal display names
+(different case/accents/whitespace) — the second request lands as
+`conflit` immediately, and the first créateur's still-pending request
+flips to `conflit` too, while a third, genuinely-different créateur's
+own request is left untouched throughout. `createur_verifie` is
+confirmed `false` for both sides of the conflict until an admin actually
+approves one, and approving one side is confirmed to never auto-verify
+or otherwise touch the other side (still `conflit`, `createur_verifie`
+still `false`). `profils_publics` is checked directly to confirm the
+badge is exposed only for the approved créateur. Security follows the
+migration `0020`/`0021` pattern throughout, verified the same way (`SET
+ROLE anon`/`SET ROLE authenticated`): `anon` has no `EXECUTE` at all on
+any of the three new functions, `creer_demande_verification()` rejects a
+`NULL auth.uid()`, and `approuver_verification()`/`refuser_verification()`
+reject a genuinely-authenticated non-admin caller.
+
+Verified visually end-to-end (same throwaway mock-Supabase technique
+used throughout this file): submitting a request on `/parametres` shows
+the generated code immediately and the exact same code again after a
+page reload (never regenerated); the créateur's own public profile and
+their `/explorer` card show no badge at all before approval; `/admin`
+renders both lists populated, with the conflict rows visibly
+red-bordered and carrying the KYC notice; approving a request removes it
+from "En attente" and makes the badge appear immediately on both the
+public profile (banner, white/translucent style) and the `/explorer`
+card (brand-tinted style); and refusing one side of a conflict removes
+only that row, leaving the other conflicting créateur's row untouched in
+the "Conflits" list.
+
+**Unrelated pre-existing bug noticed and fixed while visually verifying
+`/explorer` here**: the filter dropdown iterates every `OFFRE_TYPES`
+value including `campagne` (added in migration `0017`), but
+`CreateurProfile.offerTypes` in the message files never got a `campagne`
+key added at the time — every `/explorer` render threw a
+`next-intl` `MISSING_MESSAGE` error (visible in the dev overlay and
+server console) the whole time since `0017` shipped, unrelated to
+créateur verification. Fixed by adding the missing key to both `fr`/`en`
+message files.
+
 ## Video/content delivery (brief 0.5)
 
 R2 bucket is private, no public URL configured anywhere.
@@ -2190,6 +2336,18 @@ into chat).
   for a créateur with zero delivered transactions, hides the badge again
   immediately once the setting is turned back off, and exposes exactly
   `createur_id, depuis, fan_id` — never a montant or transaction count.
+  Also covers créateur verification (0023) with a real scenario: two
+  créateurs with normalized-equal display names (different case/accents/
+  whitespace) conflict immediately, the first's still-pending request
+  flips to `conflit` too, an unrelated third créateur's own request is
+  untouched, `createur_verifie` stays false on both sides until an admin
+  approves one, approving one side never auto-touches the other, and
+  `profils_publics` exposes the badge only for the approved créateur.
+  `SET ROLE anon`/`SET ROLE authenticated` confirm the same safe grant
+  pattern as migrations 0020/0021: `anon` has no `EXECUTE` on any of the
+  three new functions, `creer_demande_verification` rejects a NULL
+  `auth.uid()`, and `approuver_verification`/`refuser_verification`
+  reject a genuinely-authenticated non-admin caller.
 - `supabase/tests/stub_auth.sql` fakes just enough of Supabase's `auth`
   schema (an `auth.uid()` reading `app.current_user_id`, plus the
   `authenticated`/`anon`/`service_role` roles) for the real migrations to

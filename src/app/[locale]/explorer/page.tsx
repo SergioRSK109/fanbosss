@@ -2,6 +2,7 @@ import { getTranslations } from "next-intl/server";
 import { Link } from "@/i18n/navigation";
 import { buttonClass } from "@/components/ui/button-styles";
 import { inputClass } from "@/components/ui/field-styles";
+import { VerifiedBadge } from "@/components/ui/VerifiedBadge";
 import { resolveDisplayName } from "@/lib/profil";
 import { getSignedDownloadUrl } from "@/lib/r2";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -57,6 +58,7 @@ export default async function ExplorerPage({
     bio: string | null;
     photo_r2_key: string | null;
     nom_affichage: string | null;
+    createur_verifie: boolean;
   }[] = [];
   let total = 0;
 
@@ -65,7 +67,7 @@ export default async function ExplorerPage({
   if (type === null || (matchingIds && matchingIds.length > 0)) {
     let query = supabase
       .from("profils_explorables")
-      .select("id, pseudo, bio, photo_r2_key, nom_affichage", { count: "exact" });
+      .select("id, pseudo, bio, photo_r2_key, nom_affichage, createur_verifie", { count: "exact" });
 
     if (q) {
       const escaped = escapeIlike(q);
@@ -162,6 +164,7 @@ export default async function ExplorerPage({
               <p className="w-full truncate text-sm font-semibold">
                 {displayName ?? t("anonymous")}
               </p>
+              {profil.createur_verifie && <VerifiedBadge label={tOffers("verified")} />}
               {profil.bio && (
                 <p className="line-clamp-2 text-xs text-foreground-muted">{profil.bio}</p>
               )}

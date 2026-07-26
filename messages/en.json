@@ -96,7 +96,8 @@
       "whatsapp": "Reveal WhatsApp",
       "shoutout": "Shoutout",
       "contenu_debloque": "Exclusive content",
-      "evenement_live": "Private live access"
+      "evenement_live": "Private live access",
+      "campagne": "Fundraising campaign"
     },
     "reassurance": {
       "whatsapp": "Automatically refunded if the creator doesn't accept your request within 48h.",
@@ -124,7 +125,8 @@
       "anonymousSupporter": "A supporter",
       "anonymousCreateur": "A créateur"
     },
-    "participer": "Participate"
+    "participer": "Participate",
+    "verified": "Verified"
   },
   "PaiementRetour": {
     "heading": "Thank you!",

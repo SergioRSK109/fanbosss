@@ -4,8 +4,13 @@ import {
   RemboursementsManuelsManager,
   type RemboursementManuel,
 } from "@/components/admin/RemboursementsManuelsManager";
+import {
+  VerificationsManager,
+  type DemandeVerificationAdmin,
+} from "@/components/admin/VerificationsManager";
 import { resolveDisplayName } from "@/lib/profil";
 import { createSupabaseServerClient, createSupabaseServiceRoleClient } from "@/lib/supabase/server";
+import type { PlateformeVerification } from "@/lib/verification";
 
 // Business admin dashboard, gated by users.est_admin -- a real DB-level
 // invariant (migration 0015's trigger), not just this check. A non-admin
@@ -51,6 +56,7 @@ export default async function AdminPage() {
     { data: manualRefundRows },
     { data: allUsers },
     { data: authUsersPage },
+    { data: verificationRows },
   ] = await Promise.all([
     serviceSupabase
       .from("transactions")
@@ -63,6 +69,13 @@ export default async function AdminPage() {
       .order("created_at", { ascending: true }),
     serviceSupabase.from("users").select("id, pseudo, nom_affichage, est_admin"),
     serviceSupabase.auth.admin.listUsers({ page: 1, perPage: 1000 }),
+    // Only the two actionable statuses -- an approved/refused demande no
+    // longer needs an admin decision, see VerificationsManager.
+    serviceSupabase
+      .from("demandes_verification")
+      .select("id, createur_id, plateforme, lien_compte, code_verification, statut")
+      .in("statut", ["en_attente", "conflit"])
+      .order("created_at", { ascending: true }),
   ]);
 
   const userLabelById = new Map(
@@ -122,6 +135,15 @@ export default async function AdminPage() {
     }))
     .sort((a, b) => a.label.localeCompare(b.label));
 
+  const verifications: DemandeVerificationAdmin[] = (verificationRows ?? []).map((d) => ({
+    id: d.id,
+    createurLabel: userLabelById.get(d.createur_id) ?? "(utilisateur supprimé)",
+    plateforme: d.plateforme as PlateformeVerification,
+    lienCompte: d.lien_compte,
+    codeVerification: d.code_verification,
+    statut: d.statut as "en_attente" | "conflit",
+  }));
+
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-8 p-5 pb-16 sm:p-6">
       <h1 className="text-2xl font-bold">Administration</h1>
@@ -161,6 +183,17 @@ export default async function AdminPage() {
           ici.
         </p>
         <RemboursementsManuelsManager remboursements={remboursementsManuels} />
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-lg font-bold">Vérifications</h2>
+        <p className="mb-3 text-sm text-foreground-muted">
+          Palier 1 (gratuit) : le créateur ajoute le code affiché à sa bio, un admin confirme
+          visuellement. Palier 2 : un conflit (même nom d&apos;affichage que quelqu&apos;un
+          d&apos;autre) nécessite une vérification d&apos;identité tierce (KYC) -- aucune
+          intégration automatisée n&apos;existe encore, voir CLAUDE.md.
+        </p>
+        <VerificationsManager demandes={verifications} />
       </section>
 
       <section>

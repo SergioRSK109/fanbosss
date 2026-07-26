@@ -3,6 +3,7 @@ import { CheckoutButton } from "@/components/CheckoutButton";
 import { ReportButton } from "@/components/ReportButton";
 import { ShareCampagneButton } from "@/components/ShareCampagneButton";
 import { RankBadge } from "@/components/ui/RankBadge";
+import { VerifiedBadge } from "@/components/ui/VerifiedBadge";
 import { ZoomablePhoto } from "@/components/ui/ZoomablePhoto";
 import { formatDepuis } from "@/lib/badgesFidelite";
 import {
@@ -64,6 +65,7 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
   const {
     createurId,
     displayName,
+    createurVerifie,
     bio,
     photoUrl,
     socialLinks,
@@ -97,7 +99,10 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
             </div>
           )}
 
-          <h1 className="text-xl font-bold text-white">{displayName ?? t("heading")}</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-bold text-white">{displayName ?? t("heading")}</h1>
+            {createurVerifie && <VerifiedBadge label={t("verified")} tone="onDark" />}
+          </div>
 
           {bio && (
             <p className="max-w-xs text-sm leading-relaxed text-white/95">{bio}</p>

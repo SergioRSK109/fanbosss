@@ -216,3 +216,14 @@ export const parametresProfilSchema = z
     photo_r2_key: z.string().nullable().optional(),
   })
   .strict();
+
+// Créateur verification request (migration 0023) -- the DB CHECK
+// constraint on demandes_verification.plateforme is the real guarantee;
+// this is just a clean 400 instead of a raw Postgres error, same
+// philosophy as every other schema in this file.
+export const demandeVerificationSchema = z
+  .object({
+    plateforme: z.enum(["tiktok", "instagram", "youtube"]),
+    lien_compte: z.string().trim().url(),
+  })
+  .strict();

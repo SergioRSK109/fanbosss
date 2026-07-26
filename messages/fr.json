@@ -96,7 +96,8 @@
       "whatsapp": "Révéler son WhatsApp",
       "shoutout": "Mention (shoutout)",
       "contenu_debloque": "Contenu exclusif",
-      "evenement_live": "Accès live privé"
+      "evenement_live": "Accès live privé",
+      "campagne": "Campagne de collecte de fonds"
     },
     "reassurance": {
       "whatsapp": "Remboursé automatiquement si le créateur n'accepte pas ta demande sous 48h.",
@@ -124,7 +125,8 @@
       "anonymousSupporter": "Un supporter",
       "anonymousCreateur": "Un créateur"
     },
-    "participer": "Participer"
+    "participer": "Participer",
+    "verified": "Vérifié"
   },
   "PaiementRetour": {
     "heading": "Merci !",
