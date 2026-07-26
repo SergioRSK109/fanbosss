@@ -145,6 +145,13 @@ export const modifierOffreSchema = z
   })
   .strict();
 
+// Mirrors the DB constraint users_pseudo_format (migration 0008)
+// character-for-character -- exported so /api/pseudo/disponibilite and
+// its client-side counterpart in ParametresForm check the exact same
+// rule the database will actually enforce at save time, not a
+// hand-copied approximation that could drift.
+export const PSEUDO_FORMAT_REGEX = /^[a-zA-Z0-9_]{3,20}$/;
+
 // Every top-level route segment the app currently uses -- mirrors the DB
 // constraint users_pseudo_not_reserved (migration 0008) as defense in
 // depth. The constraint is the real guarantee -- see brief 0.2's
@@ -180,7 +187,7 @@ export const parametresProfilSchema = z
   .object({
     pseudo: z
       .string()
-      .regex(/^[a-zA-Z0-9_]{3,20}$/, "3 à 20 caractères, lettres/chiffres/underscore uniquement")
+      .regex(PSEUDO_FORMAT_REGEX, "3 à 20 caractères, lettres/chiffres/underscore uniquement")
       .refine((p) => !PSEUDO_MOTS_RESERVES.includes(p.toLowerCase()), {
         message: "ce pseudo est réservé",
       })
