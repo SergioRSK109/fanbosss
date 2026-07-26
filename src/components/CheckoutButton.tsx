@@ -72,7 +72,7 @@ export function CheckoutButton({
         disabled={loading}
         className={buttonClass("primary", "sm")}
       >
-        {loading ? t("paying") : t("pay")}
+        {loading ? t("paying") : type === "campagne" ? t("participer") : t("pay")}
       </button>
       {errorMessage && <p className="text-danger-500 text-xs">{errorMessage}</p>}
     </div>

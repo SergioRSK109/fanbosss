@@ -32,7 +32,7 @@ export function ShareCampagneButton({ campagneId }: { campagneId: string }) {
   }
 
   return (
-    <button type="button" onClick={handleShare} className={buttonClass("ghost", "sm", "self-start")}>
+    <button type="button" onClick={handleShare} className={buttonClass("outline", "sm", "self-start")}>
       {copied ? t("campagnes.shareCopied") : t("campagnes.share")}
     </button>
   );

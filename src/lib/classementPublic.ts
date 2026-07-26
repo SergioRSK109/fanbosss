@@ -12,45 +12,42 @@ export interface ClassementEntry {
   photoUrl: string | null;
 }
 
-// Public /classement page data: reuses classement_volume/reactivite/
-// progression exactly as they already are (migration 0008) -- rank only,
-// never a count or amount -- and profils_publics for the display bits
+// Public /classement page data: reuses classement_volume/reactivite
+// exactly as they already are (migration 0008) -- rank only, never a
+// count or amount -- and profils_publics for the display bits
 // (photo/pseudo/nom_affichage), the same public view /explorer and
 // /@pseudo already read from. No table is queried directly, and no
 // column beyond what these views already exposed publicly is ever
 // touched here -- see classementPublic.test.ts for the assertion that
 // backs this claim.
+//
+// Deliberately excludes classement_progression: this page dropped its
+// Top 10 progression section per explicit instruction (the per-profile
+// progression rank badge on CreateurProfileView is unaffected -- that's
+// a completely separate query in src/lib/profil.ts). Fetching a table
+// this page never renders would be pointless, not just unused code.
 export async function getClassementPublicData(): Promise<{
   volume: ClassementEntry[];
   reactivite: ClassementEntry[];
-  progression: ClassementEntry[];
 }> {
   const supabase = await createSupabaseServerClient();
 
-  const [{ data: volumeRows }, { data: reactiviteRows }, { data: progressionRows }] =
-    await Promise.all([
-      supabase
-        .from("classement_volume")
-        .select("createur_id, rang")
-        .lte("rang", 10)
-        .order("rang", { ascending: true }),
-      supabase
-        .from("classement_reactivite")
-        .select("createur_id, rang")
-        .lte("rang", 10)
-        .order("rang", { ascending: true }),
-      supabase
-        .from("classement_progression")
-        .select("createur_id, rang")
-        .lte("rang", 10)
-        .order("rang", { ascending: true }),
-    ]);
+  const [{ data: volumeRows }, { data: reactiviteRows }] = await Promise.all([
+    supabase
+      .from("classement_volume")
+      .select("createur_id, rang")
+      .lte("rang", 10)
+      .order("rang", { ascending: true }),
+    supabase
+      .from("classement_reactivite")
+      .select("createur_id, rang")
+      .lte("rang", 10)
+      .order("rang", { ascending: true }),
+  ]);
 
   const allIds = Array.from(
     new Set(
-      [...(volumeRows ?? []), ...(reactiviteRows ?? []), ...(progressionRows ?? [])].map(
-        (row) => row.createur_id,
-      ),
+      [...(volumeRows ?? []), ...(reactiviteRows ?? [])].map((row) => row.createur_id),
     ),
   );
 
@@ -100,6 +97,5 @@ export async function getClassementPublicData(): Promise<{
   return {
     volume: toEntries(volumeRows),
     reactivite: toEntries(reactiviteRows),
-    progression: toEntries(progressionRows),
   };
 }

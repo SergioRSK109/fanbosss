@@ -75,38 +75,33 @@ export default async function ClassementPage({
   const { locale } = await params;
   const t = await getTranslations({ locale, namespace: "Classement" });
 
-  const { volume, reactivite, progression } = await getClassementPublicData();
+  const { volume, reactivite } = await getClassementPublicData();
 
   const rankLabel = (rank: number) => t("rank", { rank });
 
   return (
-    <main className="mx-auto flex max-w-2xl flex-col gap-8 px-5 pb-16 pt-4">
+    <main className="mx-auto flex max-w-4xl flex-col gap-8 px-5 pb-16 pt-4">
       <div>
         <h1 className="text-2xl font-bold">{t("heading")}</h1>
         <p className="mt-1 text-sm text-foreground-muted">{t("subheading")}</p>
       </div>
 
-      <Section
-        title={t("sectionVolume")}
-        entries={volume}
-        emptyLabel={t("empty")}
-        anonymousLabel={t("anonymous")}
-        rankLabel={rankLabel}
-      />
-      <Section
-        title={t("sectionReactivite")}
-        entries={reactivite}
-        emptyLabel={t("empty")}
-        anonymousLabel={t("anonymous")}
-        rankLabel={rankLabel}
-      />
-      <Section
-        title={t("sectionProgression")}
-        entries={progression}
-        emptyLabel={t("empty")}
-        anonymousLabel={t("anonymous")}
-        rankLabel={rankLabel}
-      />
+      <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
+        <Section
+          title={t("sectionVolume")}
+          entries={volume}
+          emptyLabel={t("empty")}
+          anonymousLabel={t("anonymous")}
+          rankLabel={rankLabel}
+        />
+        <Section
+          title={t("sectionReactivite")}
+          entries={reactivite}
+          emptyLabel={t("empty")}
+          anonymousLabel={t("anonymous")}
+          rankLabel={rankLabel}
+        />
+      </div>
     </main>
   );
 }
