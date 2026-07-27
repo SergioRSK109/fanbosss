@@ -185,7 +185,7 @@
   "Dashboard": {
     "heading": "My FanBoss space",
     "settings": "⚙️ Settings",
-    "finance": "💰 Finance",
+    "finance": "💰 Payments",
     "publicProfileLabel": "Your public profile: ",
     "noPseudoYet": "no handle yet — ",
     "choosePseudo": "choose one",
@@ -401,7 +401,7 @@
     }
   },
   "Finance": {
-    "heading": "Finance",
+    "heading": "Payments",
     "backToDashboard": "Back to dashboard",
     "blocEnAttenteLivraison": "Awaiting delivery",
     "blocEnLitige": "In dispute",
