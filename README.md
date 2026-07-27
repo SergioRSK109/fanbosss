@@ -3,17 +3,24 @@
 Plateforme PWA permettant à n'importe quel utilisateur de monétiser sa
 relation avec ses fans, via des offres : vidéo personnalisée, mention
 (shoutout), don libre, accès WhatsApp premium, contenu à débloquer, accès
-à un live privé. N'importe qui peut aussi bien recevoir des paiements que
-payer quelqu'un d'autre — il n'y a pas de distinction fan/créateur (brief
-v3 point 1).
+à un live privé, campagne de collecte de fonds. N'importe qui peut aussi
+bien recevoir des paiements que payer quelqu'un d'autre — il n'y a pas de
+distinction fan/créateur (brief v3 point 1).
+
+> Pour l'historique complet des décisions de design, le détail exhaustif
+> de chaque fonctionnalité et les tests qui les prouvent, voir
+> `CLAUDE.md` à la racine du repo. Ce README reste volontairement un
+> point d'entrée plus court.
 
 ## Stack
 
-- **Frontend** : Next.js (App Router) + Tailwind, déployé sur Vercel
+- **Frontend** : Next.js 16 (App Router, PWA) + Tailwind, déployé sur Vercel
 - **Backend / BDD / Auth** : Supabase (Postgres + Auth + Row Level Security)
-- **Stockage vidéos / contenus** : Cloudflare R2, bucket **privé** (accès
-  uniquement via URL signée temporaire)
+- **Stockage vidéos / contenus / photos** : Cloudflare R2, bucket **privé**
+  (accès uniquement via URL signée temporaire — aucune URL publique
+  n'existe nulle part dans ce projet)
 - **Paiement** : CinetPay (M-Pesa / Airtel Money / Orange Money)
+- **i18n** : next-intl, français par défaut + anglais (`/en`)
 
 ## Démarrage
 
@@ -25,9 +32,9 @@ npm run dev
 
 ### Base de données
 
-Les migrations `supabase/migrations/*.sql` — toujours incrémentales,
-jamais un `DROP`/recréation depuis zéro — sont appliquées **automatiquement**
-sur le projet Supabase de production par
+Les migrations `supabase/migrations/*.sql` (27 à ce jour) — toujours
+incrémentales, jamais un `DROP`/recréation depuis zéro — sont appliquées
+**automatiquement** sur le projet Supabase de production par
 `.github/workflows/deploy-migrations.yml` à chaque push sur `main` qui
 touche `supabase/migrations/`. Plus besoin de les copier-coller à la main
 dans le SQL Editor.
@@ -100,12 +107,20 @@ l'ordre des fichiers.
 ### Déploiement (Vercel Hobby) et cron des deadlines
 
 Le plan Vercel Hobby (gratuit) limite les cron jobs à une exécution par
-jour maximum, ce qui est trop lent pour le brief 0.3 (un fan ne doit pas
-attendre 24h pour être remboursé d'une demande jamais acceptée). Il n'y a
-donc pas de bloc `crons` dans `vercel.json` — la route
-`/api/cron/check-deadlines` existe toujours et vérifie toujours
-`Authorization: Bearer {CRON_SECRET}` exactement comme avant, mais elle
-doit être appelée par un scheduler externe gratuit plutôt que par Vercel.
+jour maximum, ce qui est trop lent (un fan ne doit pas attendre 24h pour
+être remboursé d'une demande jamais acceptée). Il n'y a donc pas de bloc
+`crons` dans `vercel.json` — la route `/api/cron/check-deadlines` existe
+toujours et vérifie toujours `Authorization: Bearer {CRON_SECRET}`
+exactement comme avant, mais elle doit être appelée par un scheduler
+externe gratuit plutôt que par Vercel.
+
+Cette route enchaîne désormais **trois** RPC côté base de données à
+chaque appel (chacune doit réussir pour que la route réponde 200) :
+`process_transaction_deadlines()` (remboursement auto si le créateur
+n'a jamais répondu/livré à temps), `close_expired_campagnes()` (clôture
+des campagnes de collecte dont la date de fin est dépassée sans avoir
+atteint l'objectif) et `process_confirmation_deadlines()` (confirmation
+automatique d'une vidéo/shoutout livrée si le fan ne réagit pas sous 72h).
 
 Une fois l'app déployée, configurer **une seule fois**, manuellement, dans
 le dashboard d'un service comme [cron-job.org](https://cron-job.org) ou
@@ -123,15 +138,18 @@ git) peut être réintroduit et ce scheduler externe désactivé.
 
 ```bash
 npm test          # tests applicatifs (Vitest) : HMAC CinetPay, webhook,
-                   # routes de livraison signée, validation
+                   # routes de livraison signée, validation, calculs de
+                   # commission, helpers de classement/campagnes/wallet...
 npm run test:sql  # tests SQL de bout en bout, contre un vrai Postgres :
-                   # applique les migrations puis vérifie les contraintes
-                   # et le cron de deadlines (nécessite un cluster Postgres
-                   # local accessible via `sudo -u postgres psql`)
+                   # applique toutes les migrations puis vérifie les
+                   # contraintes, triggers, RLS et RPC (nécessite un
+                   # cluster Postgres local accessible via
+                   # `sudo -u postgres psql`)
 ```
 
-`npm run test:sql` crée une base jetable, applique toutes les migrations, et
-prouve concrètement (pas juste "en théorie") :
+`npm run test:sql` (`supabase/tests/checklist_2_3.sql`) crée une base
+jetable, applique les 27 migrations dans l'ordre, et prouve concrètement
+(pas juste "en théorie"), entre autres :
 - qu'une offre WhatsApp ne peut jamais descendre sous 20$, même par
   UPDATE direct sur la colonne `prix`, et qu'un champ JSON `config` ne peut
   pas contourner cette règle ;
@@ -139,148 +157,181 @@ prouve concrètement (pas juste "en théorie") :
   automatiquement une fois `deadline_acceptation` dépassée, et qu'une
   transaction acceptée mais jamais livrée l'est aussi une fois
   `deadline_livraison` dépassée ;
-- que les 4 nouveaux types d'offres sont acceptés, qu'un `don` peut avoir
-  un `prix` nul (et lui seul), et qu'un créateur ne peut pas avoir deux
-  offres du même type (`unique_offre_type_par_createur`) ;
-- que `video` fait exception à cette règle : deux offres vidéo avec des
-  libellés différents ("Anniversaire", "Danse") passent, mais un second
-  `video` avec le MÊME libellé (ou un second `whatsapp`/`don`/etc., dont le
-  libellé reste toujours `null`) est toujours rejeté.
+- qu'un créateur ne peut pas avoir deux offres du même type
+  (`unique_offre_type_par_createur`), sauf `video`/`campagne` qui
+  admettent plusieurs offres distinguées par libellé ;
+- que chaque fonction `SECURITY DEFINER` (acceptation/refus/livraison de
+  transaction, vérification créateur, résolution de litige, retrait
+  wallet, statut admin...) rejette un appelant anonyme (`anon`, permission
+  Postgres réelle), un appelant authentifié sans session, un appelant qui
+  n'a pas les droits nécessaires (pas admin, pas propriétaire de la
+  ressource), et ne laisse aucune trace en cas de rejet ;
+- que le calcul du solde wallet d'un créateur (voir plus bas) retombe
+  exactement sur les montants attendus une fois la commission appliquée.
 
-## Offres disponibles (brief v3 point 2)
+## Offres disponibles
 
 | Type | Cycle de vie | Prix |
 |---|---|---|
-| `video` | Acceptation créateur (24h) puis livraison (48h) via URL R2 signée. Seul type qui n'est PAS limité à une offre par créateur : plusieurs vidéos avec des libellés différents ("Anniversaire" à 10$, "Danse" à 15$) peuvent coexister (`unique(createur_id, type, libelle)`, `NULLS NOT DISTINCT` pour que les autres types restent strictement à une offre) | fixé par le créateur, par libellé |
-| `shoutout` | Identique à `video` (mêmes délais, même mécanisme de livraison) | fixé par le créateur |
+| `video` | Acceptation créateur (24h) puis livraison (48h) via URL R2 signée. Le fan a ensuite 72h pour confirmer la réception (sinon confirmation automatique) ou signaler un problème. Plusieurs offres vidéo avec des libellés différents ("Anniversaire" à 10$, "Danse" à 15$) peuvent coexister | fixé par le créateur, par libellé |
+| `shoutout` | Identique à `video` (mêmes délais, même mécanisme de livraison et de confirmation) | fixé par le créateur |
 | `whatsapp` | Acceptation créateur (48h) ; l'acceptation EST la livraison (numéro révélé) | ≥ 20$, imposé en base |
 | `don` | Validation/livraison immédiates au paiement, aucun remboursement possible | libre, choisi par le fan |
 | `contenu_debloque` | Contenu uploadé une seule fois par le créateur (`offres.config.r2_key`) ; chaque paiement débloque l'accès au même fichier ; validation/livraison immédiates | fixé par le créateur |
 | `evenement_live` | Le créateur renseigne un lien externe (`offres.config.lien_live`) ; le paiement révèle ce lien ; validation/livraison immédiates | fixé par le créateur |
+| `campagne` | Collecte de fonds à but libre (titre, description, objectif, date de fin optionnelle) ; mécaniquement un `don` avec montant collecté calculé en direct, clôturée automatiquement à l'objectif atteint ou à la date de fin | libre, choisi par le fan |
 
-`contenu_debloque` et `evenement_live` sont livrés complets dans cette
-version (pas de placeholder) ; leurs feature flags
-(`contenu_debloque_actif`, `evenement_live_actif` dans
-`parametres_plateforme`) existent comme demandé mais sont **actifs par
-défaut** — à la différence de `abonnements_actifs`/`avis_actifs`/
-`multi_devise_actif`, qui restent de vrais placeholders non codés. Pour les
-désactiver le temps d'un lancement plus progressif, il suffit de passer
-leur `valeur` à `false` dans `parametres_plateforme` (aucun redéploiement
-nécessaire).
+`contenu_debloque` et `evenement_live` sont livrés complets (pas de
+placeholder) ; leurs feature flags (`contenu_debloque_actif`,
+`evenement_live_actif` dans `parametres_plateforme`) existent comme
+demandé mais sont **actifs par défaut** — à la différence de
+`abonnements_actifs`/`avis_actifs`/`multi_devise_actif`, qui restent de
+vrais placeholders non codés. Pour les désactiver le temps d'un lancement
+plus progressif, il suffit de passer leur `valeur` à `false` dans
+`parametres_plateforme` (aucun redéploiement nécessaire).
 
-**Affiliation créateur → créateur** : aucun changement technique -- c'est
+**Affiliation créateur → créateur** : aucun changement technique — c'est
 le mécanisme de parrainage existant (`parrainages`, `users.parrain_id`,
 lien `?ref=`), qui s'applique maintenant à n'importe quelle paire
 d'utilisateurs puisque la distinction fan/créateur a disparu.
 
+**Commission** : 15% hors-taxes + TVA (16% de la commission), le tout
+répercuté sur le créateur — modèle classique d'intermédiation marketplace.
+Les frais CinetPay (3%) restent absorbés par la plateforme. Formule
+unique, jamais dupliquée, entre le SQL (`create_paiement_on_validation()`)
+et son miroir JS (`calculerRepartitionPaiement()` dans
+`src/lib/transactions.ts`).
+
+## Fonctionnalités principales
+
+Au-delà du parcours de paiement de base, la plateforme inclut :
+
+- **`/explorer`** : annuaire public des créateurs (recherche, filtre par
+  type d'offre), visibles par défaut dès leur première offre active
+  (opt-out via `/parametres`).
+- **`/classement`** : classements publics (volume, réactivité) sur 30
+  jours glissants, opt-in, rang seul affiché (jamais le montant/nombre
+  sous-jacent). Une carte privée sur le dashboard montre à chaque créateur
+  sa propre progression réelle vers le top 10.
+- **Vérification créateur** (`/parametres`, badge "✓ Vérifié") :
+  palier 1 auto-servi (code à ajouter à sa bio TikTok/Instagram/YouTube,
+  validé par un admin) avec détection de conflit de nom d'affichage ;
+  palier 2 (KYC tiers en cas de conflit) reste une file d'attente pour
+  revue humaine — aucune vérification automatisée par vidéo/selfie n'est
+  implémentée, par choix produit explicite.
+- **Badge de fidélité fan** : "Supporter de X depuis [date]", opt-in,
+  visible sur le profil public du créateur soutenu et sur celui du fan.
+- **État de confirmation + litiges** (vidéo/shoutout uniquement) : le fan
+  a 72h après livraison pour confirmer ou signaler un problème ; un litige
+  ouvre une revue admin (`/admin`) qui tranche en faveur du créateur ou du
+  fan.
+- **Wallet & retraits** (`/finance`) : solde du créateur réparti en trois
+  compartiments (en attente de livraison / en litige / net à retirer),
+  demande de retrait à partir de 25$ (revérifié côté serveur, jamais fait
+  confiance à un montant envoyé par le client), traitée manuellement par
+  un admin.
+- **`/admin`** : tableau de bord business (gate `users.est_admin`, 404 —
+  jamais une redirection — pour tout visiteur non admin) : vue
+  d'ensemble du mois, remboursements manuels en attente, litiges,
+  demandes de retrait, vérifications créateur, top créateurs, gestion des
+  admins.
+- **Mot de passe oublié / changement**, **déconnexion réelle**
+  (invalidation serveur, pas seulement locale), **recadrage de photo de
+  profil** (carré, style Instagram, entièrement côté client avant upload).
+
 ## Points de sécurité notables
 
-Section 0 du brief original :
 - `src/lib/cinetpay.ts` : vérification HMAC-SHA256 réelle du webhook
   CinetPay, fail-closed (rejet si signature absente/invalide/clé non
   configurée).
 - `supabase/migrations/0001_schema.sql` : contrainte `check_whatsapp_minimum_price`
-  directement sur la colonne `offres.prix` (seuil actuel : 20$, voir
-  migration 0006).
-- `supabase/migrations/0002_functions_triggers.sql` : `deadline_acceptation`
-  ET `deadline_livraison` gérées séparément par `process_transaction_deadlines()`,
-  et le state machine des transactions (`accept_transaction`,
-  `refuse_transaction`, `deliver_video`) vit dans des fonctions
-  `SECURITY DEFINER`, pas dans des UPDATE directs exposés au client.
+  directement sur la colonne `offres.prix` (jamais sur le JSON `config`).
+- Toute transition d'état d'une transaction (acceptation, refus,
+  livraison, confirmation, résolution de litige, retrait wallet, statut
+  admin) passe par une fonction Postgres `SECURITY DEFINER` — jamais par
+  un UPDATE direct exposé au client.
+- **Un vrai bug de sécurité trouvé et corrigé** (migrations 0020/0021) :
+  `accept_transaction`/`refuse_transaction`/`deliver_video` utilisaient
+  une comparaison `!=` avec `auth.uid()`, qui s'évalue silencieusement à
+  `NULL` (donc "faux") quand l'appelant n'est pas authentifié — combiné à
+  l'absence de `revoke ... from public` sur ces fonctions (Postgres
+  accorde `EXECUTE` à `PUBLIC` par défaut), un appelant anonyme pouvait
+  réellement modifier une transaction d'un tiers. Reproduit puis corrigé
+  concrètement (pas juste supposé) : `is distinct from` à la place de
+  `!=`, vérification explicite `auth.uid() is null`, et audit systématique
+  de toutes les autres fonctions `SECURITY DEFINER` du projet pour le même
+  oubli. Voir `CLAUDE.md` pour le détail complet de l'investigation.
 - `src/app/api/webhooks/cinetpay/route.ts` : jointure explicite vers
   `offres` avant toute logique conditionnelle, avec vérification
   `if (!offerType) throw`.
-- `src/lib/r2.ts` + `src/app/api/transactions/[id]/video-url/route.ts` :
-  bucket R2 privé, livraison uniquement via URL signée (1h), après
-  vérification `fan_id = auth.uid()` et `statut = 'livree'`.
-
-Trouvé en retirant la distinction de rôles (migration 0006, pas un des 5
-points numérotés mais une conséquence directe du point 1) : la policy RLS
-publique sur `users` (`role in ('createur','both')`) exposait la colonne
-`telephone` de n'importe quel compte à n'importe quel appelant authentifié
-qui interrogeait la table directement -- RLS filtre des lignes, pas des
-colonnes, et cette condition matchait presque tous les comptes. Même
-problème sur `offres.config` (peut contenir `evenement_live.lien_live`,
-censé rester caché avant paiement). Remplacé par deux vues
-(`profils_publics`, `offres_publiques`) qui n'exposent jamais ces colonnes,
-quel que soit l'appelant ; les routes qui ont légitimement besoin de lire
-la colonne sensible d'un AUTRE utilisateur (whatsapp-link, content-url,
-live-link) le font désormais via le client service-role, après avoir
-elles-mêmes revérifié `fan_id = auth.uid()` et `statut = 'livree'`. Vérifié
-en interrogeant directement `users`/`offres` en tant qu'utilisateur
-authentifié tiers (0 ligne retournée) puis via les vues (données publiques
-correctement retournées).
+- `src/lib/r2.ts` : bucket R2 privé, livraison uniquement via URL signée,
+  après vérification `fan_id = auth.uid()` et `statut = 'livree'` (ou
+  l'équivalent pour un accès déjà payé).
+- RLS : chaque table sensible (`users`, `offres`, `transactions`,
+  `paiements`, `demandes_retrait`...) restreint l'accès direct au
+  propriétaire de la ligne ; les lectures publiques passent uniquement par
+  des vues dédiées (`profils_publics`, `offres_publiques`,
+  `classement_*`...) qui n'exposent jamais une colonne sensible, quel que
+  soit l'appelant.
 
 ## Internationalisation (next-intl)
 
 Français par défaut (`localePrefix: "as-needed"` : le français n'a pas de
-préfixe d'URL -- `/`, `/signup`, `/createur/x` -- seul l'anglais est
-préfixé -- `/en`, `/en/signup`, `/en/createur/x`). Toutes les pages vivent
+préfixe d'URL — `/`, `/signup`, `/createur/x` — seul l'anglais est
+préfixé — `/en`, `/en/signup`, `/en/createur/x`). Toutes les pages vivent
 sous `src/app/[locale]/...` (structure standard next-intl pour l'App
 Router) ; `src/proxy.ts` compose le middleware next-intl avec le
-rafraîchissement de session Supabase existant (les cookies de session
-s'écrivent sur la même réponse que celle produite par next-intl -- voir le
-commentaire dans le fichier). Les routes `src/app/api/**` et
-`src/app/auth/callback` restent délibérément HORS de `[locale]` : ce ne
-sont pas des pages, et un `rewrite` next-intl dessus les ferait 404.
+rafraîchissement de session Supabase existant. Les routes
+`src/app/api/**` et `src/app/auth/callback` restent délibérément HORS de
+`[locale]` : ce ne sont pas des pages, et un `rewrite` next-intl dessus
+les ferait 404.
 
-Traduit intégralement (fr + en), par priorité de ce que rencontre un
-visiteur étranger en premier : accueil (`/`), inscription, connexion, page
-créateur/paiement, retour de paiement. Le tableau de bord et les futurs
-emails restent en français pour l'instant (contenu non traduit,
-volontairement, moins prioritaire pour ce MVP) -- ajouter leurs clés dans
-`messages/fr.json`/`messages/en.json` le jour où ils doivent l'être ne
-demande aucun changement structurel.
+**Couverture intégrale (fr + en)** : accueil, inscription, connexion,
+tableau de bord, `/parametres`, `/admin`, `/explorer`, `/classement`,
+`/finance`, page créateur/paiement, retour de paiement, y compris les
+textes générés dynamiquement (statuts de transaction, messages de
+progression de classement). Deux catégories restent volontairement non
+traduites, documentées dans `CLAUDE.md` : les messages d'erreur des
+routes API (hors de `[locale]`, donc sans contexte de locale) et les
+noms de pays/provinces à l'inscription (stockés tels quels pour rester
+cohérents en base, indépendamment de la langue de saisie).
 
 Sélecteur de langue : `src/components/LanguageSwitcher.tsx`, présent sur
 toutes les pages via `[locale]/layout.tsx`.
 
-## Identifiant public (@pseudo), profil enrichi, classements, notifications
+## Identifiant public (@pseudo), profil, inscription
 
 **Pseudo / handle public** (`fanboss.app/@pseudo`, réglable dans
-`/parametres`) : `users.pseudo`, unique insensible à la casse (index
-fonctionnel sur `lower(pseudo)`), format `[a-zA-Z0-9_]{3,20}` et liste
-noire de mots réservés, tous imposés en base (migration 0008) -- vérifié
-directement en base, pas seulement dans le schéma zod de l'API. La route
-est `src/app/[locale]/[handle]/page.tsx`, volontairement PAS un dossier
-`@[pseudo]` (Next.js réserve un `@` en tête de nom de dossier aux routes
-parallèles) : `[handle]` capture tout le segment, `@sergio` inclus, et le
-code retire le `@` avant de chercher le pseudo (404 sinon). `/createur/[id]`
-reste la route canonique/interne ; `/@pseudo` n'est qu'un alias public
-par-dessus, les deux rendent exactement la même vue
-(`CreateurProfileView`/`getCreateurProfileData`).
+`/parametres`, avec un cooldown de 30 jours entre deux changements
+imposé par un trigger en base) : `users.pseudo`, unique insensible à la
+casse (index fonctionnel sur `lower(pseudo)`), format
+`[a-zA-Z0-9_]{3,20}` et liste noire de mots réservés, tous imposés en
+base — vérifié directement en base, pas seulement dans le schéma zod de
+l'API. La route est `src/app/[locale]/[handle]/page.tsx`, volontairement
+PAS un dossier `@[pseudo]` (Next.js réserve un `@` en tête de nom de
+dossier aux routes parallèles). `/createur/[id]` reste la route
+canonique/interne ; `/@pseudo` n'est qu'un alias public par-dessus, les
+deux rendent exactement la même vue (`CreateurProfileView`/
+`getCreateurProfileData`).
 
-**Profil enrichi** : bio, photo de profil, lien réseau social
-(`users.bio`, `users.photo_r2_key`, `users.lien_reseau_social`). Bio et
-lien social sont collectés à l'inscription (texte simple, même mécanisme
-que téléphone/pays) ; la photo ne l'est PAS -- l'upload demande une URL
-R2 signée qui nécessite un compte déjà authentifié, donc elle se fait
-uniquement dans `/parametres`, après création du compte
-(`/api/profil/photo-upload-url`). La photo n'est pas sensible mais passe
-quand même par une URL signée comme le reste du contenu R2, juste avec
-une expiration plus longue (24h) plutôt qu'une URL publique permanente.
+**Profil enrichi** : nom d'affichage, bio, photo de profil (recadrée
+côté client avant upload), liens TikTok/Instagram/YouTube/autre —
+éditables uniquement depuis `/parametres`, après création du compte
+(l'upload photo nécessite une URL R2 signée, donc un compte déjà
+authentifié).
 
-**Classements** (30 jours glissants, opt-in via une case dans
-`/parametres`) : volume de transactions livrées, réactivité (délai moyen
-de réponse aux demandes vidéo/shoutout/whatsapp, calculé depuis
-`transactions.repondu_at` -- un timestamp que `accept_transaction`/
-`refuse_transaction` posent désormais, absent des remboursements
-automatiques du cron pour ne jamais compter une non-réponse comme
-"réactive"), progression (comptes créés il y a moins de 30 jours, classés
-par leur volume). Les 3 vues SQL (`classement_volume`,
-`classement_reactivite`, `classement_progression`) n'exposent QUE le rang,
-jamais le nombre ou le montant sous-jacent, et ne listent que les
-utilisateurs opt-in -- vérifié qu'aucune colonne monétaire/comptage n'y
-apparaît et qu'un utilisateur non opt-in n'y figure jamais.
-
-**Badge de notification** : `users.dernier_vu_demandes_at`, comparé aux
-demandes reçues à chaque chargement du dashboard pour afficher un badge
-"N nouvelle(s)" sur la section, puis mis à jour à `now()` -- la prochaine
-visite ne compte que les demandes arrivées entre-temps.
+**Inscription** : nom/post-nom, pays + numéro de téléphone (indicatif
+dépendant du pays), province/ville (dépendant du pays), date de
+naissance avec vérification 18+ **imposée en base** (`check` constraint,
+pas seulement côté client), mot de passe avec confirmation. Bio et photo
+ne sont plus collectées à l'inscription — uniquement depuis
+`/parametres` ensuite.
 
 ## Hors scope du MVP
 
-App mobile native, interface admin custom (Supabase Studio suffit), API
-WhatsApp Business officielle, abonnements/avis/multi-devise (prévus en
-feature flags désactivés dans `parametres_plateforme`), vérification
-d'identité automatisée.
+App mobile native, interface admin custom au-delà de `/admin` (Supabase
+Studio suffit pour le reste), API WhatsApp Business officielle,
+abonnements/avis/multi-devise (prévus en feature flags désactivés dans
+`parametres_plateforme`), vérification d'identité automatisée par
+vidéo/selfie (KYC tiers) — le palier 1 auto-servi (code dans la bio) est
+lui bien implémenté, voir "Vérification créateur" plus haut.
