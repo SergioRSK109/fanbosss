@@ -75,10 +75,16 @@ export default async function AdminPage() {
     // Lot 2a: video/shoutout deliveries a fan flagged as a problem
     // (migration 0025) -- confirmation_fan only ever reaches 'conteste'
     // for those two types, so no extra type filter is needed here.
+    // Lot 2a-bis: `.is("litige_resolu_at", null)` excludes a litige an
+    // admin already resolved (migration 0026) -- without it, a resolved
+    // dispute would stay listed forever, since resolving one never
+    // changes confirmation_fan away from 'conteste' for the faveur_fan
+    // branch (see resoudre_litige()).
     serviceSupabase
       .from("transactions")
       .select("id, montant, created_at, createur_id, fan_id, offres(type)")
       .eq("confirmation_fan", "conteste")
+      .is("litige_resolu_at", null)
       .order("created_at", { ascending: true }),
     serviceSupabase.from("users").select("id, pseudo, nom_affichage, est_admin"),
     serviceSupabase.auth.admin.listUsers({ page: 1, perPage: 1000 }),

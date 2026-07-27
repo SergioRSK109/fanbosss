@@ -387,7 +387,10 @@
     "litigesHeading": "Litiges en attente",
     "litigesIntro": "Vidéos/shoutouts signalés comme problématiques par le fan (voir CLAUDE.md « État de confirmation fan »). L'argent n'est pas remboursé automatiquement -- ces cas nécessitent une revue manuelle.",
     "litiges": {
-      "empty": "Aucun litige en attente."
+      "empty": "Aucun litige en attente.",
+      "trancherCreateur": "Trancher en faveur du créateur",
+      "trancherFan": "Trancher en faveur du fan",
+      "notePlaceholder": "Note (optionnelle)"
     }
   }
 }

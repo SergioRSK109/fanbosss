@@ -576,6 +576,107 @@ own check, a different authenticated user can't act on someone else's
 transaction, none of the rejected attempts leave any trace, and the
 legitimate callers still hold `EXECUTE`).
 
+## Litige resolution — admin decision on a disputed delivery (Lot 2a-bis, migration `0026`)
+
+Follow-up to Lot 2a (migration `0025`, above), which deliberately left
+"Litiges en attente" **read-only** — resolving a dispute wasn't defined
+yet. This lot defines it: an admin can now rule `faveur_createur` or
+`faveur_fan` on any `conteste` transaction, from the same section that
+used to be purely informational.
+
+**Schema**: `transactions` gained four columns, purely for traceability
+of the decision — `litige_resolution text check (... in
+('faveur_createur', 'faveur_fan'))`, `litige_resolu_par uuid references
+users(id)`, `litige_resolu_at timestamptz`, `litige_note_admin text`
+(optional free-text, e.g. "vidéo hors-sujet, remboursé"). None of these
+four is read by any other function or trigger in this codebase — they
+exist solely so a human can audit who decided what, when, and why.
+
+**`resoudre_litige(p_transaction_id, p_decision, p_note default null)`**
+is a `SECURITY DEFINER` RPC, same exact style as
+`mark_remboursement_manuel_traite()`/`set_admin_status()` (migration
+`0015`): re-verifies `not exists (select 1 from users where id =
+auth.uid() and est_admin = true)` internally rather than trusting the
+caller was already checked client-side, `revoke all ... from public` +
+`grant execute ... to authenticated` only (never `anon`, never
+`service_role` — an admin action always requires a real session, exactly
+like every other admin RPC in this project). This equality-based check
+is NULL-safe by construction (unlike the `!=` bug fixed in migration
+`0020`) — `auth.uid() IS NULL` never matches any real `id`, so `not
+exists(...)` is unconditionally `true` and the function raises `'not
+authorized'` for an unauthenticated caller with no extra check needed,
+the same reasoning migration `0021`'s audit already established for
+`mark_remboursement_manuel_traite`/`set_admin_status`. Eligibility is
+re-checked too — `confirmation_fan = 'conteste' and litige_resolu_at is
+null` — so a litige can only ever be resolved once; a second attempt
+raises `'transaction not found or already resolved'` rather than
+silently re-applying (or worse, double-refunding).
+
+**`faveur_fan` needs no new logic at all beyond setting `statut =
+'remboursee'`.** `handle_transaction_remboursement()` (migration `0014`)
+already fires on any transition into `remboursee` and sets
+`paiements.statut_paiement = 'rembourse'` and
+`necessite_remboursement_manuel = true` — a litige resolved against the
+créateur rides this exact same trigger a plain refuse/deadline-refund
+would, rather than duplicating what it does. This is deliberate reuse,
+not an oversight: the whole point of routing every refund path through
+one trigger is that a new caller of "make this `remboursee`" never needs
+to remember what bookkeeping that implies.
+
+**`faveur_createur` deliberately reuses the existing `confirmation_fan =
+'confirme'` state, not a new one (e.g. `'confirme_par_admin'`).** This is
+the one design decision in this migration worth spelling out plainly,
+since it shapes what a later "Lot 2b" (a wallet/withdrawal balance,
+referenced but not yet built as of this writing) can assume: **a
+transaction is withdrawable the instant `confirmation_fan = 'confirme'`,
+full stop, regardless of *how* it got there.** A dispute resolved in the
+créateur's favor sets `confirmation_fan = 'confirme'` and stamps
+`confirme_at = now()` — exactly the two writes `confirmer_livraison_fan`
+itself makes — so Lot 2b's eventual "what can this créateur withdraw"
+query never needs a special case for "confirmed normally" vs. "confirmed
+via a resolved litige." `litige_resolution`/`litige_resolu_par`/
+`litige_resolu_at` are what preserve *that* distinction, for anyone who
+needs to know why a specific transaction reached `confirme` — but
+`confirmation_fan` alone, deliberately, does not. `statut` is left
+untouched in this branch (stays `livree`, same as a normal confirmation).
+
+**Admin UI** (`/admin`'s "Litiges en attente" section, `LitigesManager.tsx`)
+went from the deliberately read-only card list Lot 2a shipped to a fully
+interactive one: each row now has an optional free-text note input plus
+two buttons, "Trancher en faveur du créateur" / "Trancher en faveur du
+fan" (`Admin.litiges.trancherCreateur`/`trancherFan`/`notePlaceholder`),
+same per-row `pendingId`/`errorById` client-side pattern as
+`RemboursementsManuelsManager` — a successful resolution calls
+`router.refresh()` rather than mutating local state, so the row
+disappears via the page's own fresh query, not a client-side splice.
+`/admin/page.tsx`'s litige query gained `.is("litige_resolu_at", null)`
+— without it, a resolved litige would stay listed forever, since
+resolving one (in either direction) never changes `confirmation_fan`
+away from `'conteste'` for the `faveur_fan` branch specifically (only
+`faveur_createur` moves it to `'confirme')`; the `litige_resolu_at`
+filter is what actually removes a resolved row from this list, not a
+`confirmation_fan` check. New route: `/api/admin/resoudre-litige`, same
+thin-wrapper shape as `/api/admin/mark-remboursement-traite` — validates
+`transactionId`/`decision` are present, trims a blank note to `null`,
+surfaces any RPC rejection as a 403.
+
+Tested end-to-end in `checklist_2_3.sql`, not just described: both
+outcomes on real disputed video/shoutout deliveries (`faveur_fan` sets
+`statut = remboursee` and is confirmed to ride the *existing*
+`handle_transaction_remboursement()` trigger — `paiements.statut_paiement
+= 'rembourse'` and `necessite_remboursement_manuel = true`, without this
+migration adding any code that sets either directly; `faveur_createur`
+sets `confirmation_fan = 'confirme'` and stamps `confirme_at` without
+touching `statut`); a second resolution attempt on an already-resolved
+litige is rejected; a genuinely non-admin authenticated caller (the
+créateur on the very dispute being resolved, chosen specifically to also
+prove an interested party can't rule in their own favor) is rejected;
+`authenticated` with a `NULL auth.uid()` is rejected the same
+`'not authorized'` way (the NULL-safe equality check, not a separate
+guard); `anon` has no `EXECUTE` at all (real Postgres permission check);
+none of the rejected attempts left any trace; and `authenticated` still
+holds `EXECUTE` positively confirmed.
+
 ## `accept_transaction`/`refuse_transaction`/`deliver_video` anonymous bypass — found and fixed (migration `0020`)
 
 A real, currently-exploitable vulnerability, flagged during unrelated
@@ -2786,7 +2887,20 @@ into chat).
   `authenticated` with a NULL `auth.uid()` is rejected, a different
   authenticated user can't act on someone else's transaction, none of
   the rejected attempts leave a trace, and the legitimate callers still
-  hold `EXECUTE`).
+  hold `EXECUTE`). Also covers Lot 2a-bis's litige resolution (0026) with
+  real `resoudre_litige()` calls on genuinely disputed video/shoutout
+  deliveries: `faveur_fan` sets `statut = remboursee` and is confirmed to
+  ride the pre-existing `handle_transaction_remboursement()` trigger
+  (`paiements.statut_paiement = 'rembourse'`,
+  `necessite_remboursement_manuel = true`) rather than duplicating it;
+  `faveur_createur` reuses `confirmation_fan = 'confirme'` and stamps
+  `confirme_at` without touching `statut`; a second resolution attempt on
+  an already-resolved litige is rejected; a genuinely non-admin
+  authenticated caller (the créateur on the very dispute, proving even an
+  interested party can't rule in their own favor) is rejected; the same
+  NULL-safe `not authorized` rejection fires for `authenticated` with no
+  `auth.uid()` set; `anon` has no `EXECUTE` at all; none of the rejected
+  attempts leave a trace; and `authenticated` still holds `EXECUTE`.
 - `supabase/tests/stub_auth.sql` fakes just enough of Supabase's `auth`
   schema (an `auth.uid()` reading `app.current_user_id`, plus the
   `authenticated`/`anon`/`service_role` roles) for the real migrations to

@@ -2475,6 +2475,240 @@ end $$;
 select set_config('app.current_user_id', '', false);
 reset role;
 
+-- ---------------------------------------------------------------------
+-- Lot 2a-bis -- admin resolution of a litige (migration 0026). Both
+-- outcomes, rejection once already resolved, rejection for a non-admin
+-- and for a NULL auth.uid(), and that faveur_fan genuinely rides the
+-- existing handle_transaction_remboursement() trigger rather than
+-- duplicating its effects.
+-- ---------------------------------------------------------------------
+
+-- Dedicated admin for this section only -- bootstrapped with no
+-- auth.uid() context, same mechanism as every other "dedicated admin for
+-- this section" fixture in this file (see the créateur-verification
+-- section above).
+insert into users (id) values ('b17ec001-0001-0001-0001-000000000001');
+update users set est_admin = true where id = 'b17ec001-0001-0001-0001-000000000001';
+
+-- faveur_fan: resolve the shoutout dispute from the Lot 2a section above
+-- (c0f10002, still confirmation_fan='conteste' at this point). Chosen
+-- deliberately reused rather than creating a fresh one, precisely to
+-- prove resoudre_litige finds and resolves an old dispute correctly.
+select set_config('app.current_user_id', 'b17ec001-0001-0001-0001-000000000001', false);
+select resoudre_litige('c0f10002-0002-0002-0002-000000000002', 'faveur_fan', 'vidéo hors-sujet, remboursé');
+select set_config('app.current_user_id', '', false);
+
+do $$
+declare
+  v_statut text;
+  v_confirmation text;
+  v_resolution text;
+  v_resolu_par uuid;
+  v_resolu_at timestamptz;
+  v_note text;
+  v_statut_paiement text;
+  v_necessite boolean;
+begin
+  select statut, confirmation_fan, litige_resolution, litige_resolu_par, litige_resolu_at, litige_note_admin,
+      necessite_remboursement_manuel
+    into v_statut, v_confirmation, v_resolution, v_resolu_par, v_resolu_at, v_note, v_necessite
+    from transactions where id = 'c0f10002-0002-0002-0002-000000000002';
+
+  if v_statut != 'remboursee' then
+    raise exception 'TEST FAILED: resoudre_litige(faveur_fan) left statut=% instead of remboursee', v_statut;
+  end if;
+  if v_confirmation != 'conteste' then
+    raise exception 'TEST FAILED: resoudre_litige(faveur_fan) should not touch confirmation_fan (still expected conteste), got %', v_confirmation;
+  end if;
+  if v_resolution != 'faveur_fan' then
+    raise exception 'TEST FAILED: litige_resolution was % instead of faveur_fan', v_resolution;
+  end if;
+  if v_resolu_par != 'b17ec001-0001-0001-0001-000000000001' then
+    raise exception 'TEST FAILED: litige_resolu_par was % instead of the resolving admin', v_resolu_par;
+  end if;
+  if v_resolu_at is null then
+    raise exception 'TEST FAILED: litige_resolu_at was not stamped';
+  end if;
+  if v_note != 'vidéo hors-sujet, remboursé' then
+    raise exception 'TEST FAILED: litige_note_admin was % instead of the note passed in', v_note;
+  end if;
+  if not v_necessite then
+    raise exception 'TEST FAILED: necessite_remboursement_manuel was not set -- the existing handle_transaction_remboursement() trigger should have fired on the transition into remboursee';
+  end if;
+
+  select statut_paiement into v_statut_paiement from paiements
+    where transaction_id = 'c0f10002-0002-0002-0002-000000000002';
+  if v_statut_paiement != 'rembourse' then
+    raise exception 'TEST FAILED: paiements.statut_paiement was % instead of rembourse -- resoudre_litige(faveur_fan) must ride the existing trigger, not duplicate it', v_statut_paiement;
+  end if;
+
+  raise notice 'PASS: resoudre_litige(faveur_fan) sets statut=remboursee and stamps the decision, and the existing handle_transaction_remboursement() trigger fires exactly as it would for any other refund (paiements.statut_paiement=rembourse, necessite_remboursement_manuel=true)';
+end $$;
+
+-- faveur_createur: a fresh disputed video delivery. Deliberately reuses
+-- the existing 'confirme' state (not a new one) -- see CLAUDE.md for why
+-- this is a design decision, not an oversight.
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('c0f10007-0007-0007-0007-000000000007',
+   '22222222-2222-2222-2222-222222222222',
+   '11111111-1111-1111-1111-111111111111',
+   '44444444-4444-4444-4444-444444444444', 10, 'validee');
+
+select set_config('app.current_user_id', '11111111-1111-1111-1111-111111111111', false);
+select deliver_video('c0f10007-0007-0007-0007-000000000007', 'videos/test7.mp4');
+select set_config('app.current_user_id', '22222222-2222-2222-2222-222222222222', false);
+select contester_livraison_fan('c0f10007-0007-0007-0007-000000000007');
+select set_config('app.current_user_id', '', false);
+
+select set_config('app.current_user_id', 'b17ec001-0001-0001-0001-000000000001', false);
+select resoudre_litige('c0f10007-0007-0007-0007-000000000007', 'faveur_createur', null);
+select set_config('app.current_user_id', '', false);
+
+do $$
+declare
+  v_statut text;
+  v_confirmation text;
+  v_confirme_at timestamptz;
+  v_resolution text;
+  v_note text;
+begin
+  select statut, confirmation_fan, confirme_at, litige_resolution, litige_note_admin
+    into v_statut, v_confirmation, v_confirme_at, v_resolution, v_note
+    from transactions where id = 'c0f10007-0007-0007-0007-000000000007';
+
+  if v_statut != 'livree' then
+    raise exception 'TEST FAILED: resoudre_litige(faveur_createur) changed statut to % (should stay livree)', v_statut;
+  end if;
+  if v_confirmation != 'confirme' then
+    raise exception 'TEST FAILED: resoudre_litige(faveur_createur) left confirmation_fan=% instead of reusing confirme', v_confirmation;
+  end if;
+  if v_confirme_at is null then
+    raise exception 'TEST FAILED: resoudre_litige(faveur_createur) did not stamp confirme_at -- Lot 2b''s wallet calculation would never see this as withdrawable';
+  end if;
+  if v_resolution != 'faveur_createur' then
+    raise exception 'TEST FAILED: litige_resolution was % instead of faveur_createur', v_resolution;
+  end if;
+  if v_note is not null then
+    raise exception 'TEST FAILED: litige_note_admin was % instead of null (none was passed)', v_note;
+  end if;
+
+  raise notice 'PASS: resoudre_litige(faveur_createur) reuses confirmation_fan=confirme and stamps confirme_at, making the transaction withdrawable exactly like a normal fan confirmation, with no new state to special-case';
+end $$;
+
+-- Rejection: an already-resolved litige cannot be resolved again.
+select set_config('app.current_user_id', 'b17ec001-0001-0001-0001-000000000001', false);
+do $$
+begin
+  begin
+    perform resoudre_litige('c0f10002-0002-0002-0002-000000000002', 'faveur_createur', null);
+    raise exception 'TEST FAILED: resoudre_litige succeeded a second time on an already-resolved litige';
+  exception when others then
+    if sqlerrm != 'transaction not found or already resolved' then
+      raise exception 'TEST FAILED: unexpected error re-resolving an already-resolved litige: %', sqlerrm;
+    end if;
+    raise notice 'PASS: resoudre_litige() rejects a transaction that is not (or no longer) an open litige';
+  end;
+end $$;
+select set_config('app.current_user_id', '', false);
+
+-- Rejection: a non-admin authenticated caller cannot resolve a litige.
+-- Deliberately uses '11111111' (the créateur on this very dispute) rather
+-- than '22222222' -- '22222222' was granted admin earlier in this file
+-- (via set_admin_status, in the "Admin role" section above) and never
+-- revoked, so it would not actually exercise the non-admin path; '11111111'
+-- had its admin status revoked in that same section and stays non-admin
+-- from that point on, which also nicely proves even the créateur with a
+-- stake in the outcome can't rule in their own favor.
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('c0f10008-0008-0008-0008-000000000008',
+   '22222222-2222-2222-2222-222222222222',
+   '11111111-1111-1111-1111-111111111111',
+   '77777777-7777-7777-7777-777777777777', 5, 'validee');
+select set_config('app.current_user_id', '11111111-1111-1111-1111-111111111111', false);
+select deliver_video('c0f10008-0008-0008-0008-000000000008', 'shoutouts/test8.mp4');
+select set_config('app.current_user_id', '22222222-2222-2222-2222-222222222222', false);
+select contester_livraison_fan('c0f10008-0008-0008-0008-000000000008');
+select set_config('app.current_user_id', '11111111-1111-1111-1111-111111111111', false);
+
+do $$
+begin
+  begin
+    perform resoudre_litige('c0f10008-0008-0008-0008-000000000008', 'faveur_createur', null);
+    raise exception 'TEST FAILED: a non-admin authenticated user was able to call resoudre_litige()';
+  exception when others then
+    if sqlerrm != 'not authorized' then
+      raise exception 'TEST FAILED: unexpected error: %', sqlerrm;
+    end if;
+    raise notice 'PASS: resoudre_litige() rejects a non-admin authenticated caller';
+  end;
+end $$;
+select set_config('app.current_user_id', '', false);
+
+-- Rejection: authenticated role with no auth.uid() at all (NULL) is
+-- rejected the same way -- `id = auth.uid()` never matches any row when
+-- auth.uid() is NULL, so `not exists(...)` is unconditionally true, same
+-- NULL-safe pattern already relied on for mark_remboursement_manuel_traite/
+-- set_admin_status (see migration 0021's audit).
+set role authenticated;
+do $$
+begin
+  begin
+    perform resoudre_litige('c0f10008-0008-0008-0008-000000000008', 'faveur_createur', null);
+    raise exception 'TEST FAILED: resoudre_litige() succeeded with auth.uid() IS NULL';
+  exception when others then
+    if sqlerrm != 'not authorized' then
+      raise exception 'TEST FAILED: unexpected error calling resoudre_litige() with a NULL auth.uid(): %', sqlerrm;
+    end if;
+    raise notice 'PASS: resoudre_litige() rejects a call with auth.uid() IS NULL';
+  end;
+end $$;
+reset role;
+
+-- anon has no EXECUTE at all -- real Postgres permission check, same
+-- revoke/grant discipline as every other admin RPC in this project.
+set role anon;
+do $$
+begin
+  begin
+    perform resoudre_litige('c0f10008-0008-0008-0008-000000000008', 'faveur_createur', null);
+    raise exception 'TEST FAILED: anon was able to call resoudre_litige() at all';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE privilege on resoudre_litige() (migration 0026)';
+  end;
+end $$;
+reset role;
+
+-- None of the rejected attempts above should have left any trace on the
+-- targeted transaction.
+do $$
+declare
+  v_confirmation text;
+  v_resolution text;
+begin
+  select confirmation_fan, litige_resolution into v_confirmation, v_resolution
+    from transactions where id = 'c0f10008-0008-0008-0008-000000000008';
+
+  if v_confirmation != 'conteste' then
+    raise exception 'TEST FAILED: a rejected resoudre_litige call mutated confirmation_fan to %', v_confirmation;
+  end if;
+  if v_resolution is not null then
+    raise exception 'TEST FAILED: a rejected resoudre_litige call set litige_resolution to %', v_resolution;
+  end if;
+  raise notice 'PASS: none of the rejected resoudre_litige attempts left any trace';
+end $$;
+
+-- Positive confirmation the legitimate caller still has EXECUTE.
+do $$
+begin
+  if not has_function_privilege('authenticated', 'resoudre_litige(uuid,text,text)', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lost EXECUTE on resoudre_litige()';
+  end if;
+  raise notice 'PASS: authenticated still has EXECUTE on resoudre_litige()';
+end $$;
+
+select set_config('app.current_user_id', '', false);
+reset role;
+
 do $$
 begin
   raise notice 'ALL SQL CHECKLIST TESTS PASSED';

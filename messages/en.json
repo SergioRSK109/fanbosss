@@ -387,7 +387,10 @@
     "litigesHeading": "Disputes pending",
     "litigesIntro": "Videos/shoutouts the fan flagged as a problem (see CLAUDE.md “Fan confirmation state”). Money isn't refunded automatically -- these cases need a manual review.",
     "litiges": {
-      "empty": "No dispute pending."
+      "empty": "No dispute pending.",
+      "trancherCreateur": "Rule in favor of the créateur",
+      "trancherFan": "Rule in favor of the fan",
+      "notePlaceholder": "Note (optional)"
     }
   }
 }

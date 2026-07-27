@@ -1,4 +1,10 @@
-import { getLocale, getTranslations } from "next-intl/server";
+"use client";
+
+import { useLocale, useTranslations } from "next-intl";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+import { buttonClass } from "@/components/ui/button-styles";
+import { inputClass } from "@/components/ui/field-styles";
 import type { OffreType } from "@/lib/validation";
 
 export interface LitigeEnAttente {
@@ -18,21 +24,45 @@ function formatDate(iso: string, locale: string): string {
   });
 }
 
-// Lot 2a: video/shoutout deliveries a fan flagged via "Signaler un
-// problème" (contester_livraison_fan(), migration 0025). Deliberately
-// read-only for now, unlike RemboursementsManuelsManager's "Marquer
-// comme traité" button -- no resolution mechanism (approve, dismiss,
-// manually refund...) was part of this lot's scope, and the underlying
-// schema has no flag to clear even if a button were added here. This is
-// a visibility worklist only; see CLAUDE.md for why. Oldest first, same
-// "longest-overdue surfaces first" principle as the manual-refunds list
-// -- ordered by created_at (transaction creation), the only timestamp
-// this schema actually has for these rows (contesting doesn't stamp its
-// own timestamp, only confirming does via confirme_at).
-export async function LitigesManager({ litiges }: { litiges: LitigeEnAttente[] }) {
-  const t = await getTranslations("Admin.litiges");
-  const tOffers = await getTranslations("CreateurProfile.offerTypes");
-  const locale = await getLocale();
+// Lot 2a-bis: video/shoutout deliveries a fan flagged as a problem
+// (migration 0025), now resolvable by an admin (migration 0026) via
+// resoudre_litige() -- same client-side pattern as
+// RemboursementsManuelsManager (per-row pendingId/error state,
+// router.refresh() on success so a resolved litige disappears from the
+// list via the parent's fresh server data, not local state -- the
+// page's own query already excludes anything with litige_resolu_at set).
+// Oldest first, same "longest-overdue surfaces first" principle as the
+// manual-refunds list.
+export function LitigesManager({ litiges }: { litiges: LitigeEnAttente[] }) {
+  const t = useTranslations("Admin.litiges");
+  const tCommon = useTranslations("Common");
+  const tOffers = useTranslations("CreateurProfile.offerTypes");
+  const locale = useLocale();
+  const router = useRouter();
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [errorById, setErrorById] = useState<Record<string, string>>({});
+  const [noteById, setNoteById] = useState<Record<string, string>>({});
+
+  async function handleResoudre(id: string, decision: "faveur_createur" | "faveur_fan") {
+    setPendingId(id);
+    setErrorById((prev) => ({ ...prev, [id]: "" }));
+
+    const response = await fetch("/api/admin/resoudre-litige", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ transactionId: id, decision, note: noteById[id] ?? "" }),
+    });
+    const body = await response.json();
+
+    if (!response.ok) {
+      setErrorById((prev) => ({ ...prev, [id]: body.error ?? tCommon("unknownError") }));
+      setPendingId(null);
+      return;
+    }
+
+    setPendingId(null);
+    router.refresh();
+  }
 
   if (litiges.length === 0) {
     return <p className="text-sm text-foreground-muted">{t("empty")}</p>;
@@ -51,6 +81,34 @@ export async function LitigesManager({ litiges }: { litiges: LitigeEnAttente[] }
               {formatDate(litige.createdAt, locale)}
             </span>
           </div>
+          <input
+            type="text"
+            value={noteById[litige.id] ?? ""}
+            onChange={(event) =>
+              setNoteById((prev) => ({ ...prev, [litige.id]: event.target.value }))
+            }
+            placeholder={t("notePlaceholder")}
+            className={`${inputClass} w-full`}
+          />
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={pendingId === litige.id}
+              onClick={() => handleResoudre(litige.id, "faveur_createur")}
+              className={buttonClass("success", "sm")}
+            >
+              {pendingId === litige.id ? tCommon("saving") : t("trancherCreateur")}
+            </button>
+            <button
+              type="button"
+              disabled={pendingId === litige.id}
+              onClick={() => handleResoudre(litige.id, "faveur_fan")}
+              className={buttonClass("danger", "sm")}
+            >
+              {pendingId === litige.id ? tCommon("saving") : t("trancherFan")}
+            </button>
+          </div>
+          {errorById[litige.id] && <p className="text-sm text-danger-600">{errorById[litige.id]}</p>}
         </li>
       ))}
     </ul>
