@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { GestionAdminsManager, type AdminManageableUser } from "@/components/admin/GestionAdminsManager";
+import { LitigesManager, type LitigeEnAttente } from "@/components/admin/LitigesManager";
 import {
   RemboursementsManuelsManager,
   type RemboursementManuel,
@@ -11,6 +12,7 @@ import {
 } from "@/components/admin/VerificationsManager";
 import { resolveDisplayName } from "@/lib/profil";
 import { createSupabaseServerClient, createSupabaseServiceRoleClient } from "@/lib/supabase/server";
+import type { OffreType } from "@/lib/validation";
 import type { PlateformeVerification } from "@/lib/verification";
 
 // Business admin dashboard, gated by users.est_admin -- a real DB-level
@@ -56,6 +58,7 @@ export default async function AdminPage() {
   const [
     { data: monthTransactions },
     { data: manualRefundRows },
+    { data: litigeRows },
     { data: allUsers },
     { data: authUsersPage },
     { data: verificationRows },
@@ -68,6 +71,14 @@ export default async function AdminPage() {
       .from("transactions")
       .select("id, montant, created_at, createur_id, fan_id")
       .eq("necessite_remboursement_manuel", true)
+      .order("created_at", { ascending: true }),
+    // Lot 2a: video/shoutout deliveries a fan flagged as a problem
+    // (migration 0025) -- confirmation_fan only ever reaches 'conteste'
+    // for those two types, so no extra type filter is needed here.
+    serviceSupabase
+      .from("transactions")
+      .select("id, montant, created_at, createur_id, fan_id, offres(type)")
+      .eq("confirmation_fan", "conteste")
       .order("created_at", { ascending: true }),
     serviceSupabase.from("users").select("id, pseudo, nom_affichage, est_admin"),
     serviceSupabase.auth.admin.listUsers({ page: 1, perPage: 1000 }),
@@ -124,6 +135,18 @@ export default async function AdminPage() {
     fanLabel: userLabelById.get(row.fan_id) ?? t("deletedUser"),
   }));
 
+  const litiges: LitigeEnAttente[] = (litigeRows ?? []).map((row) => {
+    const offre = Array.isArray(row.offres) ? row.offres[0] : row.offres;
+    return {
+      id: row.id,
+      montant: Number(row.montant),
+      offreType: (offre?.type ?? "video") as OffreType,
+      createdAt: row.created_at,
+      createurLabel: userLabelById.get(row.createur_id) ?? t("deletedUser"),
+      fanLabel: userLabelById.get(row.fan_id) ?? t("deletedUser"),
+    };
+  });
+
   const emailById = new Map(
     (authUsersPage?.users ?? []).map((u) => [u.id, u.email ?? null]),
   );
@@ -179,6 +202,19 @@ export default async function AdminPage() {
         </h2>
         <p className="mb-3 text-sm text-foreground-muted">{t("remboursementsIntro")}</p>
         <RemboursementsManuelsManager remboursements={remboursementsManuels} />
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-lg font-bold">
+          {t("litigesHeading")}
+          {litiges.length > 0 && (
+            <span className="ml-2 rounded-full bg-accent-500 px-2 py-0.5 text-xs font-bold text-white">
+              {litiges.length}
+            </span>
+          )}
+        </h2>
+        <p className="mb-3 text-sm text-foreground-muted">{t("litigesIntro")}</p>
+        <LitigesManager litiges={litiges} />
       </section>
 
       <section>

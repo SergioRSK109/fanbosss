@@ -47,9 +47,28 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: campagnesError.message }, { status: 500 });
   }
 
+  // Lot 2a: a fan who never confirms or disputes a delivered video/
+  // shoutout within 72h is treated as satisfied by default -- see
+  // supabase/migrations/0025_confirmation_fan_video_shoutout.sql. Kept as
+  // its own RPC (never folded into process_transaction_deadlines()
+  // above) specifically because that function's rows all get run through
+  // processAutomaticRefund() -- an auto-confirmed transaction never
+  // becomes 'remboursee', so mixing the two return channels would either
+  // need a discriminator or rely on processAutomaticRefund()'s no-op
+  // re-read for a non-refund row. A third RPC call is the same pattern
+  // close_expired_campagnes() above already established.
+  const { data: confirmedByDeadline, error: confirmationError } = await supabase.rpc(
+    "process_confirmation_deadlines",
+  );
+
+  if (confirmationError) {
+    return NextResponse.json({ error: confirmationError.message }, { status: 500 });
+  }
+
   return NextResponse.json({
     status: "ok",
     refunded: data ?? [],
     campagnesClosed: closedCampagnes ?? [],
+    confirmedByDeadline: confirmedByDeadline ?? [],
   });
 }

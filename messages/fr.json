@@ -204,7 +204,9 @@
       "enAttenteAvecDeadline": "En attente de réponse du créateur (réponse attendue avant le {date})",
       "enAttenteSansDeadline": "En attente de réponse du créateur",
       "valideeAvecDeadline": "Accepté, en préparation (livraison prévue avant le {date})",
-      "valideeSansDeadline": "Accepté, en préparation"
+      "valideeSansDeadline": "Accepté, en préparation",
+      "livreeEnAttenteConfirmation": "Livré -- confirme la réception avant le {date}, sinon considéré comme reçu automatiquement.",
+      "livreeConteste": "Signalé -- en cours de révision par notre équipe."
     },
     "classementProgres": {
       "heading": "Ta progression vers le top 10 (30 derniers jours)",
@@ -241,6 +243,10 @@
       },
       "open": "Ouvrir →",
       "unavailable": "indisponible"
+    },
+    "confirmation": {
+      "satisfait": "Satisfait",
+      "signalerProbleme": "Signaler un problème"
     }
   },
   "Verification": {
@@ -377,6 +383,11 @@
       "kycNotice": "Ce cas nécessite une vérification d'identité par un prestataire tiers (KYC) -- aucun badge ne doit être accordé à aucun des comptes en conflit tant que ce n'est pas résolu manuellement.",
       "approuver": "Approuver",
       "refuser": "Refuser"
+    },
+    "litigesHeading": "Litiges en attente",
+    "litigesIntro": "Vidéos/shoutouts signalés comme problématiques par le fan (voir CLAUDE.md « État de confirmation fan »). L'argent n'est pas remboursé automatiquement -- ces cas nécessitent une revue manuelle.",
+    "litiges": {
+      "empty": "Aucun litige en attente."
     }
   }
 }
