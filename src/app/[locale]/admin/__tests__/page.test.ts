@@ -39,6 +39,10 @@ vi.mock("@/components/admin/LitigesManager", () => ({
   LitigesManager: () => null,
 }));
 
+vi.mock("@/components/admin/RetraitsManager", () => ({
+  RetraitsManager: () => null,
+}));
+
 import {
   createSupabaseServerClient,
   createSupabaseServiceRoleClient,

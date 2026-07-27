@@ -185,14 +185,13 @@
   "Dashboard": {
     "heading": "My FanBoss space",
     "settings": "⚙️ Settings",
+    "finance": "💰 Finance",
     "publicProfileLabel": "Your public profile: ",
     "noPseudoYet": "no handle yet — ",
     "choosePseudo": "choose one",
     "demandesHeading": "Requests awaiting your response",
     "nouvellesDemandes": "{count, plural, one {# new} other {# new}}",
     "offresHeading": "Your offers",
-    "envoyeesHeading": "Payments sent to other créateurs",
-    "noPaiementsEnvoyes": "No payment sent.",
     "statutShort": {
       "en_attente": "Pending",
       "validee": "Accepted",
@@ -391,6 +390,40 @@
       "trancherCreateur": "Rule in favor of the créateur",
       "trancherFan": "Rule in favor of the fan",
       "notePlaceholder": "Note (optional)"
+    },
+    "retraitsHeading": "Withdrawal requests pending",
+    "retraitsIntro": "A créateur's withdrawal requests against their wallet balance (minimum $25). “Mark handled” means a real manual transfer has already been made outside the app -- there is still no automated payout in this project.",
+    "retraits": {
+      "empty": "No withdrawal request pending.",
+      "markTraite": "Mark handled",
+      "refuser": "Refuse",
+      "notePlaceholder": "Note (optional)"
     }
+  },
+  "Finance": {
+    "heading": "Finance",
+    "backToDashboard": "Back to dashboard",
+    "blocEnAttenteLivraison": "Awaiting delivery",
+    "blocEnLitige": "In dispute",
+    "blocNetARetirer": "Net withdrawable",
+    "retraitHeading": "Request a withdrawal",
+    "retraitForm": {
+      "threshold": "Minimum balance to request a withdrawal: $25.",
+      "montantLabel": "Amount to withdraw",
+      "submit": "Request a withdrawal",
+      "sending": "Sending…",
+      "success": "Request sent -- an admin will process it.",
+      "unknownError": "Something went wrong."
+    },
+    "historiqueRecuHeading": "Payments received",
+    "historiqueRecuBucket": {
+      "en_attente_livraison": "Awaiting delivery",
+      "en_litige": "In dispute",
+      "disponible": "Available",
+      "rembourse": "Refunded"
+    },
+    "noHistoriqueRecu": "No payment received.",
+    "historiqueEnvoyeHeading": "Payments sent to other créateurs",
+    "noHistoriqueEnvoye": "No payment sent."
   }
 }

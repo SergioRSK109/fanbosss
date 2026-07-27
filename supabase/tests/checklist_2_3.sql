@@ -2709,6 +2709,475 @@ end $$;
 select set_config('app.current_user_id', '', false);
 reset role;
 
+-- ---------------------------------------------------------------------
+-- Lot 2b -- wallet ledger + withdrawal requests (migration 0027). Fresh
+-- créateur/fan fixtures used throughout, so the three bucket sums below
+-- can be asserted against exact expected numbers rather than against
+-- whatever this file's shared '11111111'/'22222222' fixtures have
+-- accumulated by this point.
+-- ---------------------------------------------------------------------
+insert into users (id) values
+  ('ba1a0001-0001-0001-0001-000000000001'), -- créateur C
+  ('ba1a0002-0002-0002-0002-000000000002'), -- fan F
+  ('ba1a0003-0003-0003-0003-000000000003'); -- créateur C2 (unrelated third party)
+
+insert into offres (id, createur_id, type, prix) values
+  ('ba1a0010-0010-0010-0010-000000000010', 'ba1a0001-0001-0001-0001-000000000001', 'video', 100),
+  ('ba1a0011-0011-0011-0011-000000000011', 'ba1a0001-0001-0001-0001-000000000001', 'whatsapp', 20);
+
+-- T1: validee but not yet delivered -- paiements.statut_paiement stays
+-- 'initie' (create_paiement_on_validation() only fires on the transition
+-- INTO validee; handle_transaction_livraison() is what later flips it to
+-- 'reussi', and that never happens here). Expected net for a $100
+-- transaction under the current 15% HT + TVA formula (migration 0024):
+-- commission_ht=15, tva=2.4, net=82.6 -- see CLAUDE.md "Commission rate".
+--
+-- Inserted as en_attente and then UPDATEd to validee, deliberately NOT
+-- inserted directly as 'validee' -- create_paiement_on_validation() is an
+-- `after update on transactions` trigger (migration 0002), so it never
+-- fires on a plain INSERT; without this two-step, no paiements row would
+-- ever be created at all for these fixtures. Mirrors what
+-- accept_transaction()'s own first UPDATE does internally.
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('ba1a0100-0100-0100-0100-000000000100',
+   'ba1a0002-0002-0002-0002-000000000002',
+   'ba1a0001-0001-0001-0001-000000000001',
+   'ba1a0010-0010-0010-0010-000000000010', 100, 'en_attente');
+update transactions set statut = 'validee' where id = 'ba1a0100-0100-0100-0100-000000000100';
+
+-- T2: delivered, then disputed -- lands in en_litige until resolved.
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('ba1a0101-0101-0101-0101-000000000101',
+   'ba1a0002-0002-0002-0002-000000000002',
+   'ba1a0001-0001-0001-0001-000000000001',
+   'ba1a0010-0010-0010-0010-000000000010', 100, 'en_attente');
+update transactions set statut = 'validee' where id = 'ba1a0101-0101-0101-0101-000000000101';
+select set_config('app.current_user_id', 'ba1a0001-0001-0001-0001-000000000001', false);
+select deliver_video('ba1a0101-0101-0101-0101-000000000101', 'videos/wallet-test-2.mp4');
+select set_config('app.current_user_id', 'ba1a0002-0002-0002-0002-000000000002', false);
+select contester_livraison_fan('ba1a0101-0101-0101-0101-000000000101');
+select set_config('app.current_user_id', '', false);
+
+-- T3: delivered and confirmed -- lands in net_a_retirer via confirmation_fan='confirme'.
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('ba1a0102-0102-0102-0102-000000000102',
+   'ba1a0002-0002-0002-0002-000000000002',
+   'ba1a0001-0001-0001-0001-000000000001',
+   'ba1a0010-0010-0010-0010-000000000010', 100, 'en_attente');
+update transactions set statut = 'validee' where id = 'ba1a0102-0102-0102-0102-000000000102';
+select set_config('app.current_user_id', 'ba1a0001-0001-0001-0001-000000000001', false);
+select deliver_video('ba1a0102-0102-0102-0102-000000000102', 'videos/wallet-test-3.mp4');
+select set_config('app.current_user_id', 'ba1a0002-0002-0002-0002-000000000002', false);
+select confirmer_livraison_fan('ba1a0102-0102-0102-0102-000000000102');
+select set_config('app.current_user_id', '', false);
+
+-- T4: whatsapp -- acceptance cascades straight to livree with
+-- confirmation_fan='non_applicable', the *other* value net_a_retirer
+-- counts. $20 under the 15% HT + TVA formula: commission_ht=3, tva=0.48,
+-- net=16.52.
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('ba1a0103-0103-0103-0103-000000000103',
+   'ba1a0002-0002-0002-0002-000000000002',
+   'ba1a0001-0001-0001-0001-000000000001',
+   'ba1a0011-0011-0011-0011-000000000011', 20, 'en_attente');
+select set_config('app.current_user_id', 'ba1a0001-0001-0001-0001-000000000001', false);
+select accept_transaction('ba1a0103-0103-0103-0103-000000000103');
+select set_config('app.current_user_id', '', false);
+
+-- Solde before any litige resolution or withdrawal request:
+-- en_attente_livraison=82.6 (T1), en_litige=82.6 (T2), net_a_retirer=99.12 (T3+T4).
+select set_config('app.current_user_id', 'ba1a0001-0001-0001-0001-000000000001', false);
+do $$
+declare
+  v_solde record;
+begin
+  select * into v_solde from solde_wallet_createur('ba1a0001-0001-0001-0001-000000000001');
+
+  if v_solde.en_attente_livraison != 82.6 then
+    raise exception 'TEST FAILED: en_attente_livraison was % instead of 82.6', v_solde.en_attente_livraison;
+  end if;
+  if v_solde.en_litige != 82.6 then
+    raise exception 'TEST FAILED: en_litige was % instead of 82.6', v_solde.en_litige;
+  end if;
+  if v_solde.net_a_retirer != 99.12 then
+    raise exception 'TEST FAILED: net_a_retirer was % instead of 99.12', v_solde.net_a_retirer;
+  end if;
+  raise notice 'PASS: solde_wallet_createur() computes all three buckets correctly (en_attente_livraison=82.6, en_litige=82.6, net_a_retirer=99.12)';
+end $$;
+select set_config('app.current_user_id', '', false);
+
+-- A litige resolved faveur_createur must move straight into
+-- net_a_retirer with NO special code anywhere in this formula -- it
+-- reuses confirmation_fan='confirme', already covered by the exact same
+-- `in ('confirme', 'non_applicable')` clause a normal confirmation is.
+-- Reuses the dedicated admin bootstrapped earlier in this file for the
+-- Lot 2a-bis section ('b17ec001...', still admin, never revoked).
+select set_config('app.current_user_id', 'b17ec001-0001-0001-0001-000000000001', false);
+select resoudre_litige('ba1a0101-0101-0101-0101-000000000101', 'faveur_createur', null);
+select set_config('app.current_user_id', '', false);
+
+select set_config('app.current_user_id', 'ba1a0001-0001-0001-0001-000000000001', false);
+do $$
+declare
+  v_solde record;
+begin
+  select * into v_solde from solde_wallet_createur('ba1a0001-0001-0001-0001-000000000001');
+
+  if v_solde.en_litige != 0 then
+    raise exception 'TEST FAILED: en_litige was % instead of 0 after the litige was resolved faveur_createur', v_solde.en_litige;
+  end if;
+  if v_solde.net_a_retirer != 181.72 then
+    raise exception 'TEST FAILED: net_a_retirer was % instead of 181.72 (99.12 + T2''s 82.6) after the litige was resolved faveur_createur', v_solde.net_a_retirer;
+  end if;
+  if v_solde.en_attente_livraison != 82.6 then
+    raise exception 'TEST FAILED: en_attente_livraison was % instead of 82.6 -- resolving the litige must not touch T1', v_solde.en_attente_livraison;
+  end if;
+  raise notice 'PASS: a litige resolved faveur_createur is counted in net_a_retirer with no special-case code -- it already satisfies the same confirmation_fan in (confirme, non_applicable) clause a normal confirmation does';
+end $$;
+
+-- demander_retrait(): server-side re-validation, never trusting a
+-- client-sent amount.
+do $$
+begin
+  begin
+    perform demander_retrait(10);
+    raise exception 'TEST FAILED: demander_retrait succeeded under the $25 minimum';
+  exception when others then
+    if sqlerrm != 'le montant minimum de retrait est 25$' then
+      raise exception 'TEST FAILED: unexpected error: %', sqlerrm;
+    end if;
+    raise notice 'PASS: demander_retrait() rejects a montant under the $25 minimum';
+  end;
+end $$;
+
+-- Simulates a falsified/oversized amount sent directly via RPC (the only
+-- kind of "client-controlled amount" that exists here, since
+-- demander_retrait always recomputes the real balance itself rather than
+-- trusting anything the caller sends).
+do $$
+begin
+  begin
+    perform demander_retrait(999999);
+    raise exception 'TEST FAILED: demander_retrait succeeded for an amount far beyond the real balance';
+  exception when others then
+    if sqlerrm != 'le montant demandé dépasse le solde disponible' then
+      raise exception 'TEST FAILED: unexpected error: %', sqlerrm;
+    end if;
+    raise notice 'PASS: demander_retrait() rejects a montant beyond the real (server-recomputed) balance, including a direct RPC call with a falsified amount';
+  end;
+end $$;
+
+do $$
+declare
+  v_count integer;
+begin
+  select count(*) into v_count from demandes_retrait
+    where createur_id = 'ba1a0001-0001-0001-0001-000000000001';
+  if v_count != 0 then
+    raise exception 'TEST FAILED: a rejected demander_retrait call left % row(s) behind', v_count;
+  end if;
+  raise notice 'PASS: neither rejected demander_retrait attempt left a row behind';
+end $$;
+
+-- A legitimate request: $100 out of the real 181.72 balance.
+select demander_retrait(100);
+
+do $$
+declare
+  v_solde record;
+begin
+  select * into v_solde from solde_wallet_createur('ba1a0001-0001-0001-0001-000000000001');
+  if v_solde.net_a_retirer != 81.72 then
+    raise exception 'TEST FAILED: net_a_retirer was % instead of 81.72 after a pending $100 withdrawal request', v_solde.net_a_retirer;
+  end if;
+  raise notice 'PASS: a pending (en_attente) withdrawal request is subtracted from net_a_retirer immediately, before any admin decision';
+end $$;
+select set_config('app.current_user_id', '', false);
+
+-- Ownership: a different, unrelated créateur can never act on C's request
+-- (traiter_retrait requires admin, not just "any authenticated user").
+-- Note on scope: demandes_retrait_select_own's RLS policy (the "voit"
+-- half of "un créateur ne voit/ni ne traite jamais les demandes d'un
+-- autre") is not exercised here via a direct SELECT -- this whole
+-- checklist file runs as the postgres superuser, which bypasses RLS
+-- entirely regardless of app.current_user_id (RLS only ever restricts
+-- non-owner, non-superuser roles with real table grants, which this
+-- local stub_auth.sql harness deliberately doesn't replicate for
+-- authenticated/anon -- see stub_auth.sql's own comment). No other table
+-- policy in this project is verified this way in this file either; the
+-- guarantee that actually IS testable here, and the one that matters for
+-- preventing real harm, is that only a genuine admin can act on any
+-- demande at all -- checked below.
+select set_config('app.current_user_id', 'ba1a0003-0003-0003-0003-000000000003', false);
+do $$
+declare
+  v_demande_id uuid;
+begin
+  select id into v_demande_id from demandes_retrait
+    where createur_id = 'ba1a0001-0001-0001-0001-000000000001'
+    order by demande_at desc limit 1;
+
+  begin
+    perform traiter_retrait(v_demande_id, 'traite', null);
+    raise exception 'TEST FAILED: an unrelated, non-admin créateur was able to call traiter_retrait()';
+  exception when others then
+    if sqlerrm != 'not authorized' then
+      raise exception 'TEST FAILED: unexpected error: %', sqlerrm;
+    end if;
+    raise notice 'PASS: traiter_retrait() rejects a non-admin caller, even one who isn''t the créateur on the request either';
+  end;
+end $$;
+select set_config('app.current_user_id', '', false);
+
+-- Not even the requesting créateur themselves can self-approve their own
+-- withdrawal -- traiter_retrait requires est_admin, full stop.
+select set_config('app.current_user_id', 'ba1a0001-0001-0001-0001-000000000001', false);
+do $$
+declare
+  v_demande_id uuid;
+begin
+  select id into v_demande_id from demandes_retrait
+    where createur_id = 'ba1a0001-0001-0001-0001-000000000001'
+    order by demande_at desc limit 1;
+
+  begin
+    perform traiter_retrait(v_demande_id, 'traite', null);
+    raise exception 'TEST FAILED: a créateur was able to self-approve their own withdrawal request';
+  exception when others then
+    if sqlerrm != 'not authorized' then
+      raise exception 'TEST FAILED: unexpected error: %', sqlerrm;
+    end if;
+    raise notice 'PASS: traiter_retrait() rejects the requesting créateur themselves -- only a real admin can process a withdrawal';
+  end;
+end $$;
+select set_config('app.current_user_id', '', false);
+
+-- The admin processes it for real.
+do $$
+declare
+  v_demande_id uuid;
+  v_statut text;
+  v_traite_par uuid;
+  v_traite_at timestamptz;
+  v_note text;
+begin
+  select id into v_demande_id from demandes_retrait
+    where createur_id = 'ba1a0001-0001-0001-0001-000000000001'
+    order by demande_at desc limit 1;
+
+  perform set_config('app.current_user_id', 'b17ec001-0001-0001-0001-000000000001', true);
+  perform traiter_retrait(v_demande_id, 'traite', 'viré par Mobile Money le 27/07');
+  perform set_config('app.current_user_id', '', true);
+
+  select statut, traite_par, traite_at, note_admin
+    into v_statut, v_traite_par, v_traite_at, v_note
+    from demandes_retrait where id = v_demande_id;
+
+  if v_statut != 'traite' then
+    raise exception 'TEST FAILED: statut was % instead of traite', v_statut;
+  end if;
+  if v_traite_par != 'b17ec001-0001-0001-0001-000000000001' then
+    raise exception 'TEST FAILED: traite_par was % instead of the admin who processed it', v_traite_par;
+  end if;
+  if v_traite_at is null then
+    raise exception 'TEST FAILED: traite_at was not stamped';
+  end if;
+  if v_note != 'viré par Mobile Money le 27/07' then
+    raise exception 'TEST FAILED: note_admin was % instead of the note passed in', v_note;
+  end if;
+  raise notice 'PASS: traiter_retrait(traite) marks a withdrawal request handled and stamps who/when/why';
+end $$;
+
+-- A 'traite' request still counts against net_a_retirer exactly like a
+-- still-pending one does (statut != 'refuse') -- the money has actually
+-- left the wallet for good now, not just been provisionally reserved.
+select set_config('app.current_user_id', 'ba1a0001-0001-0001-0001-000000000001', false);
+do $$
+declare
+  v_solde record;
+begin
+  select * into v_solde from solde_wallet_createur('ba1a0001-0001-0001-0001-000000000001');
+  if v_solde.net_a_retirer != 81.72 then
+    raise exception 'TEST FAILED: net_a_retirer was % instead of 81.72 after the withdrawal was marked traite (should be unchanged from the pending state)', v_solde.net_a_retirer;
+  end if;
+  raise notice 'PASS: a traite withdrawal request still counts against net_a_retirer, same as when it was pending';
+end $$;
+
+-- A second decision on the same request is rejected.
+do $$
+declare
+  v_demande_id uuid;
+begin
+  select id into v_demande_id from demandes_retrait
+    where createur_id = 'ba1a0001-0001-0001-0001-000000000001' and statut = 'traite'
+    order by traite_at desc limit 1;
+
+  perform set_config('app.current_user_id', 'b17ec001-0001-0001-0001-000000000001', true);
+  begin
+    perform traiter_retrait(v_demande_id, 'refuse', null);
+    raise exception 'TEST FAILED: traiter_retrait succeeded a second time on an already-handled request';
+  exception when others then
+    if sqlerrm != 'demande not found or already handled' then
+      raise exception 'TEST FAILED: unexpected error: %', sqlerrm;
+    end if;
+    raise notice 'PASS: traiter_retrait() rejects a request that is not (or no longer) en_attente';
+  end;
+  perform set_config('app.current_user_id', '', true);
+end $$;
+
+-- A second, smaller request that gets REFUSED must not permanently
+-- reduce net_a_retirer -- only a non-'refuse' statut counts, per the
+-- formula.
+select demander_retrait(30);
+
+do $$
+declare
+  v_solde record;
+begin
+  select * into v_solde from solde_wallet_createur('ba1a0001-0001-0001-0001-000000000001');
+  if v_solde.net_a_retirer != 51.72 then
+    raise exception 'TEST FAILED: net_a_retirer was % instead of 51.72 with the second ($30) request still pending', v_solde.net_a_retirer;
+  end if;
+end $$;
+select set_config('app.current_user_id', '', false);
+
+do $$
+declare
+  v_demande_id uuid;
+begin
+  select id into v_demande_id from demandes_retrait
+    where createur_id = 'ba1a0001-0001-0001-0001-000000000001' and statut = 'en_attente'
+    order by demande_at desc limit 1;
+
+  perform set_config('app.current_user_id', 'b17ec001-0001-0001-0001-000000000001', true);
+  perform traiter_retrait(v_demande_id, 'refuse', 'preuve de virement manquante');
+  perform set_config('app.current_user_id', '', true);
+end $$;
+
+select set_config('app.current_user_id', 'ba1a0001-0001-0001-0001-000000000001', false);
+do $$
+declare
+  v_solde record;
+begin
+  select * into v_solde from solde_wallet_createur('ba1a0001-0001-0001-0001-000000000001');
+  if v_solde.net_a_retirer != 81.72 then
+    raise exception 'TEST FAILED: net_a_retirer was % instead of 81.72 -- a refused request must stop counting against the balance', v_solde.net_a_retirer;
+  end if;
+  raise notice 'PASS: a refused withdrawal request no longer counts against net_a_retirer, while a traite one still does (81.72)';
+end $$;
+select set_config('app.current_user_id', '', false);
+
+-- Security: same discipline as every RPC since migration 0020 -- anon has
+-- no EXECUTE at all on any of the three new functions, and
+-- authenticated-but-NULL-auth.uid() is rejected by each function's own
+-- check. Also: solde_wallet_createur can never be asked for someone
+-- else's balance.
+select set_config('app.current_user_id', 'ba1a0003-0003-0003-0003-000000000003', false);
+do $$
+begin
+  begin
+    perform solde_wallet_createur('ba1a0001-0001-0001-0001-000000000001');
+    raise exception 'TEST FAILED: an unrelated authenticated user was able to read another créateur''s wallet balance';
+  exception when others then
+    if sqlerrm != 'not authorized' then
+      raise exception 'TEST FAILED: unexpected error: %', sqlerrm;
+    end if;
+    raise notice 'PASS: solde_wallet_createur() rejects a caller asking for someone else''s balance';
+  end;
+end $$;
+select set_config('app.current_user_id', '', false);
+
+set role anon;
+do $$
+begin
+  begin
+    perform solde_wallet_createur('ba1a0001-0001-0001-0001-000000000001');
+    raise exception 'TEST FAILED: anon was able to call solde_wallet_createur() at all';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE privilege on solde_wallet_createur() (migration 0027)';
+  end;
+end $$;
+
+do $$
+begin
+  begin
+    perform demander_retrait(50);
+    raise exception 'TEST FAILED: anon was able to call demander_retrait() at all';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE privilege on demander_retrait() (migration 0027)';
+  end;
+end $$;
+
+do $$
+begin
+  begin
+    perform traiter_retrait('00000000-0000-0000-0000-000000000000', 'traite', null);
+    raise exception 'TEST FAILED: anon was able to call traiter_retrait() at all';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE privilege on traiter_retrait() (migration 0027)';
+  end;
+end $$;
+reset role;
+
+set role authenticated;
+do $$
+begin
+  begin
+    perform solde_wallet_createur('ba1a0001-0001-0001-0001-000000000001');
+    raise exception 'TEST FAILED: solde_wallet_createur() succeeded with auth.uid() IS NULL';
+  exception when others then
+    if sqlerrm != 'not authenticated' then
+      raise exception 'TEST FAILED: unexpected error calling solde_wallet_createur() with a NULL auth.uid(): %', sqlerrm;
+    end if;
+    raise notice 'PASS: solde_wallet_createur() rejects a call with auth.uid() IS NULL';
+  end;
+end $$;
+
+do $$
+begin
+  begin
+    perform demander_retrait(50);
+    raise exception 'TEST FAILED: demander_retrait() succeeded with auth.uid() IS NULL';
+  exception when others then
+    if sqlerrm != 'not authenticated' then
+      raise exception 'TEST FAILED: unexpected error calling demander_retrait() with a NULL auth.uid(): %', sqlerrm;
+    end if;
+    raise notice 'PASS: demander_retrait() rejects a call with auth.uid() IS NULL';
+  end;
+end $$;
+
+do $$
+begin
+  begin
+    perform traiter_retrait('00000000-0000-0000-0000-000000000000', 'traite', null);
+    raise exception 'TEST FAILED: traiter_retrait() succeeded with auth.uid() IS NULL';
+  exception when others then
+    if sqlerrm != 'not authorized' then
+      raise exception 'TEST FAILED: unexpected error calling traiter_retrait() with a NULL auth.uid(): %', sqlerrm;
+    end if;
+    raise notice 'PASS: traiter_retrait() rejects a call with auth.uid() IS NULL (the same NULL-safe est_admin check as resoudre_litige/mark_remboursement_manuel_traite)';
+  end;
+end $$;
+reset role;
+
+-- Positive confirmation the legitimate caller still has EXECUTE.
+do $$
+begin
+  if not has_function_privilege('authenticated', 'solde_wallet_createur(uuid)', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lost EXECUTE on solde_wallet_createur()';
+  end if;
+  if not has_function_privilege('authenticated', 'demander_retrait(numeric)', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lost EXECUTE on demander_retrait()';
+  end if;
+  if not has_function_privilege('authenticated', 'traiter_retrait(uuid,text,text)', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lost EXECUTE on traiter_retrait()';
+  end if;
+  raise notice 'PASS: authenticated still has EXECUTE on solde_wallet_createur()/demander_retrait()/traiter_retrait()';
+end $$;
+
+select set_config('app.current_user_id', '', false);
+reset role;
+
 do $$
 begin
   raise notice 'ALL SQL CHECKLIST TESTS PASSED';

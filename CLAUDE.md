@@ -677,6 +677,169 @@ guard); `anon` has no `EXECUTE` at all (real Postgres permission check);
 none of the rejected attempts left any trace; and `authenticated` still
 holds `EXECUTE` positively confirmed.
 
+## Wallet ledger + withdrawal requests (Lot 2b, migration `0027`)
+
+A créateur's earnings so far live entirely inside `paiements`/
+`transactions`, split across every row — there was no single place
+answering "how much can I actually withdraw right now." This lot adds
+that computation (never stored, always live, same discipline as
+`campagnes_montant_collecte`) plus a minimum-$25 withdrawal-request flow
+on top of it. **No automated payout exists anywhere in this codebase
+still** — same honesty as "Automatic CinetPay refunds" above: marking a
+request `traite` records that a human already sent the money manually
+outside the app, it never triggers a real transfer itself.
+
+**The three buckets, computed by one shared query, never duplicated**
+(same principle as `calculerRepartitionPaiement()`/
+`computeCampagneStatus()` elsewhere in this file):
+
+```
+en_attente_livraison = Σ montant_net_createur
+  où paiements.statut_paiement = 'initie'
+
+en_litige = Σ montant_net_createur
+  où paiements.statut_paiement = 'reussi' ET confirmation_fan = 'conteste'
+  ET litige_resolu_at IS NULL
+
+net_a_retirer = Σ montant_net_createur
+  où paiements.statut_paiement = 'reussi'
+  ET confirmation_fan IN ('confirme', 'non_applicable')
+  MOINS Σ demandes_retrait.montant où statut != 'refuse'
+```
+
+**`solde_wallet_createur(p_createur_id uuid)`** is the single SQL
+definition of all three — a `SECURITY DEFINER` function (needs to read
+across `paiements`/`transactions`/`demandes_retrait`, the same reason
+`mes_progres_classement()` is a function rather than a view+RLS policy),
+called from exactly two places: `demander_retrait()` below (to validate a
+request server-side) and `/finance`'s own display. It takes an explicit
+`p_createur_id` parameter — unlike `mes_progres_classement()`'s
+no-parameter, purely-self-referential shape — but still enforces
+`p_createur_id is distinct from auth.uid()` internally before doing
+anything else, so there is no way to ask for anyone else's balance
+through it; the parameter exists only so `demander_retrait()` can pass
+its own `auth.uid()` through to the one shared query rather than
+re-deriving the same numbers a second way. `revoke all ... from public` +
+`grant execute ... to authenticated` only, same pattern as every RPC
+since migration `0020`.
+
+**`net_a_retirer` is what makes the Lot 2a-bis design decision pay off,
+exactly as flagged when it was made**: `faveur_createur` resolutions
+reuse `confirmation_fan = 'confirme'` rather than a new state (see
+"Litige resolution" above), so a litige resolved in the créateur's favor
+already satisfies this formula's `confirmation_fan in ('confirme',
+'non_applicable')` clause with zero special-casing — verified directly
+in `checklist_2_3.sql` by resolving a real disputed transaction and
+confirming it moves from `en_litige` straight into `net_a_retirer` with
+no code path here even aware litige resolution exists.
+
+**`demander_retrait(p_montant numeric)`** — same `SECURITY DEFINER`
+discipline as every state-changing RPC since migration `0020`: requires
+`auth.uid()`, rejects `p_montant < 25` server-side (the client's own
+$25 minimum, `RETRAIT_MONTANT_MINIMUM` in `src/lib/wallet.ts`, is a UX
+convenience only — never trusted), and — the part that actually matters
+— **recomputes `net_a_retirer` itself, in SQL, via
+`solde_wallet_createur(auth.uid())`**, rejecting if `p_montant` exceeds
+that real, server-side number. There is no client-supplied balance
+anywhere in this path; a "falsified amount" attack is simply calling this
+RPC directly with a number larger than the real balance, which is exactly
+what `checklist_2_3.sql` does and confirms is rejected. Inserts the row
+at `'en_attente'` on success.
+
+**`traiter_retrait(p_id, p_decision, p_note default null)`** — same exact
+shape as `resoudre_litige()`/`mark_remboursement_manuel_traite()`:
+re-verifies `est_admin` internally (NULL-safe by construction, same
+reasoning as every other admin RPC), requires the target request to still
+be `'en_attente'` (a second decision on an already-handled request is
+rejected, never silently re-applied), and `revoke all ... from public` +
+`grant execute ... to authenticated` only. `'traite'` means a real manual
+transfer already happened outside the app — this RPC only records the
+decision (who, when, an optional note), it never moves money.
+
+**`demandes_retrait` has no INSERT/UPDATE policy for authenticated users
+at all** — same "state machine only via a vetted RPC" shape as
+`transactions`/`demandes_verification`. Its one RLS policy,
+`demandes_retrait_select_own` (`createur_id = auth.uid()`), is what a
+créateur's own `/finance` history query relies on to only ever see their
+own requests — **not exercised in `checklist_2_3.sql` via a direct
+SELECT**, flagged explicitly rather than silently skipped: this whole
+checklist file runs as the Postgres superuser, which bypasses RLS
+unconditionally regardless of `app.current_user_id`, and this project's
+local `stub_auth.sql` harness (unlike a real Supabase project) never
+grants `authenticated`/`anon` any table-level privileges either, so
+switching role can't exercise it here — no other table's RLS policy is
+verified this way in this file. What *is* verified, and is the guarantee
+that actually prevents harm regardless of the SELECT side: `traiter_retrait()`
+rejects any non-admin caller outright, including the requesting créateur
+themselves attempting to self-approve their own withdrawal.
+
+**`/finance`** (`src/app/[locale]/finance/page.tsx`) — new, standalone
+route, **not yet linked from the top nav** (`src/app/[locale]/layout.tsx`)
+per instruction, deferred to a later "Lot 4"; reachable today via a new
+"💰 Finance" link on `/dashboard`'s own header, next to "⚙️ Réglages".
+Renders the three buckets above (via `solde_wallet_createur`), a
+withdrawal request form (`RetraitRequestForm.tsx`, disabled with an
+explicit "Solde minimum pour demander un retrait : 25$." message whenever
+`net_a_retirer < RETRAIT_MONTANT_MINIMUM`), and two history lists:
+"Paiements reçus" (new — every transaction this créateur received,
+classified into the same buckets via `classifyPaiementRecu()` in
+`src/lib/wallet.ts`, a pure per-row mirror of the SQL formula above kept
+deliberately in sync with it) and "Paiements envoyés à d'autres
+créateurs" (moved here verbatim from `/dashboard`, same query/
+`TransactionActions`/`describeTransactionStatutFan` code, not
+duplicated — the `Dashboard` translation namespace still backs these
+generic per-transaction strings, since renaming it would be a much wider
+change than this lot needs; `Finance` is a separate namespace only for
+this page's own headings/labels).
+
+**`classifyPaiementRecu()`\'s "autre" fallback is deliberately not the
+same as "disponible", even for a successful payment**: a delivered
+video/shoutout still inside its 72h fan-confirmation window
+(`confirmation_fan = 'en_attente'`, migration `0025`) has
+`statut_paiement = 'reussi'` but does **not** satisfy
+`net_a_retirer`'s `confirmation_fan in ('confirme', 'non_applicable')`
+clause — labeling it "disponible" here would disagree with the aggregate
+shown above it on the same page. It falls back to the raw transaction
+statut badge instead (reusing `Dashboard.statutShort`), same as a
+transaction with no `paiements` row at all yet.
+
+**Admin UI** (`/admin`'s new "Demandes de retrait en attente" section,
+`RetraitsManager.tsx`) mirrors `LitigesManager.tsx`'s interactive
+pattern exactly (per-row `pendingId`/`errorById`/`noteById`, optional
+note field, `router.refresh()` on success) — two buttons, "Marquer
+traité" / "Refuser", **not a single toggle**, since refusing a request
+must never touch the wallet balance the same way marking it handled does
+(see the formula's `statut != 'refuse'` clause). `/admin/page.tsx`'s new
+query filters `.eq("statut", "en_attente")`, oldest first, same
+operational-queue principle as the manual-refunds/litiges worklists.
+
+Reserved pseudo: `'finance'` added to both `users_pseudo_not_reserved`
+(migration `0027`) and `PSEUDO_MOTS_RESERVES` — every new top-level route
+needs this.
+
+Tested end-to-end in `checklist_2_3.sql` with a real fixture créateur
+carrying four transactions in four different states (one per bucket, plus
+a whatsapp transaction proving `non_applicable` counts toward
+`net_a_retirer` exactly like `confirme` does): all three buckets compute
+to the exact expected numbers under the real 15% HT + TVA commission
+formula; resolving one of the disputed transactions `faveur_createur`
+moves it from `en_litige` into `net_a_retirer` with **no code in this
+migration aware that a litige was ever involved**; `demander_retrait()`
+rejects both a sub-$25 amount and an amount exceeding the real balance
+(including a direct RPC call with a deliberately falsified amount, the
+only kind of "client-controlled amount" that exists in this design);
+neither rejected attempt leaves a row behind; a pending request is
+subtracted from `net_a_retirer` immediately, a `traite` one keeps being
+subtracted (the money is actually gone now), and a `refuse`d one stops
+being subtracted; `traiter_retrait()` rejects a non-admin caller
+(including the requesting créateur attempting to self-approve) and a
+second decision on an already-handled request; and the full
+`0020`/`0021` security pattern holds for all three new functions (`anon`
+has no `EXECUTE`, `authenticated` with a `NULL auth.uid()` is rejected by
+each function's own check, `solde_wallet_createur` rejects a caller
+asking for someone else's balance, and the legitimate caller still holds
+`EXECUTE`).
+
 ## `accept_transaction`/`refuse_transaction`/`deliver_video` anonymous bypass — found and fixed (migration `0020`)
 
 A real, currently-exploitable vulnerability, flagged during unrelated
@@ -2040,8 +2203,11 @@ copies the exact expected text to the clipboard and the button flips to
 
 **Humanized fan-facing status with a concrete deadline**
 (`describeTransactionStatutFan()`, `src/lib/transactions.ts`) — the
-dashboard's "Paiements envoyés à d'autres créateurs" list previously
-showed a short human label (`en attente de réponse du créateur`) but no
+dashboard's "Paiements envoyés à d'autres créateurs" list (moved to
+`/finance` in Lot 2b, see "Wallet ledger + withdrawal requests" below —
+the helper and its component (`TransactionActions`) moved with it
+unchanged) previously showed a short human label (`en attente de réponse
+du créateur`) but no
 actual deadline. The new helper takes the transaction's
 `deadline_acceptation`/`deadline_livraison` (now also selected in that
 query, alongside the existing short colored badge which still shows a
@@ -2900,7 +3066,24 @@ into chat).
   interested party can't rule in their own favor) is rejected; the same
   NULL-safe `not authorized` rejection fires for `authenticated` with no
   `auth.uid()` set; `anon` has no `EXECUTE` at all; none of the rejected
-  attempts leave a trace; and `authenticated` still holds `EXECUTE`.
+  attempts leave a trace; and `authenticated` still holds `EXECUTE`. Also
+  covers Lot 2b's wallet ledger + withdrawal requests (0027) against a
+  dedicated fixture créateur with one transaction per bucket: all three
+  `solde_wallet_createur()` buckets compute to the exact expected numbers
+  under the real 15% HT + TVA formula; resolving one of the disputed
+  transactions `faveur_createur` moves it from `en_litige` into
+  `net_a_retirer` with no code in this migration aware a litige was ever
+  involved; `demander_retrait()` rejects a sub-$25 amount and an amount
+  exceeding the real server-recomputed balance (including a direct RPC
+  call with a falsified amount), leaving no row behind either time; a
+  pending request is subtracted from `net_a_retirer` immediately, a
+  `traite` one keeps being subtracted, and a `refuse`d one stops; a
+  second decision on an already-handled request is rejected;
+  `traiter_retrait()` rejects a non-admin caller including the requesting
+  créateur trying to self-approve; and the full `0020`/`0021` security
+  pattern holds for all three new functions, including
+  `solde_wallet_createur()` rejecting a caller asking for someone else's
+  balance.
 - `supabase/tests/stub_auth.sql` fakes just enough of Supabase's `auth`
   schema (an `auth.uid()` reading `app.current_user_id`, plus the
   `authenticated`/`anon`/`service_role` roles) for the real migrations to

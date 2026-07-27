@@ -185,14 +185,13 @@
   "Dashboard": {
     "heading": "Mon espace FanBoss",
     "settings": "⚙️ Réglages",
+    "finance": "💰 Finance",
     "publicProfileLabel": "Votre profil public : ",
     "noPseudoYet": "pas encore de pseudo — ",
     "choosePseudo": "en choisir un",
     "demandesHeading": "Demandes en attente de votre réponse",
     "nouvellesDemandes": "{count, plural, one {# nouvelle} other {# nouvelles}}",
     "offresHeading": "Vos offres",
-    "envoyeesHeading": "Paiements envoyés à d'autres créateurs",
-    "noPaiementsEnvoyes": "Aucun paiement envoyé.",
     "statutShort": {
       "en_attente": "En attente",
       "validee": "Accepté",
@@ -391,6 +390,40 @@
       "trancherCreateur": "Trancher en faveur du créateur",
       "trancherFan": "Trancher en faveur du fan",
       "notePlaceholder": "Note (optionnelle)"
+    },
+    "retraitsHeading": "Demandes de retrait en attente",
+    "retraitsIntro": "Demandes de retrait du solde wallet d'un créateur (minimum 25$). «Marquer traité» signifie qu'un virement manuel réel a déjà été effectué en dehors de l'application -- aucun paiement automatique n'existe encore dans ce projet.",
+    "retraits": {
+      "empty": "Aucune demande de retrait en attente.",
+      "markTraite": "Marquer traité",
+      "refuser": "Refuser",
+      "notePlaceholder": "Note (optionnelle)"
     }
+  },
+  "Finance": {
+    "heading": "Finance",
+    "backToDashboard": "Retour au tableau de bord",
+    "blocEnAttenteLivraison": "En attente de livraison",
+    "blocEnLitige": "En litige",
+    "blocNetARetirer": "Net à retirer",
+    "retraitHeading": "Demander un retrait",
+    "retraitForm": {
+      "threshold": "Solde minimum pour demander un retrait : 25$.",
+      "montantLabel": "Montant à retirer",
+      "submit": "Demander un retrait",
+      "sending": "Envoi…",
+      "success": "Demande envoyée -- un admin va la traiter.",
+      "unknownError": "Une erreur est survenue."
+    },
+    "historiqueRecuHeading": "Paiements reçus",
+    "historiqueRecuBucket": {
+      "en_attente_livraison": "En attente de livraison",
+      "en_litige": "En litige",
+      "disponible": "Disponible",
+      "rembourse": "Remboursé"
+    },
+    "noHistoriqueRecu": "Aucun paiement reçu.",
+    "historiqueEnvoyeHeading": "Paiements envoyés à d'autres créateurs",
+    "noHistoriqueEnvoye": "Aucun paiement envoyé."
   }
 }
