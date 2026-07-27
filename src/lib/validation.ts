@@ -173,6 +173,7 @@ export const PSEUDO_MOTS_RESERVES = [
   "admin",
   "classement",
   "finance",
+  "offres",
 ];
 
 // Shared by the /@pseudo lookup and the /explorer search box: ILIKE

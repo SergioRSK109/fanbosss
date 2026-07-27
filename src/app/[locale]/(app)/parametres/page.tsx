@@ -1,5 +1,5 @@
 import { getTranslations } from "next-intl/server";
-import { redirect, Link } from "@/i18n/navigation";
+import { redirect } from "@/i18n/navigation";
 import { LogoutButton } from "@/components/LogoutButton";
 import { ParametresForm } from "@/components/ParametresForm";
 import { VerificationForm } from "@/components/VerificationForm";
@@ -62,16 +62,10 @@ export default async function ParametresPage({
 
   return (
     <main className="mx-auto max-w-sm p-6">
-      <div className="flex items-center justify-between">
-        <Link
-          href="/dashboard"
-          className="text-sm font-medium text-foreground-muted hover:text-foreground"
-        >
-          {t("backToDashboard")}
-        </Link>
+      <div className="mb-6 flex items-center justify-between">
+        <h1 className="text-2xl font-bold">{t("heading")}</h1>
         <LogoutButton />
       </div>
-      <h1 className="mb-6 mt-2 text-2xl font-bold">{t("heading")}</h1>
       <ParametresForm
         nomAffichage={profil?.nom_affichage ?? null}
         pseudo={profil?.pseudo ?? null}

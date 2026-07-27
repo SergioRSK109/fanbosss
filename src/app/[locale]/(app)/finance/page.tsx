@@ -1,5 +1,5 @@
 import { getTranslations } from "next-intl/server";
-import { redirect, Link } from "@/i18n/navigation";
+import { redirect } from "@/i18n/navigation";
 import { RetraitRequestForm } from "@/components/RetraitRequestForm";
 import { TransactionActions } from "@/components/TransactionActions";
 import { formatMontant } from "@/lib/campagnes";
@@ -8,12 +8,14 @@ import { classifyPaiementRecu } from "@/lib/wallet";
 import type { OffreType } from "@/lib/validation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
-// Lot 2b: standalone wallet/finance page, not yet linked from the nav
-// (Lot 4 per instruction). Reuses the exact same envoyées query/rendering
-// that used to live on /dashboard (TransactionActions,
+// Lot 2b: standalone wallet/finance page. Reuses the exact same envoyées
+// query/rendering that used to live on /dashboard (TransactionActions,
 // describeTransactionStatutFan, the "Dashboard" translation namespace for
 // those generic per-transaction strings) -- moved here verbatim rather
 // than duplicated, to avoid the section existing in two places at once.
+// Lot 3: now one of the 4 AppTabBar destinations ("Paiements") -- the
+// "back to dashboard" link this page used to show is gone, since the tab
+// bar itself is the nav now.
 const ENVOYEE_STATUT_STYLES: Record<string, string> = {
   en_attente: "bg-accent-500/15 text-accent-600",
   validee: "bg-brand-500/15 text-brand-600 dark:text-brand-300",
@@ -77,16 +79,8 @@ export default async function FinancePage({
   const netARetirer = Number(soldeRow?.net_a_retirer ?? 0);
 
   return (
-    <main className="mx-auto flex max-w-2xl flex-col gap-8 p-5 pb-16 sm:p-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">{t("heading")}</h1>
-        <Link
-          href="/dashboard"
-          className="rounded-full border border-border px-3 py-1.5 text-sm font-medium text-foreground-muted transition-transform active:scale-95 hover:text-foreground"
-        >
-          {t("backToDashboard")}
-        </Link>
-      </div>
+    <main className="mx-auto flex max-w-2xl flex-col gap-8 p-5 sm:p-6">
+      <h1 className="text-2xl font-bold">{t("heading")}</h1>
 
       <section className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div className="card px-4 py-3">

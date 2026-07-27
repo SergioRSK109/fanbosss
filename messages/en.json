@@ -8,6 +8,16 @@
     "classement": "Leaderboard",
     "homeAriaLabel": "FanBoss -- home"
   },
+  "AppTabBar": {
+    "navLabel": "Main navigation",
+    "performance": "Performance",
+    "paiements": "Payments",
+    "offres": "Offers",
+    "reglages": "Settings"
+  },
+  "OffresPage": {
+    "heading": "Offers"
+  },
   "Explorer": {
     "heading": "Discover creators",
     "subheading": "Browse public profiles and find a creator to support.",
@@ -183,9 +193,7 @@
     "loading": "Logging out..."
   },
   "Dashboard": {
-    "heading": "My FanBoss space",
-    "settings": "⚙️ Settings",
-    "finance": "💰 Payments",
+    "heading": "Performance",
     "publicProfileLabel": "Your public profile: ",
     "noPseudoYet": "no handle yet — ",
     "choosePseudo": "choose one",
@@ -268,7 +276,6 @@
     "sending": "Sending..."
   },
   "Parametres": {
-    "backToDashboard": "← Back to dashboard",
     "heading": "Profile settings",
     "photoLabel": "Profile photo",
     "editPhotoButton": "Change profile photo",
@@ -402,7 +409,6 @@
   },
   "Finance": {
     "heading": "Payments",
-    "backToDashboard": "Back to dashboard",
     "blocEnAttenteLivraison": "Awaiting delivery",
     "blocEnLitige": "In dispute",
     "blocNetARetirer": "Net withdrawable",

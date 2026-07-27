@@ -164,11 +164,11 @@ before being considered done (see "Testing" below for how).
   pattern as the pseudo-cooldown bypass test.
 
 Reserved pseudo words (kept in sync in **two** places — the DB CHECK
-constraint (most recently updated in `0019`) and `PSEUDO_MOTS_RESERVES`
+constraint (most recently updated in `0028`) and `PSEUDO_MOTS_RESERVES`
 in `src/lib/validation.ts` — update both if new top-level routes are
 added): `dashboard, signup, login, api, auth, createur, mes-transactions,
 paiement, parametres, explorer, mot-de-passe-oublie,
-reinitialiser-mot-de-passe, admin, classement`.
+reinitialiser-mot-de-passe, admin, classement, finance, offres`.
 
 ### `offres`
 - `id uuid` PK, `createur_id uuid references users(id)`
@@ -843,6 +843,124 @@ has no `EXECUTE`, `authenticated` with a `NULL auth.uid()` is rejected by
 each function's own check, `solde_wallet_createur` rejects a caller
 asking for someone else's balance, and the legitimate caller still holds
 `EXECUTE`).
+
+## Tab-bar navigation reorg (Lot 3, migration `0028`)
+
+Everything from Lots 1–2b (commission, fan confirmation, litige
+resolution, the wallet) was functionally complete but scattered across
+separate pages with no coherent structure — `/dashboard` in particular
+mixed four unrelated concerns (public profile link, ranking badges,
+pending requests, offer configuration). This lot is a pure reorganization
+into **4 fixed bottom tabs** (mobile-app style, confirmed with the
+founder): **Performance** (`/dashboard`), **Paiements** (`/finance`),
+**Offres** (`/offres`, new), **Réglages** (`/parametres`) — no business
+logic in any moved component changed.
+
+**Route group, URLs unchanged.** `src/app/[locale]/(app)/` groups the 4
+tab destinations under one shared layout without adding a URL segment —
+`(parens)` folders are Next.js's mechanism for exactly this. `/dashboard`,
+`/finance`, and `/parametres` keep their existing URLs (already relied on
+elsewhere as post-login/signup/password-reset redirect targets — see
+`login/page.tsx`, `signup/page.tsx`, `auth/callback/route.ts`,
+`mot-de-passe-oublie/page.tsx`), confirmed unaffected because every
+existing redirect references these by URL string, never by file path.
+`/admin`, `/createur/[id]`, `/[handle]`, `/explorer`, `/classement`,
+`/login`, `/signup`, and the password-reset routes stay siblings outside
+`(app)` — `/admin` deliberately keeps its own separate access logic (see
+"Admin dashboard" above), not this créateur-facing nav. Verified the
+group creates no routing ambiguity with the dynamic `/[handle]` catch:
+Next.js always prefers a literal static match (`/offres`, `/dashboard`,
+...) over a sibling dynamic segment regardless of route grouping — the
+same precedence the `[handle]` page's own comment already documented
+before this lot existed — and `offres` was added to the reserved-pseudo
+list (below) as defense in depth on top of that, exactly like every
+other top-level route.
+
+**New route `/offres`**, migration `0028`: adds `'offres'` to
+`users_pseudo_not_reserved` (DB) and `PSEUDO_MOTS_RESERVES`
+(`src/lib/validation.ts`) — same two-places discipline as `'finance'` in
+`0027`. Verified in `checklist_2_3.sql` (a fresh user attempting to set
+`pseudo = 'Offres'` is rejected by the CHECK constraint directly, same
+pattern as the `'classement'` reserved-pseudo test).
+
+**What moved where** (verbatim components/queries, no logic changes):
+- `src/app/[locale]/(app)/dashboard/page.tsx` — now "Performance" only:
+  the 3 `RankBadge`s, `ClassementProgresCard`, `BadgesFideliteCard`. Still
+  named `DashboardPage`, still reads from the `Dashboard` i18n namespace
+  (`Dashboard.heading` was retitled to "Performance"/"Performance") —
+  renaming the file or the namespace would be a much wider change than
+  this lot needs, same "route/internal name vs. displayed label" call
+  already made for Finance/"Paiements" in Lot 2b.
+- `src/app/[locale]/(app)/offres/page.tsx` — **new**: `DemandesEnAttente`
+  + `OffresManager`, plus the "N nouvelles demandes" notification-badge
+  logic (`dernier_vu_demandes_at` read/update) and the campagne
+  montant-collecté query, all moved unchanged from the old
+  `/dashboard`. Still reads `Dashboard.demandesHeading`/
+  `Dashboard.nouvellesDemandes`/`Dashboard.offresHeading` for these
+  sections' own headings rather than a new namespace, same
+  not-renaming-what-isn't-user-visible reasoning. Its own page heading
+  ("Offres"/"Offers") lives in a new `OffresPage` namespace.
+- `src/app/[locale]/(app)/finance/page.tsx`, `.../parametres/page.tsx` —
+  moved as directories via `git mv`, zero content changes beyond
+  removing the now-redundant "back to dashboard" link each used to show
+  in its own header (the tab bar is the nav now). `Finance.backToDashboard`
+  and `Parametres.backToDashboard` were removed from both message files
+  as a result — confirmed dead via grep before deleting, not just left
+  as unused strings. `/parametres` already had `LogoutButton` in its
+  header (added when logout itself was built, well before this lot) —
+  the brief's "+ déconnexion" requirement for the Réglages tab was
+  already satisfied; this lot only repositioned it once the adjacent
+  "back to dashboard" link was gone.
+
+**The public profile link (`fanboss.app/@pseudo` + `CopyProfileLinkButton`)
+lives in the shared layout, not any one tab.** It's identity, not one of
+the 4 categories — per the brief's own recommendation, confirmed as the
+best fit rather than forcing it into a tab. `src/app/[locale]/(app)/layout.tsx`
+fetches the caller's own `pseudo` (a third `auth.getUser()` call per
+request, same pattern the root layout already established for its own
+Explorer-link check) and renders the card above `{children}` on all 4
+pages, so it can never drift between them. When there's no user (a
+direct hit on one of these URLs while logged out), the layout simply
+skips the card and lets the page itself perform its existing
+`redirect()` to `/login` — this layout adds no new auth gate, each page
+keeps the same guard it always had.
+
+**`AppTabBar.tsx`** — a `"use client"` component using `usePathname`
+from `@/i18n/navigation` (locale-stripped, so it matches plain `/dashboard`
+etc. regardless of `/en` prefix) to highlight the active tab via
+`aria-current="page"` plus brand-colored text, styled with this app's
+existing tokens only (`border-border`, `bg-surface/95 backdrop-blur`,
+`text-brand-600 dark:text-brand-300`) — no new design system introduced,
+per the `frontend-design` skill check performed before building it
+(this app already has a deliberate, non-default violet/coral identity;
+the tab bar just needed to not contradict it). `fixed inset-x-0 bottom-0
+z-40` — one level below the `z-50` full-screen overlays
+(`ZoomablePhoto`/`PhotoCropper`) so a photo zoom/crop still draws on top
+of it. The 4 tabs' emoji (📊/💰/🎁/⚙️) follow the same no-icon-library
+convention as `RankBadge`/the old dashboard header links. The route
+stays `/finance` (unchanged since Lot 2b) — only the tab's displayed
+label is "Paiements"/"Payments".
+
+**Bottom padding**: the shared layout wraps `{children}` in a
+`pb-24` div so page content never scrolls behind the fixed tab bar —
+verified visually by scrolling a long page (`/offres`, with every offer
+type's form visible) all the way down and confirming the last card
+clears the bar with room to spare, at a real mobile viewport (390×844).
+The old dashboard/finance pages' own `pb-16` (added ahead of this lot,
+apparently anticipating exactly this) was removed from their `<main>`
+now that the layout provides the space generically for all 4 pages,
+including `/parametres` which never had it.
+
+Verified end-to-end with the same throwaway mock-Supabase/Playwright
+technique used throughout this file (a ~200-line mock of the Auth
+`/token`/`/user` endpoints plus a generic PostgREST-shaped REST/RPC
+mock, never committed): logged in once, then visited all 4 tabs in both
+`fr` (default) and `/en/`-prefixed sessions — correct heading/label per
+page and locale, the active tab visually distinct via `aria-current`,
+the profile-link card present and identical across all 4 pages, zero
+console errors, and dark mode (`colorScheme: "dark"`) rendering correctly
+via the app's existing CSS-variable overrides with no tab-bar-specific
+dark-mode code needed.
 
 ## `accept_transaction`/`refuse_transaction`/`deliver_video` anonymous bypass — found and fixed (migration `0020`)
 
@@ -3101,7 +3219,9 @@ into chat).
   créateur trying to self-approve; and the full `0020`/`0021` security
   pattern holds for all three new functions, including
   `solde_wallet_createur()` rejecting a caller asking for someone else's
-  balance.
+  balance. Also covers the Lot 3 `/offres` route addition (0028): the
+  `'offres'` reserved-pseudo CHECK constraint rejects a fresh user
+  attempting to set it, same pattern as the `'classement'` test.
 - `supabase/tests/stub_auth.sql` fakes just enough of Supabase's `auth`
   schema (an `auth.uid()` reading `app.current_user_id`, plus the
   `authenticated`/`anon`/`service_role` roles) for the real migrations to
