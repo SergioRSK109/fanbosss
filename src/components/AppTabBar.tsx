@@ -10,9 +10,9 @@ import { Link, usePathname } from "@/i18n/navigation";
 // label is "Paiements"/"Payments", same "route name vs. label" split the
 // old dashboard header link already established.
 const TABS = [
-  { href: "/dashboard", icon: "📊", labelKey: "performance" },
-  { href: "/finance", icon: "💰", labelKey: "paiements" },
   { href: "/offres", icon: "🎁", labelKey: "offres" },
+  { href: "/finance", icon: "💰", labelKey: "paiements" },
+  { href: "/dashboard", icon: "📊", labelKey: "performance" },
   { href: "/parametres", icon: "⚙️", labelKey: "reglages" },
 ] as const;
 

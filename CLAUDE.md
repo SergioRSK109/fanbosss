@@ -852,9 +852,9 @@ separate pages with no coherent structure — `/dashboard` in particular
 mixed four unrelated concerns (public profile link, ranking badges,
 pending requests, offer configuration). This lot is a pure reorganization
 into **4 fixed bottom tabs** (mobile-app style, confirmed with the
-founder): **Performance** (`/dashboard`), **Paiements** (`/finance`),
-**Offres** (`/offres`, new), **Réglages** (`/parametres`) — no business
-logic in any moved component changed.
+founder), displayed left to right as **Offres** (`/offres`, new),
+**Paiements** (`/finance`), **Performance** (`/dashboard`), **Réglages**
+(`/parametres`) — no business logic in any moved component changed.
 
 **Route group, URLs unchanged.** `src/app/[locale]/(app)/` groups the 4
 tab destinations under one shared layout without adding a URL segment —
@@ -936,10 +936,16 @@ per the `frontend-design` skill check performed before building it
 the tab bar just needed to not contradict it). `fixed inset-x-0 bottom-0
 z-40` — one level below the `z-50` full-screen overlays
 (`ZoomablePhoto`/`PhotoCropper`) so a photo zoom/crop still draws on top
-of it. The 4 tabs' emoji (📊/💰/🎁/⚙️) follow the same no-icon-library
-convention as `RankBadge`/the old dashboard header links. The route
-stays `/finance` (unchanged since Lot 2b) — only the tab's displayed
-label is "Paiements"/"Payments".
+of it. The 4 tabs' emoji, in their displayed left-to-right order
+(🎁/💰/📊/⚙️ -- Offres/Paiements/Performance/Réglages), follow the same
+no-icon-library convention as `RankBadge`/the old dashboard header
+links. The route stays `/finance` (unchanged since Lot 2b) — only the
+tab's displayed label is "Paiements"/"Payments". This left-to-right
+order (Offres first, Performance third) was a deliberate later
+adjustment from the order this lot originally shipped with
+(Performance/Paiements/Offres/Réglages) — the `TABS` array in
+`AppTabBar.tsx` is the single source of truth for it; nothing else in
+this codebase orders the 4 tabs independently.
 
 **Bottom padding**: the shared layout wraps `{children}` in a
 `pb-24` div so page content never scrolls behind the fixed tab bar —
