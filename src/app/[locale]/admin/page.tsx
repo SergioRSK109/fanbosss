@@ -6,6 +6,7 @@ import {
   RemboursementsManuelsManager,
   type RemboursementManuel,
 } from "@/components/admin/RemboursementsManuelsManager";
+import { RetraitsManager, type DemandeRetraitAdmin } from "@/components/admin/RetraitsManager";
 import {
   VerificationsManager,
   type DemandeVerificationAdmin,
@@ -59,6 +60,7 @@ export default async function AdminPage() {
     { data: monthTransactions },
     { data: manualRefundRows },
     { data: litigeRows },
+    { data: retraitRows },
     { data: allUsers },
     { data: authUsersPage },
     { data: verificationRows },
@@ -75,11 +77,25 @@ export default async function AdminPage() {
     // Lot 2a: video/shoutout deliveries a fan flagged as a problem
     // (migration 0025) -- confirmation_fan only ever reaches 'conteste'
     // for those two types, so no extra type filter is needed here.
+    // Lot 2a-bis: `.is("litige_resolu_at", null)` excludes a litige an
+    // admin already resolved (migration 0026) -- without it, a resolved
+    // dispute would stay listed forever, since resolving one never
+    // changes confirmation_fan away from 'conteste' for the faveur_fan
+    // branch (see resoudre_litige()).
     serviceSupabase
       .from("transactions")
       .select("id, montant, created_at, createur_id, fan_id, offres(type)")
       .eq("confirmation_fan", "conteste")
+      .is("litige_resolu_at", null)
       .order("created_at", { ascending: true }),
+    // Lot 2b: withdrawal requests awaiting an admin decision (migration
+    // 0027) -- oldest first, same operational-queue principle as the
+    // manual-refunds/litiges worklists above.
+    serviceSupabase
+      .from("demandes_retrait")
+      .select("id, montant, createur_id, demande_at")
+      .eq("statut", "en_attente")
+      .order("demande_at", { ascending: true }),
     serviceSupabase.from("users").select("id, pseudo, nom_affichage, est_admin"),
     serviceSupabase.auth.admin.listUsers({ page: 1, perPage: 1000 }),
     // Only the two actionable statuses -- an approved/refused demande no
@@ -146,6 +162,13 @@ export default async function AdminPage() {
       fanLabel: userLabelById.get(row.fan_id) ?? t("deletedUser"),
     };
   });
+
+  const retraits: DemandeRetraitAdmin[] = (retraitRows ?? []).map((row) => ({
+    id: row.id,
+    montant: Number(row.montant),
+    demandeAt: row.demande_at,
+    createurLabel: userLabelById.get(row.createur_id) ?? t("deletedUser"),
+  }));
 
   const emailById = new Map(
     (authUsersPage?.users ?? []).map((u) => [u.id, u.email ?? null]),
@@ -215,6 +238,19 @@ export default async function AdminPage() {
         </h2>
         <p className="mb-3 text-sm text-foreground-muted">{t("litigesIntro")}</p>
         <LitigesManager litiges={litiges} />
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-lg font-bold">
+          {t("retraitsHeading")}
+          {retraits.length > 0 && (
+            <span className="ml-2 rounded-full bg-accent-500 px-2 py-0.5 text-xs font-bold text-white">
+              {retraits.length}
+            </span>
+          )}
+        </h2>
+        <p className="mb-3 text-sm text-foreground-muted">{t("retraitsIntro")}</p>
+        <RetraitsManager demandes={retraits} />
       </section>
 
       <section>

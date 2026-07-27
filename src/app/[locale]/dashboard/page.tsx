@@ -6,27 +6,20 @@ import { CopyProfileLinkButton } from "@/components/CopyProfileLinkButton";
 import { DemandesEnAttente } from "@/components/DemandesEnAttente";
 import { LogoutButton } from "@/components/LogoutButton";
 import { OffresManager } from "@/components/OffresManager";
-import { TransactionActions } from "@/components/TransactionActions";
 import { RankBadge } from "@/components/ui/RankBadge";
 import { computePremieresTransactionsParPartenaire } from "@/lib/badgesFidelite";
 import type { ProgresClassement } from "@/lib/classementProgres";
 import { resolveDisplayName } from "@/lib/profil";
-import { describeTransactionStatutFan } from "@/lib/transactions";
 import type { OffreType } from "@/lib/validation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 // Brief v3 point 1: there is no fan/créateur distinction anymore -- any
 // user can both receive payments (offres) and send them to someone else,
-// so this single page shows all three, in order: demandes they've
-// received, their own offres settings, and payments they've sent to
-// others (previously split across /dashboard and /mes-transactions).
-const STATUT_STYLES: Record<string, string> = {
-  en_attente: "bg-accent-500/15 text-accent-600",
-  validee: "bg-brand-500/15 text-brand-600 dark:text-brand-300",
-  livree: "bg-success-500/15 text-success-600",
-  remboursee: "bg-foreground-muted/15 text-foreground-muted",
-  refusee: "bg-danger-500/15 text-danger-600",
-};
+// so this page shows demandes they've received and their own offres
+// settings. Payments they've sent to others used to live here too
+// ("Paiements envoyés") -- moved to /finance in Lot 2b, alongside the new
+// wallet balance/withdrawal UI, to avoid the same list existing (and
+// needing to be kept in sync) in two places at once.
 
 export default async function DashboardPage({
   params,
@@ -49,7 +42,6 @@ export default async function DashboardPage({
   const [
     { data: offres },
     { data: demandes },
-    { data: envoyees },
     { data: profil },
     { data: volumeRow },
     { data: reactiviteRow },
@@ -67,13 +59,6 @@ export default async function DashboardPage({
       .eq("createur_id", user.id)
       .eq("statut", "en_attente")
       .order("deadline_acceptation", { ascending: true }),
-    supabase
-      .from("transactions")
-      .select(
-        "id, montant, statut, deadline_acceptation, deadline_livraison, confirmation_fan, deadline_confirmation, offres(type)",
-      )
-      .eq("fan_id", user.id)
-      .order("created_at", { ascending: false }),
     supabase
       .from("users")
       .select("pseudo, dernier_vu_demandes_at, classement_public")
@@ -203,6 +188,12 @@ export default async function DashboardPage({
         <h1 className="text-2xl font-bold">{t("heading")}</h1>
         <div className="flex items-center gap-2">
           <Link
+            href="/finance"
+            className="rounded-full border border-border px-3 py-1.5 text-sm font-medium text-foreground-muted transition-transform active:scale-95 hover:text-foreground"
+          >
+            {t("finance")}
+          </Link>
+          <Link
             href="/parametres"
             className="rounded-full border border-border px-3 py-1.5 text-sm font-medium text-foreground-muted transition-transform active:scale-95 hover:text-foreground"
           >
@@ -299,63 +290,6 @@ export default async function DashboardPage({
               offre.type === "campagne" ? montantCollecteParOffre.get(offre.id) ?? 0 : undefined,
           }))}
         />
-      </section>
-
-      <section>
-        <h2 className="mb-3 text-lg font-bold">{t("envoyeesHeading")}</h2>
-        <ul className="flex flex-col gap-3">
-          {(envoyees ?? []).map((transaction) => {
-            const offre = Array.isArray(transaction.offres)
-              ? transaction.offres[0]
-              : transaction.offres;
-
-            return (
-              <li
-                key={transaction.id}
-                className="card flex flex-col gap-2 px-4 py-3"
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm font-medium">
-                    {offre?.type} · {transaction.montant}$
-                  </span>
-                  <span
-                    className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${
-                      STATUT_STYLES[transaction.statut] ?? "bg-foreground-muted/15 text-foreground-muted"
-                    }`}
-                  >
-                    {t.has(`statutShort.${transaction.statut}`)
-                      ? t(`statutShort.${transaction.statut}`)
-                      : transaction.statut}
-                  </span>
-                </div>
-                <p className="text-xs text-foreground-muted">
-                  {describeTransactionStatutFan(
-                    {
-                      statut: transaction.statut,
-                      deadlineAcceptation: transaction.deadline_acceptation,
-                      deadlineLivraison: transaction.deadline_livraison,
-                      confirmationFan: transaction.confirmation_fan,
-                      deadlineConfirmation: transaction.deadline_confirmation,
-                    },
-                    t,
-                    locale,
-                  )}
-                </p>
-                {offre?.type && (
-                  <TransactionActions
-                    transactionId={transaction.id}
-                    type={offre.type}
-                    statut={transaction.statut}
-                    confirmationFan={transaction.confirmation_fan}
-                  />
-                )}
-              </li>
-            );
-          })}
-          {(envoyees ?? []).length === 0 && (
-            <p className="text-sm text-foreground-muted">{t("noPaiementsEnvoyes")}</p>
-          )}
-        </ul>
       </section>
     </main>
   );
