@@ -3178,6 +3178,20 @@ end $$;
 select set_config('app.current_user_id', '', false);
 reset role;
 
+-- Lot 3 -- 'offres' reserved pseudo (new /offres route, migration 0028):
+-- same pattern as the 'classement' test above, exercising the
+-- reserved-word CHECK constraint directly on a fresh user with no prior
+-- pseudo change.
+do $$
+begin
+  begin
+    update users set pseudo = 'Offres' where id = 'faceb001-0003-0003-0003-000000000003';
+    raise exception 'TEST FAILED: the new "offres" route name was accepted as a pseudo';
+  exception when check_violation then
+    raise notice 'PASS: "offres" is rejected as a pseudo (reserved-word list kept in sync with the new route)';
+  end;
+end $$;
+
 do $$
 begin
   raise notice 'ALL SQL CHECKLIST TESTS PASSED';
