@@ -2086,6 +2086,395 @@ end $$;
 select set_config('app.current_user_id', '', false);
 reset role;
 
+-- ---------------------------------------------------------------------
+-- Lot 2a -- fan confirmation state for delivered video/shoutout offers
+-- ONLY (migration 0025). Explicit scope check throughout: don/whatsapp/
+-- etc. must never have confirmation_fan touched, even once delivered.
+-- ---------------------------------------------------------------------
+
+-- deliver_video() must open the 72h confirmation window the moment it
+-- delivers a video.
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('c0f10001-0001-0001-0001-000000000001',
+   '22222222-2222-2222-2222-222222222222',
+   '11111111-1111-1111-1111-111111111111',
+   '44444444-4444-4444-4444-444444444444', 10, 'validee');
+
+select set_config('app.current_user_id', '11111111-1111-1111-1111-111111111111', false);
+select deliver_video('c0f10001-0001-0001-0001-000000000001', 'videos/test1.mp4');
+select set_config('app.current_user_id', '', false);
+
+do $$
+declare
+  v_statut text;
+  v_confirmation text;
+  v_deadline timestamptz;
+begin
+  select statut, confirmation_fan, deadline_confirmation
+    into v_statut, v_confirmation, v_deadline
+    from transactions where id = 'c0f10001-0001-0001-0001-000000000001';
+
+  if v_statut != 'livree' then
+    raise exception 'TEST FAILED: deliver_video did not deliver the transaction (statut=%)', v_statut;
+  end if;
+  if v_confirmation != 'en_attente' then
+    raise exception 'TEST FAILED: confirmation_fan was % instead of en_attente right after delivery', v_confirmation;
+  end if;
+  if v_deadline is null
+     or v_deadline < now() + interval '71 hours'
+     or v_deadline > now() + interval '73 hours' then
+    raise exception 'TEST FAILED: deadline_confirmation was % instead of ~72h from now', v_deadline;
+  end if;
+  raise notice 'PASS: deliver_video() opens the confirmation window (confirmation_fan=en_attente, deadline_confirmation~=+72h)';
+end $$;
+
+-- Manual confirmation by the fan.
+select set_config('app.current_user_id', '22222222-2222-2222-2222-222222222222', false);
+select confirmer_livraison_fan('c0f10001-0001-0001-0001-000000000001');
+select set_config('app.current_user_id', '', false);
+
+do $$
+declare
+  v_statut text;
+  v_confirmation text;
+  v_confirme_at timestamptz;
+begin
+  select statut, confirmation_fan, confirme_at
+    into v_statut, v_confirmation, v_confirme_at
+    from transactions where id = 'c0f10001-0001-0001-0001-000000000001';
+
+  if v_statut != 'livree' then
+    raise exception 'TEST FAILED: confirmer_livraison_fan changed statut to % (should stay livree)', v_statut;
+  end if;
+  if v_confirmation != 'confirme' then
+    raise exception 'TEST FAILED: confirmation_fan was % instead of confirme after confirmer_livraison_fan', v_confirmation;
+  end if;
+  if v_confirme_at is null then
+    raise exception 'TEST FAILED: confirme_at was not set by confirmer_livraison_fan';
+  end if;
+  raise notice 'PASS: confirmer_livraison_fan() marks confirmation_fan=confirme and stamps confirme_at, without touching statut';
+end $$;
+
+-- Confirming again (already confirme, not en_attente anymore) must be
+-- rejected -- the eligibility guard, not a silent no-op.
+select set_config('app.current_user_id', '22222222-2222-2222-2222-222222222222', false);
+do $$
+begin
+  begin
+    perform confirmer_livraison_fan('c0f10001-0001-0001-0001-000000000001');
+    raise exception 'TEST FAILED: confirmer_livraison_fan succeeded a second time on an already-confirmed transaction';
+  exception when others then
+    if sqlerrm != 'transaction is not awaiting fan confirmation' then
+      raise exception 'TEST FAILED: unexpected error re-confirming: %', sqlerrm;
+    end if;
+    raise notice 'PASS: confirmer_livraison_fan() rejects a transaction that is not (or no longer) awaiting confirmation';
+  end;
+end $$;
+select set_config('app.current_user_id', '', false);
+
+-- Disputing (shoutout): freezes the money -- statut stays livree, no
+-- refund is attempted, necessite_remboursement_manuel is never set by
+-- this path (that flag specifically means "a refund already happened").
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('c0f10002-0002-0002-0002-000000000002',
+   '22222222-2222-2222-2222-222222222222',
+   '11111111-1111-1111-1111-111111111111',
+   '77777777-7777-7777-7777-777777777777', 5, 'validee');
+
+select set_config('app.current_user_id', '11111111-1111-1111-1111-111111111111', false);
+select deliver_video('c0f10002-0002-0002-0002-000000000002', 'shoutouts/test2.mp4');
+select set_config('app.current_user_id', '22222222-2222-2222-2222-222222222222', false);
+select contester_livraison_fan('c0f10002-0002-0002-0002-000000000002');
+select set_config('app.current_user_id', '', false);
+
+do $$
+declare
+  v_statut text;
+  v_confirmation text;
+  v_montant numeric;
+  v_necessite boolean;
+  v_reference text;
+begin
+  select statut, confirmation_fan, montant, necessite_remboursement_manuel,
+      reference_remboursement_cinetpay
+    into v_statut, v_confirmation, v_montant, v_necessite, v_reference
+    from transactions where id = 'c0f10002-0002-0002-0002-000000000002';
+
+  if v_statut != 'livree' then
+    raise exception 'TEST FAILED: contester_livraison_fan changed statut to % (money must stay frozen, not refunded)', v_statut;
+  end if;
+  if v_confirmation != 'conteste' then
+    raise exception 'TEST FAILED: confirmation_fan was % instead of conteste', v_confirmation;
+  end if;
+  if v_montant != 5 then
+    raise exception 'TEST FAILED: montant was mutated to % by contester_livraison_fan', v_montant;
+  end if;
+  if v_necessite then
+    raise exception 'TEST FAILED: necessite_remboursement_manuel was set true by a dispute -- no refund has happened yet';
+  end if;
+  if v_reference is not null then
+    raise exception 'TEST FAILED: reference_remboursement_cinetpay was set by a dispute -- no refund was ever attempted';
+  end if;
+  raise notice 'PASS: contester_livraison_fan() freezes the transaction (confirmation_fan=conteste, statut still livree) without attempting any refund';
+end $$;
+
+-- Auto-confirmation once the fan stays silent past deadline_confirmation
+-- -- and, as the boundary case, a still-open window is left untouched by
+-- the same sweep call.
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('c0f10003-0003-0003-0003-000000000003',
+   '22222222-2222-2222-2222-222222222222',
+   '11111111-1111-1111-1111-111111111111',
+   '44444444-4444-4444-4444-444444444444', 10, 'validee'),
+  ('c0f10004-0004-0004-0004-000000000004',
+   '22222222-2222-2222-2222-222222222222',
+   '11111111-1111-1111-1111-111111111111',
+   '44444444-4444-4444-4444-444444444444', 10, 'validee');
+
+select set_config('app.current_user_id', '11111111-1111-1111-1111-111111111111', false);
+select deliver_video('c0f10003-0003-0003-0003-000000000003', 'videos/test3.mp4');
+select deliver_video('c0f10004-0004-0004-0004-000000000004', 'videos/test4.mp4');
+select set_config('app.current_user_id', '', false);
+
+-- Simulate 72h of fan silence for the first transaction only.
+update transactions set deadline_confirmation = now() - interval '1 hour'
+  where id = 'c0f10003-0003-0003-0003-000000000003';
+
+select * from process_confirmation_deadlines();
+
+do $$
+declare
+  v_confirmation_expired text;
+  v_confirme_at timestamptz;
+  v_confirmation_still_open text;
+begin
+  select confirmation_fan, confirme_at into v_confirmation_expired, v_confirme_at
+    from transactions where id = 'c0f10003-0003-0003-0003-000000000003';
+  select confirmation_fan into v_confirmation_still_open
+    from transactions where id = 'c0f10004-0004-0004-0004-000000000004';
+
+  if v_confirmation_expired != 'confirme' then
+    raise exception 'TEST FAILED: process_confirmation_deadlines left confirmation_fan=% for a transaction past its deadline', v_confirmation_expired;
+  end if;
+  if v_confirme_at is null then
+    raise exception 'TEST FAILED: process_confirmation_deadlines did not stamp confirme_at on auto-confirmation';
+  end if;
+  if v_confirmation_still_open != 'en_attente' then
+    raise exception 'TEST FAILED: process_confirmation_deadlines touched a transaction whose deadline has not passed yet (confirmation_fan=%)', v_confirmation_still_open;
+  end if;
+  raise notice 'PASS: process_confirmation_deadlines() auto-confirms only transactions past deadline_confirmation (fan silence = satisfied by default), leaving a still-open window untouched';
+end $$;
+
+-- Scope: whatsapp reaching livree via accept_transaction (acceptance IS
+-- delivery for whatsapp) must never have confirmation_fan touched.
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('c0f10005-0005-0005-0005-000000000005',
+   '22222222-2222-2222-2222-222222222222',
+   '11111111-1111-1111-1111-111111111111',
+   '33333333-3333-3333-3333-333333333333', 20, 'en_attente');
+
+select set_config('app.current_user_id', '11111111-1111-1111-1111-111111111111', false);
+select accept_transaction('c0f10005-0005-0005-0005-000000000005');
+select set_config('app.current_user_id', '', false);
+
+do $$
+declare
+  v_statut text;
+  v_confirmation text;
+  v_deadline timestamptz;
+begin
+  select statut, confirmation_fan, deadline_confirmation
+    into v_statut, v_confirmation, v_deadline
+    from transactions where id = 'c0f10005-0005-0005-0005-000000000005';
+
+  if v_statut != 'livree' then
+    raise exception 'TEST FAILED: whatsapp transaction was not delivered by accept_transaction (statut=%)', v_statut;
+  end if;
+  if v_confirmation != 'non_applicable' then
+    raise exception 'TEST FAILED: confirmation_fan was % instead of non_applicable for a delivered whatsapp transaction', v_confirmation;
+  end if;
+  if v_deadline is not null then
+    raise exception 'TEST FAILED: deadline_confirmation was set (%) for a whatsapp transaction -- out of this mechanism''s scope', v_deadline;
+  end if;
+  raise notice 'PASS: whatsapp (accept_transaction cascading straight to livree) never has confirmation_fan touched -- stays non_applicable';
+end $$;
+
+-- A fan cannot confirm/dispute an out-of-scope (non-eligible) delivered
+-- transaction either -- the eligibility guard covers whatsapp/don/etc
+-- exactly the same way it covers "already confirmed" above.
+select set_config('app.current_user_id', '22222222-2222-2222-2222-222222222222', false);
+do $$
+begin
+  begin
+    perform confirmer_livraison_fan('c0f10005-0005-0005-0005-000000000005');
+    raise exception 'TEST FAILED: confirmer_livraison_fan succeeded on a whatsapp transaction (out of Lot 2a scope)';
+  exception when others then
+    if sqlerrm != 'transaction is not awaiting fan confirmation' then
+      raise exception 'TEST FAILED: unexpected error confirming a whatsapp transaction: %', sqlerrm;
+    end if;
+    raise notice 'PASS: confirmer_livraison_fan() rejects a whatsapp transaction (confirmation_fan=non_applicable, never en_attente)';
+  end;
+end $$;
+select set_config('app.current_user_id', '', false);
+
+-- Scope: don reaching livree via the webhook's two-step transition
+-- (en_attente -> validee -> livree, no acceptation step) must also never
+-- touch confirmation_fan.
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('c0f10006-0006-0006-0006-000000000006',
+   '22222222-2222-2222-2222-222222222222',
+   '11111111-1111-1111-1111-111111111111',
+   'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 5, 'en_attente');
+update transactions set statut = 'validee' where id = 'c0f10006-0006-0006-0006-000000000006';
+update transactions set statut = 'livree' where id = 'c0f10006-0006-0006-0006-000000000006';
+
+do $$
+declare
+  v_confirmation text;
+  v_deadline timestamptz;
+begin
+  select confirmation_fan, deadline_confirmation into v_confirmation, v_deadline
+    from transactions where id = 'c0f10006-0006-0006-0006-000000000006';
+
+  if v_confirmation != 'non_applicable' then
+    raise exception 'TEST FAILED: confirmation_fan was % instead of non_applicable for a delivered don transaction', v_confirmation;
+  end if;
+  if v_deadline is not null then
+    raise exception 'TEST FAILED: deadline_confirmation was set (%) for a don transaction -- out of this mechanism''s scope', v_deadline;
+  end if;
+  raise notice 'PASS: don (webhook two-step transition to livree) never has confirmation_fan touched -- stays non_applicable';
+end $$;
+
+-- Security: same discipline as migration 0020/0021 for every RPC this
+-- feature adds -- anon has no EXECUTE at all (real Postgres permission
+-- check, not just app logic), authenticated-but-NULL-auth.uid() is
+-- rejected by the function body itself, ownership is enforced (a
+-- different fan can't act on someone else's transaction), and none of
+-- the rejected attempts leave any trace.
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut, confirmation_fan, deadline_confirmation) values
+  ('c0f1a001-a001-a001-a001-00000000a001',
+   '22222222-2222-2222-2222-222222222222',
+   '11111111-1111-1111-1111-111111111111',
+   '44444444-4444-4444-4444-444444444444', 10, 'livree', 'en_attente', now() + interval '72 hours');
+
+select set_config('app.current_user_id', '', false);
+set role anon;
+
+do $$
+begin
+  begin
+    perform confirmer_livraison_fan('c0f1a001-a001-a001-a001-00000000a001');
+    raise exception 'TEST FAILED: anon was able to call confirmer_livraison_fan() at all';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE privilege on confirmer_livraison_fan() (migration 0025)';
+  end;
+end $$;
+
+do $$
+begin
+  begin
+    perform contester_livraison_fan('c0f1a001-a001-a001-a001-00000000a001');
+    raise exception 'TEST FAILED: anon was able to call contester_livraison_fan() at all';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE privilege on contester_livraison_fan() (migration 0025)';
+  end;
+end $$;
+
+do $$
+begin
+  begin
+    perform 1 from process_confirmation_deadlines();
+    raise exception 'TEST FAILED: anon was able to call process_confirmation_deadlines() directly';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE privilege on process_confirmation_deadlines() (migration 0025)';
+  end;
+end $$;
+
+reset role;
+set role authenticated;
+
+do $$
+begin
+  begin
+    perform confirmer_livraison_fan('c0f1a001-a001-a001-a001-00000000a001');
+    raise exception 'TEST FAILED: confirmer_livraison_fan() succeeded with auth.uid() IS NULL';
+  exception when others then
+    if sqlerrm != 'not authenticated' then
+      raise exception 'TEST FAILED: unexpected error calling confirmer_livraison_fan() with a NULL auth.uid(): %', sqlerrm;
+    end if;
+    raise notice 'PASS: confirmer_livraison_fan() rejects a call with auth.uid() IS NULL';
+  end;
+end $$;
+
+do $$
+begin
+  begin
+    perform contester_livraison_fan('c0f1a001-a001-a001-a001-00000000a001');
+    raise exception 'TEST FAILED: contester_livraison_fan() succeeded with auth.uid() IS NULL';
+  exception when others then
+    if sqlerrm != 'not authenticated' then
+      raise exception 'TEST FAILED: unexpected error calling contester_livraison_fan() with a NULL auth.uid(): %', sqlerrm;
+    end if;
+    raise notice 'PASS: contester_livraison_fan() rejects a call with auth.uid() IS NULL';
+  end;
+end $$;
+
+reset role;
+
+-- Ownership: a different, real authenticated user (not the fan on this
+-- transaction) must also be rejected.
+select set_config('app.current_user_id', '11111111-1111-1111-1111-111111111111', false);
+do $$
+begin
+  begin
+    perform confirmer_livraison_fan('c0f1a001-a001-a001-a001-00000000a001');
+    raise exception 'TEST FAILED: the créateur (not the fan) was able to confirm the delivery';
+  exception when others then
+    if sqlerrm != 'not authorized' then
+      raise exception 'TEST FAILED: unexpected error: %', sqlerrm;
+    end if;
+    raise notice 'PASS: confirmer_livraison_fan() rejects a caller who is not the transaction''s own fan';
+  end;
+end $$;
+select set_config('app.current_user_id', '', false);
+
+-- None of the rejected attacks above should have left any trace.
+do $$
+declare
+  v_confirmation text;
+  v_confirme_at timestamptz;
+begin
+  select confirmation_fan, confirme_at into v_confirmation, v_confirme_at
+    from transactions where id = 'c0f1a001-a001-a001-a001-00000000a001';
+
+  if v_confirmation != 'en_attente' then
+    raise exception 'TEST FAILED: rejected calls mutated confirmation_fan to %', v_confirmation;
+  end if;
+  if v_confirme_at is not null then
+    raise exception 'TEST FAILED: rejected calls set confirme_at';
+  end if;
+  raise notice 'PASS: none of the rejected confirm/contest attempts left any trace';
+end $$;
+
+-- Positive confirmation the legitimate callers still have EXECUTE.
+do $$
+begin
+  if not has_function_privilege('authenticated', 'confirmer_livraison_fan(uuid)', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lost EXECUTE on confirmer_livraison_fan()';
+  end if;
+  if not has_function_privilege('authenticated', 'contester_livraison_fan(uuid)', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lost EXECUTE on contester_livraison_fan()';
+  end if;
+  if not has_function_privilege('service_role', 'process_confirmation_deadlines()', 'EXECUTE') then
+    raise exception 'TEST FAILED: service_role lost EXECUTE on process_confirmation_deadlines()';
+  end if;
+
+  raise notice 'PASS: the legitimate callers (authenticated for confirm/contest, service_role for the sweep) still have EXECUTE';
+end $$;
+
+select set_config('app.current_user_id', '', false);
+reset role;
+
 do $$
 begin
   raise notice 'ALL SQL CHECKLIST TESTS PASSED';

@@ -421,7 +421,160 @@ this same route also calls `close_expired_campagnes()` right after
 `process_transaction_deadlines()` — see "Fundraising campaigns" below;
 both RPC calls must succeed for the route to return 200, so a failure in
 either one still surfaces as a real error to the external scheduler
-rather than silently skipping half the sweep.
+rather than silently skipping half the sweep. Since migration `0025`, a
+third RPC call, `process_confirmation_deadlines()`, auto-confirms any
+video/shoutout delivery a fan never responded to within 72h — see "Fan
+confirmation state" below; same "every RPC call must succeed for a 200"
+discipline applies to it too.
+
+## Fan confirmation state — video/shoutout only (Lot 2a, migration `0025`)
+
+**Scope, stated explicitly so a later session doesn't quietly extend
+it**: this mechanism applies to `video`/`shoutout` **only** — the two
+types where a créateur delivers a personalized, judgeable piece of
+content. `don`, `evenement_live`, `whatsapp`, `contenu_debloque`, and
+`campagne` are untouched: they still reach and leave `livree` exactly as
+before, and `confirmation_fan` stays `'non_applicable'` for them forever
+— there is no code path anywhere that sets it to anything else for a
+non-video/shoutout transaction. Verified directly in `checklist_2_3.sql`
+by delivering a whatsapp transaction (via `accept_transaction`, whose
+acceptance cascades straight to `livree`) and a don transaction (via the
+webhook's own two-step `en_attente → validee → livree`) and confirming
+`confirmation_fan` never moves off `non_applicable` for either.
+
+**Schema**: `transactions` gained three columns —
+`confirmation_fan text check (... in ('non_applicable', 'en_attente',
+'confirme', 'conteste')) not null default 'non_applicable'`,
+`deadline_confirmation timestamptz`, `confirme_at timestamptz`. Living on
+`transactions` rather than a new table, same reasoning as the CinetPay
+refund columns (migration `0014`): one row already exists per
+transaction, no need for a join.
+
+**`deliver_video()`** (migration `0002`, security-hardened in `0020`) is
+the *only* writer of `'en_attente'` — the moment it sets a video/shoutout
+transaction to `livree`, it also sets `confirmation_fan = 'en_attente'`
+and `deadline_confirmation = now() + interval '72 hours'`, in the same
+`UPDATE`. Nothing else about the function changed — same auth.uid()
+check, same ownership/type/deadline guards, same `authenticated`-only
+EXECUTE grant (a `create or replace` with an identical signature leaves
+existing grants untouched, so `0025` doesn't re-state them).
+
+**Two new fan-facing RPCs**, same `SECURITY DEFINER` discipline as every
+transaction-state function since the `0020` fix (explicit
+`auth.uid() is null` rejection, `is distinct from` for the ownership
+check, `revoke all ... from public` + `grant execute ... to
+authenticated`):
+- `confirmer_livraison_fan(p_transaction_id)` — `fan_id = auth.uid()`,
+  `statut = 'livree'`, `confirmation_fan = 'en_attente'` → sets
+  `confirmation_fan = 'confirme'` and stamps `confirme_at`.
+- `contester_livraison_fan(p_transaction_id)` — same eligibility guard →
+  sets `confirmation_fan = 'conteste'`. **Deliberately does not touch
+  `statut` or `necessite_remboursement_manuel`** — no refund is
+  attempted, on purpose. That flag specifically means "a refund already
+  happened and needs the real CinetPay follow-through" (migration
+  `0014`); a dispute hasn't concluded a refund is even warranted, so
+  setting it would misrepresent what actually happened. What "l'argent
+  reste gelé" (the money stays frozen) actually means here, stated
+  plainly rather than implied: this app has no "release funds to
+  créateur" step at all yet — money-movement automation only exists for
+  fan-side refunds (still a documented stub, see "Automatic CinetPay
+  refunds"). `handle_transaction_livraison()` already marks
+  `paiements.statut_paiement = 'reussi'` the instant `deliver_video()`
+  sets `statut = 'livree'`, in the same `UPDATE`, exactly as it did
+  before this migration — a dispute doesn't (and, without touching that
+  trigger, can't) reverse that bookkeeping flag. What disputing actually
+  does is raise a visible flag for a human to review
+  (`/admin`'s "Litiges en attente", below) and prevent auto-confirmation
+  — nothing more. Same "flag and wait for a human" discipline as a
+  créateur-verification conflict (migration `0023`): no automated
+  resolution exists, and none should be added here without a real
+  product decision about what "resolving" a dispute even means (partial
+  refund? full refund? dismiss and pay the créateur? — all out of scope
+  for this lot).
+
+The eligibility guard (`statut = 'livree' and confirmation_fan =
+'en_attente'`) is what makes the type-scope self-enforcing at the
+function level, not just by convention: calling either RPC on a
+whatsapp/don/etc. transaction (stuck at `non_applicable` forever) or on
+one already confirmed/disputed always raises `'transaction is not
+awaiting fan confirmation'`, never silently no-ops. Verified directly,
+including the specific case of a fan attempting to confirm a delivered
+*whatsapp* transaction.
+
+**Auto-confirmation sweep**: `process_confirmation_deadlines()`, a new
+function rather than a branch inside `process_transaction_deadlines()`.
+Deliberately kept separate — `process_transaction_deadlines()`'s only
+caller (`/api/cron/check-deadlines`) loops over every row it returns and
+calls `processAutomaticRefund()` for each one, since every case that
+function has ever handled ends in `statut = 'remboursee'`. An
+auto-confirmed transaction never changes `statut` at all (already
+`livree`, stays `livree`) — folding it into that same return channel
+would need either a new discriminator column or reliance on
+`processAutomaticRefund()`'s own re-read-and-no-op behavior for a
+non-`'remboursee'` row, both more confusing than a second, clearly-named
+function. Same precedent as `close_expired_campagnes()` (migration
+`0017`), which rides this same hourly external-cron infrastructure as
+its own second RPC call rather than being merged in either — `0025`
+adds a *third* call, same "every RPC call must succeed for the route to
+return 200" discipline. `service_role`-only EXECUTE, same pattern as
+`process_transaction_deadlines()`/`close_expired_campagnes()` (migration
+`0021`'s audit) — a global sweep with no per-caller scoping, so no
+authenticated or anonymous caller has any legitimate reason to invoke it
+directly. Verified with a real backdated `deadline_confirmation`: the
+expired transaction is auto-confirmed (`confirme_at` stamped) while a
+sibling transaction whose window is still open is left untouched by the
+same sweep call.
+
+**Fan UI** (`TransactionActions.tsx`, `describeTransactionStatutFan` in
+`src/lib/transactions.ts`): a delivered video/shoutout with
+`confirmation_fan = 'en_attente'` shows two buttons — "Satisfait" /
+"Signaler un problème" (`Dashboard.confirmation.*`) — alongside the
+existing "Voir ma vidéo"/"Voir mon shoutout" reveal button, not instead
+of it (the fan still needs to actually view what was delivered).
+`describeTransactionStatutFan` gained two new optional params
+(`confirmationFan`, `deadlineConfirmation`) and two new branches for the
+`livree` case: a concrete-deadline sentence while `en_attente` (same
+"real date, not a vague label" pattern as the existing
+`en_attente`/`validee` branches), and a distinct "Signalé — en cours de
+révision" sentence once `conteste`. Both params are optional and only
+ever meaningful for video/shoutout — passing them for any other type is
+harmless, since neither branch's condition can ever be true for a
+transaction stuck at `confirmation_fan = 'non_applicable'`. Clicking
+either button calls `/api/transactions/[id]/confirm` or `.../contest`
+(thin RPC wrappers, same shape as `accept`/`refuse`) and
+`router.refresh()`s on success — the component holds no local copy of
+`confirmation_fan`, so a successful action makes the buttons disappear
+via the parent's fresh server data, not local state.
+
+**Admin UI** (`/admin`, `LitigesManager.tsx`): a new "Litiges en attente"
+section, visually mirroring "Remboursements manuels en attente" (card
+list, montant/créateur/fan/date, oldest first) but **deliberately
+read-only** — no "Marquer comme traité" action, unlike the manual-refunds
+list. This lot's scope never defined what resolving a dispute actually
+means (see above), and the schema has no flag to clear even if a button
+were added; this section exists purely so a human can *see* the worklist
+today, same "structure only, no automated/manual-resolution UI yet"
+posture as créateur-verification conflicts. Ordered by `created_at`
+(transaction creation) — the only timestamp this schema actually has for
+these rows, since disputing doesn't stamp its own timestamp the way
+confirming does via `confirme_at`.
+
+Tested end-to-end in `checklist_2_3.sql`, not just described: delivery
+opens the window with a real ~72h deadline; manual confirmation stamps
+`confirme_at` without touching `statut`; a second confirmation attempt on
+an already-confirmed transaction is rejected (eligibility guard, not a
+silent no-op); disputing freezes the transaction (`statut` stays
+`livree`, `necessite_remboursement_manuel` and
+`reference_remboursement_cinetpay` both stay untouched — no refund
+attempted); the auto-confirmation sweep confirms only a transaction past
+its deadline, leaving a sibling with a still-open window untouched;
+whatsapp and don transactions reaching `livree` never have
+`confirmation_fan` touched; and the full `0020`/`0021` security pattern
+(`anon` has no `EXECUTE` on any of the three new functions,
+`authenticated` with a `NULL auth.uid()` is rejected by each function's
+own check, a different authenticated user can't act on someone else's
+transaction, none of the rejected attempts leave any trace, and the
+legitimate callers still hold `EXECUTE`).
 
 ## `accept_transaction`/`refuse_transaction`/`deliver_video` anonymous bypass — found and fixed (migration `0020`)
 
@@ -2632,7 +2785,22 @@ into chat).
   pattern as migrations 0020/0021: `anon` has no `EXECUTE` on any of the
   three new functions, `creer_demande_verification` rejects a NULL
   `auth.uid()`, and `approuver_verification`/`refuser_verification`
-  reject a genuinely-authenticated non-admin caller.
+  reject a genuinely-authenticated non-admin caller. Also covers the
+  Lot 2a fan-confirmation mechanism (0025) with real deliver_video()/
+  accept_transaction() calls: delivery opens a real ~72h confirmation
+  window, manual confirmation stamps `confirme_at` without touching
+  `statut`, a second confirmation attempt on an already-confirmed
+  transaction is rejected, disputing freezes the transaction without
+  ever setting `necessite_remboursement_manuel` or attempting a refund,
+  the auto-confirmation sweep confirms only a transaction past its
+  deadline while leaving a sibling with a still-open window untouched,
+  whatsapp/don transactions reaching `livree` never have
+  `confirmation_fan` touched, and the full 0020/0021 security pattern
+  (`anon` has no `EXECUTE` on any of the three new functions,
+  `authenticated` with a NULL `auth.uid()` is rejected, a different
+  authenticated user can't act on someone else's transaction, none of
+  the rejected attempts leave a trace, and the legitimate callers still
+  hold `EXECUTE`).
 - `supabase/tests/stub_auth.sql` fakes just enough of Supabase's `auth`
   schema (an `auth.uid()` reading `app.current_user_id`, plus the
   `authenticated`/`anon`/`service_role` roles) for the real migrations to

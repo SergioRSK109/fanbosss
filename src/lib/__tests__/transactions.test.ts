@@ -127,4 +127,74 @@ describe("describeTransactionStatutFan", () => {
       ),
     ).toBe("un_statut_inconnu");
   });
+
+  // Lot 2a: livree + confirmationFan describes the fan-confirmation
+  // window for a delivered video/shoutout -- see
+  // supabase/migrations/0025_confirmation_fan_video_shoutout.sql.
+  it("includes the confirmation deadline for a livree transaction awaiting fan confirmation", () => {
+    const text = describeTransactionStatutFan(
+      {
+        statut: "livree",
+        deadlineAcceptation: null,
+        deadlineLivraison: null,
+        confirmationFan: "en_attente",
+        deadlineConfirmation: "2026-07-30T10:00:00.000Z",
+      },
+      t,
+      "fr",
+    );
+    expect(text).toContain("confirme la réception avant le");
+    expect(text).not.toBe("Livré");
+  });
+
+  it("describes a disputed delivery distinctly from a plain livree", () => {
+    expect(
+      describeTransactionStatutFan(
+        {
+          statut: "livree",
+          deadlineAcceptation: null,
+          deadlineLivraison: null,
+          confirmationFan: "conteste",
+          deadlineConfirmation: null,
+        },
+        t,
+        "fr",
+      ),
+    ).toBe("Signalé -- en cours de révision par notre équipe.");
+  });
+
+  it.each(["confirme", "non_applicable", undefined, null])(
+    "falls back to the plain 'Livré' label once confirmation_fan is %s (not en_attente/conteste)",
+    (confirmationFan) => {
+      expect(
+        describeTransactionStatutFan(
+          {
+            statut: "livree",
+            deadlineAcceptation: null,
+            deadlineLivraison: null,
+            confirmationFan,
+            deadlineConfirmation: null,
+          },
+          t,
+          "fr",
+        ),
+      ).toBe("Livré");
+    },
+  );
+
+  it("never shows the confirmation-deadline text without a real deadline (defensive, shouldn't happen in practice)", () => {
+    expect(
+      describeTransactionStatutFan(
+        {
+          statut: "livree",
+          deadlineAcceptation: null,
+          deadlineLivraison: null,
+          confirmationFan: "en_attente",
+          deadlineConfirmation: null,
+        },
+        t,
+        "fr",
+      ),
+    ).toBe("Livré");
+  });
 });

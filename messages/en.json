@@ -204,7 +204,9 @@
       "enAttenteAvecDeadline": "Awaiting the créateur's response (expected by {date})",
       "enAttenteSansDeadline": "Awaiting the créateur's response",
       "valideeAvecDeadline": "Accepted, in progress (delivery expected by {date})",
-      "valideeSansDeadline": "Accepted, in progress"
+      "valideeSansDeadline": "Accepted, in progress",
+      "livreeEnAttenteConfirmation": "Delivered -- confirm receipt by {date}, or it's automatically considered received.",
+      "livreeConteste": "Flagged -- under review by our team."
     },
     "classementProgres": {
       "heading": "Your progress towards the top 10 (last 30 days)",
@@ -241,6 +243,10 @@
       },
       "open": "Open →",
       "unavailable": "unavailable"
+    },
+    "confirmation": {
+      "satisfait": "Satisfied",
+      "signalerProbleme": "Report a problem"
     }
   },
   "Verification": {
@@ -377,6 +383,11 @@
       "kycNotice": "This case requires identity verification by a third-party provider (KYC) -- no badge should be granted to either conflicting account until this is resolved manually.",
       "approuver": "Approve",
       "refuser": "Refuse"
+    },
+    "litigesHeading": "Disputes pending",
+    "litigesIntro": "Videos/shoutouts the fan flagged as a problem (see CLAUDE.md “Fan confirmation state”). Money isn't refunded automatically -- these cases need a manual review.",
+    "litiges": {
+      "empty": "No dispute pending."
     }
   }
 }

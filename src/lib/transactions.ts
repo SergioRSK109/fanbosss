@@ -49,17 +49,23 @@ export type StatutFanTranslator = (key: string, values?: Record<string, string |
 // instead of a vague "en attente" -- deadlineAcceptation only applies to
 // en_attente, deadlineLivraison only to validee (and only ever set for
 // video/shoutout -- every other type moves straight past validee to
-// livree, see the transaction lifecycle).
+// livree, see the transaction lifecycle). confirmationFan/
+// deadlineConfirmation (Lot 2a) only ever apply to livree video/shoutout
+// transactions awaiting fan confirmation -- see
+// supabase/migrations/0025_confirmation_fan_video_shoutout.sql.
 export function describeTransactionStatutFan(
   params: {
     statut: string;
     deadlineAcceptation: string | null;
     deadlineLivraison: string | null;
+    confirmationFan?: string | null;
+    deadlineConfirmation?: string | null;
   },
   t: StatutFanTranslator,
   locale: string,
 ): string {
-  const { statut, deadlineAcceptation, deadlineLivraison } = params;
+  const { statut, deadlineAcceptation, deadlineLivraison, confirmationFan, deadlineConfirmation } =
+    params;
 
   switch (statut) {
     case "en_attente":
@@ -75,6 +81,14 @@ export function describeTransactionStatutFan(
           })
         : t("transactionStatut.valideeSansDeadline");
     case "livree":
+      if (confirmationFan === "en_attente" && deadlineConfirmation) {
+        return t("transactionStatut.livreeEnAttenteConfirmation", {
+          date: formatDeadline(deadlineConfirmation, locale),
+        });
+      }
+      if (confirmationFan === "conteste") {
+        return t("transactionStatut.livreeConteste");
+      }
       return t("statutShort.livree");
     case "remboursee":
       return t("statutShort.remboursee");

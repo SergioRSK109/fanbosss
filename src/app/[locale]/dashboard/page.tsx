@@ -69,7 +69,9 @@ export default async function DashboardPage({
       .order("deadline_acceptation", { ascending: true }),
     supabase
       .from("transactions")
-      .select("id, montant, statut, deadline_acceptation, deadline_livraison, offres(type)")
+      .select(
+        "id, montant, statut, deadline_acceptation, deadline_livraison, confirmation_fan, deadline_confirmation, offres(type)",
+      )
       .eq("fan_id", user.id)
       .order("created_at", { ascending: false }),
     supabase
@@ -332,6 +334,8 @@ export default async function DashboardPage({
                       statut: transaction.statut,
                       deadlineAcceptation: transaction.deadline_acceptation,
                       deadlineLivraison: transaction.deadline_livraison,
+                      confirmationFan: transaction.confirmation_fan,
+                      deadlineConfirmation: transaction.deadline_confirmation,
                     },
                     t,
                     locale,
@@ -342,6 +346,7 @@ export default async function DashboardPage({
                     transactionId={transaction.id}
                     type={offre.type}
                     statut={transaction.statut}
+                    confirmationFan={transaction.confirmation_fan}
                   />
                 )}
               </li>
