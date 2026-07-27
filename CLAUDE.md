@@ -776,7 +776,11 @@ themselves attempting to self-approve their own withdrawal.
 **`/finance`** (`src/app/[locale]/finance/page.tsx`) — new, standalone
 route, **not yet linked from the top nav** (`src/app/[locale]/layout.tsx`)
 per instruction, deferred to a later "Lot 4"; reachable today via a new
-"💰 Finance" link on `/dashboard`'s own header, next to "⚙️ Réglages".
+"💰 Paiements" link on `/dashboard`'s own header, next to "⚙️ Réglages"
+(the displayed label — "Paiements"/"Payments" — was renamed from
+"Finance"/"Finance" after initial ship; the route stays `/finance` and
+the `Finance` i18n namespace/component names are unchanged, since neither
+is user-visible).
 Renders the three buckets above (via `solde_wallet_createur`), a
 withdrawal request form (`RetraitRequestForm.tsx`, disabled with an
 explicit "Solde minimum pour demander un retrait : 25$." message whenever
