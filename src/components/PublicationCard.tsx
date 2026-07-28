@@ -2,6 +2,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { PublicationActions } from "@/components/PublicationActions";
 import { PublicationTeaser } from "@/components/PublicationTeaser";
 import { RepostIcon } from "@/components/ui/icons";
+import { Link } from "@/i18n/navigation";
 import type { Publication } from "@/lib/publications";
 
 function formatDate(iso: string, locale: string): string {
@@ -32,7 +33,12 @@ function PublicationBody({ publication }: { publication: Publication }) {
 
   return (
     <>
-      <div className="flex items-center gap-2.5">
+      {/* The photo + name (+ badges/date, same header block) link to the
+          créateur's profile -- standard behavior on every comparable
+          platform (Instagram, Patreon, ...). auteurHrefFor() already
+          existed and was already used by PublicationTeaser's own link;
+          this was simply never applied to the full-content render path. */}
+      <Link href={auteurHrefFor(auteur)} className="flex items-center gap-2.5">
         {auteur.photoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={auteur.photoUrl} alt="" className="h-9 w-9 rounded-full object-cover" />
@@ -43,7 +49,7 @@ function PublicationBody({ publication }: { publication: Publication }) {
         )}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
-            <p className="truncate text-sm font-semibold">{auteurLabel}</p>
+            <p className="truncate text-sm font-semibold hover:underline">{auteurLabel}</p>
             {publication.type === "annonce_fanboss" && (
               <span className="shrink-0 rounded-full bg-accent-500/15 px-2 py-0.5 text-xs font-bold text-accent-600">
                 FanBoss
@@ -59,7 +65,7 @@ function PublicationBody({ publication }: { publication: Publication }) {
             {formatDate(publication.createdAt, locale)}
           </p>
         </div>
-      </div>
+      </Link>
 
       <p className="whitespace-pre-wrap text-sm leading-relaxed">{publication.contenu}</p>
 
@@ -114,9 +120,22 @@ export function PublicationCard({
         <PublicationBody publication={publication} />
       )}
 
-      <div className="border-t border-border pt-2">
-        <PublicationActions publication={publication} canRepost={canRepost} />
-      </div>
+      {/* A locked teaser (publication.contenuComplet === false) shows no
+          action bar at all -- like/repost/share/report/mute all operate
+          on real content the viewer can't see yet, and
+          toggler_like_publication()/signaler_publication() both reject
+          exactly that server-side ("cannot like/report a publication you
+          cannot fully see"). A repost row's OWN contenu_complet is always
+          true regardless of the embedded original's lock state (a
+          repost's own visibilite is forced 'public' by
+          reposter_publication()), so this check correctly keeps the
+          repost's action bar visible even when its embedded original is
+          a locked teaser. */}
+      {publication.contenuComplet && (
+        <div className="border-t border-border pt-2">
+          <PublicationActions publication={publication} canRepost={canRepost} />
+        </div>
+      )}
     </article>
   );
 }

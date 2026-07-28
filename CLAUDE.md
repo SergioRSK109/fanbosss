@@ -1578,18 +1578,67 @@ repost par d'autres créateurs", checked by default, rendered only when
 non-public target regardless of `autorise_repost`, so there's nothing
 for the hidden checkbox's value to have affected either way).
 
-**What was *not* built or verified in this lot, flagged rather than
-silently skipped, matching this project's own honesty discipline**: no
-throwaway mock-Supabase/Playwright harness was stood up this session to
-visually drive the new UI end-to-end (the technique this file describes
-using for essentially every earlier lot) — the DB layer (every RPC,
-view, and the masking cascade) was verified empirically against a real
-throwaway Postgres database exactly as described above, and the full
-`npm test`/`npm run tsc`/`npm run lint`/`npm run test:sql` suite was run
-and passes, but a future session should still drive the actual browser
-flow (like/repost/share/mute buttons, the composer checkbox, the
-permalink page) before treating the UI layer as fully proven the way the
-SQL layer now is.
+**Follow-up (same lot, second pass): the author photo/name were not
+clickable, and the visual pass this section originally flagged as
+skipped was then actually done.** `PublicationBody`'s full-content
+branch rendered the photo/name as plain markup, never wrapped in the
+`Link` to `auteurHrefFor(auteur)` that `PublicationTeaser` already used
+for its own CTA — a real, reachable bug (every comparable platform makes
+the avatar/name clickable), fixed by wrapping that header block in a
+`Link`, matching the teaser's existing pattern exactly.
+
+Fixing it was the trigger for finally building the throwaway
+mock-Supabase/Playwright harness this section had flagged as skipped —
+same technique used for essentially every earlier lot: a small Node HTTP
+server mocking the Auth (`/auth/v1/token`, `/auth/v1/user`) and
+PostgREST REST/RPC surface, a real `next dev` pointed at it, and a
+scripted Chromium session logging in as a real fixture user and clicking
+through the actual UI. **This caught two more real bugs the SQL
+checklist alone could not, precisely because they're UI-layer, not
+DB-layer**:
+
+1. **The `☰` menu dropdown (`z-20`) could render underneath
+   `AppTabBar`'s fixed bottom nav (`z-40`)** — reproduced live: Playwright
+   reported the tab bar's own `<Link>` "intercepts pointer events" when
+   trying to click "Ne plus voir les publications de ce créateur" on a
+   card near the bottom of the viewport. Fixed by raising both the menu
+   panel and its outside-click catcher to `z-50`, matching this project's
+   existing convention for an overlay that must always win over the tab
+   bar (`ZoomablePhoto`/`PhotoCropper`).
+2. **A locked teaser rendered a full action bar underneath it** — `like`,
+   `repost`, `partager`, and the `☰` menu all appeared on a `soutiens`-only
+   post a stranger couldn't see, even though this section's own text
+   above already (incorrectly) claimed "a locked teaser still shows
+   neither action." Clicking like on one would have hit
+   `toggler_like_publication()`'s real server-side rejection
+   ("cannot like a publication you cannot fully see") — the DB guarantee
+   held, but the UI offered an action doomed to fail. Fixed by gating
+   `PublicationCard`'s entire action-bar block on
+   `publication.contenuComplet` — which, for a repost row, is *always*
+   `true` regardless of its embedded original's own lock state (a
+   repost's own `visibilite` is forced `'public'` by
+   `reposter_publication()`, so `peut_voir_publication_complete()` takes
+   the unconditional-`public` branch for the repost row itself), so this
+   one check correctly keeps a repost's action bar visible even when the
+   original it embeds is locked.
+
+Verified live, in French and English, light and dark mode, via the
+harness above: the composer checkbox appears only when `visibilite`
+is `public` and disappears for `soutiens`; a submitted post appears
+immediately; like toggles the heart fill and count; the clickable
+author link (this fix) navigates to `/@handle` from both a plain card
+and — separately — from inside an embedded repost's body; reposting
+shows the "🔁 {reposter} a reposté" header with the embedded original,
+and the repost's own action bar correctly omits its own repost button;
+partager copies the real `/@pseudo/p/{id}` permalink to the clipboard;
+the `☰` menu (now fully clickable at every scroll position) reports and
+mutes correctly, with the mute asymmetry directly observable — a muted
+créateur's plain post vanishes from `/home` while a repost of her
+content (authored by someone else, not muted) stays, and her own
+profile page is completely unaffected; the locked teaser shows no action
+bar at all; and both permalink-page states (full content, locked teaser)
+render correctly. The full `npm test`/`npm run tsc`/`npm run lint`/
+`npm run test:sql` suite was re-run after each fix and passes.
 
 Tested end-to-end in `checklist_2_3.sql` with a real fixture (créateur A
 — verified, posts the originals; créateur B — verified, reposts;

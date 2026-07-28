@@ -195,15 +195,24 @@ export function PublicationActions({
           <>
             {/* Invisible full-screen catcher so clicking anywhere outside
                 the panel closes it -- simpler than a document-level
-                listener for a menu this small. */}
+                listener for a menu this small. z-50, not z-10: this
+                bar's own AppTabBar sibling (the shared (app) layout) is a
+                fixed bottom nav at z-40 -- a card near the bottom of the
+                viewport would otherwise sit UNDER the tab bar, which
+                would then visually and interactively swallow clicks
+                meant for the menu (caught live: Playwright reported the
+                tab bar's own <Link> "intercepts pointer events" when
+                trying to click a menu item). z-50 matches this project's
+                existing convention for a full-screen overlay that must
+                always win over the tab bar (ZoomablePhoto/PhotoCropper). */}
             <button
               type="button"
               aria-hidden
               tabIndex={-1}
-              className="fixed inset-0 z-10 cursor-default"
+              className="fixed inset-0 z-50 cursor-default"
               onClick={() => setMenuOpen(false)}
             />
-            <div className="card absolute right-0 z-20 mt-2 flex w-56 flex-col gap-1 p-1.5 text-sm">
+            <div className="card absolute right-0 z-50 mt-2 flex w-56 flex-col gap-1 p-1.5 text-sm">
               {reportStatus === "sent" ? (
                 <p className="px-3 py-2 text-foreground-muted">{t("reportSent")}</p>
               ) : (
