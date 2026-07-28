@@ -1364,9 +1364,16 @@ The original CHECK on `contenu`'s length is untouched and still holds
 whenever `contenu` isn't null — a CHECK constraint never fails on NULL,
 so nothing needed to change there. `idx_repost_unique` (a partial unique
 index on `(auteur_id, repost_de_id) where repost_de_id is not null`) is
-the real guarantee against a double-repost by the same author;
-`reposter_publication()`'s own explicit check (below) exists only to
-give a clean error message before ever hitting it.
+the real guarantee against two live repost rows for the same
+`(auteur_id, repost_de_id)` pair ever coexisting;
+`toggler_repost_publication()`'s own explicit check (below) exists only
+to give a clean error message before ever hitting it. **Since migration
+`0032` (see that section further down), the function checks "does a
+repost already exist" *before* attempting to insert one, and toggles it
+off instead of erroring** — so in normal operation this index is never
+actually hit through the RPC at all; it stays as the real defense-in-depth
+guarantee against a race between two concurrent calls both reaching the
+insert step at once.
 
 **Four new `SECURITY DEFINER` RPCs**, same discipline as every write RPC
 since migration `0020` (`auth.uid() is null → raise`, `revoke all ...
@@ -1380,17 +1387,24 @@ every one of these four is a caller-specific action):
   n'a pas lu", same eligibility rule as reporting. Toggles a row in
   `publications_likes` and returns `(liked, likes_count)` so the caller
   never needs a second round trip to learn the new count.
-- **`reposter_publication(p_publication_id)`** — reserved to verified
+- **`toggler_repost_publication(p_publication_id)`** — reserved to verified
   créateurs/admins (the exact population `publier_message()` already
   authorizes, re-verified independently here, never trusted from a prior
   check). Every rejection condition is checked and reported individually
   — target not found, masked, non-public, `autorise_repost = 'personne'`,
-  already itself a repost, already reposted by this same caller, or the
-  shared rate limit (see below) — so both the SQL checklist and a real
-  error message can tell them apart. On success, inserts a new
-  `publications` row: `auteur_id` = the caller, `type` auto-assigned
-  exactly like `publier_message()` (`annonce_fanboss` for an admin,
-  `createur` otherwise), `contenu = null`, `repost_de_id` = the target,
+  or already itself a repost, plus the shared rate limit (see below) — so
+  both the SQL checklist and a real error message can tell them apart. On
+  success, inserts a new `publications` row: `auteur_id` = the caller,
+  `type` auto-assigned exactly like `publier_message()` (`annonce_fanboss`
+  for an admin, `createur` otherwise), `contenu = null`, `repost_de_id` =
+  the target, `visibilite` always forced to `'public'`. **As originally
+  shipped in this lot, calling it a second time on the same target was
+  rejected outright ("already reposted this publication") — migration
+  `0032` (see that section further down) turned this into a real toggle
+  instead: a second call deletes the existing repost, a third recreates
+  it.** The rest of this bullet describes the function as it originally
+  shipped; the eligibility/rejection logic on a genuinely first-time
+  repost is otherwise unchanged.
   `visibilite` always forced to `'public'` — a restricted repost would be
   meaningless, since eligibility already requires the target to be public
   in the first place.
@@ -1416,7 +1430,7 @@ backwards-compatibility shims, and the one caller (`POST
 /api/publications`) was updated in the same change. **A real bug caught
 empirically before it shipped, the same "reproduce before trusting"
 discipline this file has followed since the pseudo-cooldown/`0020`/
-`0029` bugs**: `reposter_publication()`'s own OUT parameters (`id, type,
+`0029` bugs**: `toggler_repost_publication()`'s own OUT parameters (`id, type,
 created_at`) shadow plain column references the exact same way
 `creer_demande_verification()`/`publier_message()` already documented —
 an unqualified `id` in its target-publication lookup raised "column
@@ -1438,7 +1452,7 @@ this publication" shape as the two counts above, just counting
 dedicated table) and `viewer_a_reposte` (the brief's own repost-button
 eligibility rule includes "not already reposted by this viewer", which
 needs a per-viewer flag the same way `viewer_a_aime` does —
-`reposter_publication()` re-checks this exact condition server-side
+`toggler_repost_publication()` re-checks this exact condition server-side
 regardless, this is purely a UI signal to hide/disable the button ahead
 of time).
 
@@ -1474,7 +1488,7 @@ that same créateur, queried by that same fan, is completely unaffected.
 **Reposting deliberately consumes the exact same 10/24h rate limit as a
 plain post — the first design decision worth stating plainly, since it
 shapes how a future "why was my repost rejected" question should be
-answered**: `reposter_publication()`'s rate-limit check is the identical
+answered**: `toggler_repost_publication()`'s rate-limit check is the identical
 query `publier_message()` already runs (`count(*) from publications
 where auteur_id = caller and created_at > now() - 24h`) — since a repost
 is a normal row in the same `publications` table (distinguished only by
@@ -1553,7 +1567,7 @@ for a real list change" split this project already uses elsewhere (e.g.
 `router.refresh()`-on-success pattern). The repost button only renders
 when `canRepost && repostDe === null && visibilite === 'public' &&
 autoriseRepost === 'tous' && !viewerARepost` — every one of those is
-re-checked server-side by `reposter_publication()` regardless, this is
+re-checked server-side by `toggler_repost_publication()` regardless, this is
 purely what decides whether the button is worth showing at all.
 `canRepost` is computed once per page (`canManagePublications()`,
 `src/lib/publications.ts` — the exact same `est_admin ||
@@ -1574,7 +1588,7 @@ as before).
 repost par d'autres créateurs", checked by default, rendered only when
 `visibilite === "public"` — hidden rather than shown-disabled for
 `soutiens`, since the value is genuinely inert in that case
-(`reposter_publication()`'s own `visibilite` check already rejects any
+(`toggler_repost_publication()`'s own `visibilite` check already rejects any
 non-public target regardless of `autorise_repost`, so there's nothing
 for the hidden checkbox's value to have affected either way).
 
@@ -1617,7 +1631,7 @@ DB-layer**:
    `publication.contenuComplet` — which, for a repost row, is *always*
    `true` regardless of its embedded original's own lock state (a
    repost's own `visibilite` is forced `'public'` by
-   `reposter_publication()`, so `peut_voir_publication_complete()` takes
+   `toggler_repost_publication()`, so `peut_voir_publication_complete()` takes
    the unconditional-`public` branch for the repost row itself), so this
    one check correctly keeps a repost's action bar visible even when the
    original it embeds is locked.
@@ -1647,7 +1661,7 @@ fan C — a stranger to A, not verified/admin; admin D — not itself
 transaction): `toggler_like_publication()` toggles on then off with the
 count following correctly, rejects liking a `soutiens`-only post a
 stranger can't fully see (no row left behind), and rejects a `NULL
-auth.uid()`; `reposter_publication()` rejects, individually, a
+auth.uid()`; `toggler_repost_publication()` rejects, individually, a
 non-verified/non-admin caller, a `soutiens`-only target, a target with
 `autorise_repost = 'personne'`, a masked target, a double-repost of the
 same target by the same author, and reposting a repost — then succeeds
@@ -1669,6 +1683,163 @@ four new functions plus the updated 4-arg `publier_message()` (`anon`
 has no `EXECUTE` on any of them, `authenticated` with a `NULL
 auth.uid()` is rejected by each function's own check, and
 `authenticated` still holds `EXECUTE` on all five).
+
+## Créateur self-masking + authorship-aware menu + repost toggle (Lot 5c follow-up, migration `0032`)
+
+A second follow-up to Lot 5c (after the clickable-author-link/z-index/
+teaser-action-bar fixes documented above): a créateur can now hide their
+own publication directly, the "..." menu shows different options
+depending on whether the viewer authored the row being looked at, and
+reposting became a real toggle instead of a one-way action.
+
+**`masquer_ma_publication(p_publication_id)`** is self-only and
+deliberately **one-way** — no boolean parameter at all, unlike the
+admin-only `masquer_publication()` (migration `0030`), which still takes
+`p_masque boolean` and can flip either direction. A créateur can pull
+their own post down, but can never bring it back up themselves; only an
+admin can reverse that via the existing `masquer_publication()`. This is
+a deliberate asymmetry, not an oversight: if self-unmasking existed, a
+créateur could use it to route around a moderation decision made against
+them (an admin masks a publication via `masquer_publication()`, the
+créateur immediately un-masks their own row again) — removing that
+parameter entirely, rather than adding an ownership check that still
+permits both directions, is what actually closes that gap. Same
+`SECURITY DEFINER` + `auth.uid()`-null-check + `revoke/grant` discipline
+as every write RPC since migration `0020`: re-verifies `auteur_id =
+auth.uid()` internally (raising `'not authorized: you can only hide your
+own publications'` otherwise, distinct from `'publication not found'`
+for a genuinely unknown id, same "tell the two failure modes apart"
+granularity as every other RPC in this project), then sets `masque =
+true` unconditionally. Calling it again on an already-masked row is a
+harmless no-op success (masque was already true, stays true) — not an
+error, since there's no meaningful "already hidden" failure state to
+report.
+
+**`toggler_repost_publication(p_publication_id)`** replaces
+`reposter_publication()` outright — same rename discipline as
+`publier_message()`'s 3-arg → 4-arg change in migration `0031`
+(`drop function if exists reposter_publication(uuid);`, no overload kept,
+the one caller updated in the same change; this project doesn't carry
+backwards-compatibility shims). `p_publication_id` is always the
+**original's** id, exactly as before, never the repost's own id — same
+convention as `toggler_like_publication`/`toggler_mute_createur`.
+
+The toggle-off branch is a **real `DELETE`**, not a `masque` flip, and is
+checked in the function **before** any of the target's own
+masked/visibilite/autorise_repost gates — those only matter when
+*creating* a new repost. Undoing an existing one must keep working even
+if the original was masked afterward or its author flipped
+`autorise_repost` to `'personne'` in the meantime; there's no reason to
+trap a créateur into a repost they can no longer remove. The "target is
+itself a repost" check stays unconditional and first, since it's a
+structural property of the target that applies to both directions
+identically (a repost of a repost could never have been created in the
+first place, so there's never an existing one to toggle off either).
+
+**Why a real `DELETE` is safe here specifically, unlike for an original
+post** — this is the one design decision worth stating plainly, since it
+explains why this codebase still has no general publication-delete path
+anywhere else: a repost can never itself be the target of another row's
+`repost_de_id` (`toggler_repost_publication()`'s own "cannot repost a
+repost" check guarantees this, on both the create and toggle-off paths),
+so **nothing ever references a repost** — no foreign key can ever block
+deleting one. A repost also never carries its own `contenu`/
+`image_r2_key` (`publications_contenu_coherent` requires both `null`
+whenever `repost_de_id` is set), so there is nothing on R2 to clean up
+either. Deleting it is a genuine reversal ("never happened"), which is
+also why it's structurally distinct from `masquer_ma_publication()` — a
+créateur hiding their own original content keeps a record (an admin can
+still see and rule on a masked row); un-reposting something erases it
+completely, which is fine precisely because a repost has no content of
+its own to lose.
+
+**This RPC can never delete a row that isn't a repost** — not by
+convention, but because the `DELETE`'s own `WHERE` clause
+(`auteur_id = caller AND repost_de_id = p_publication_id`) can
+structurally only ever match rows that satisfy `repost_de_id is not
+null`, which `publications_contenu_coherent` ties directly to "this row
+is a repost with no `contenu` of its own." Calling this function with
+`p_publication_id` set to one of the caller's own *plain* posts (one
+nothing has reposted yet) finds no matching row and falls through to the
+create path instead — inserting a *new* repost of that plain post,
+leaving the original completely untouched. Verified directly, not
+assumed (`checklist_2_3.sql`): the target's `contenu` is read before and
+after the call and confirmed identical.
+
+**Quota release, the natural consequence of the second point being an
+actual `DELETE`**: `publier_message()`'s and this function's own rate
+limit (`count(*) from publications where auteur_id = caller and
+created_at > now() - interval '24 hours'`) is a live count, not a
+separately-tracked counter — deleting a repost row removes it from that
+count immediately, freeing a slot for a new post or repost within the
+same 24h window. No special-casing was needed to make this true; it
+falls directly out of reusing the exact same query
+`toggler_repost_publication()` already had. Verified directly: a
+créateur at exactly 10/10 (including one repost) has a new repost
+rejected by the rate limit, then — after toggling that one repost off —
+successfully reposts a different target, still within the same 24h
+window.
+
+**The authorship-aware "..." menu** (`PublicationActions.tsx`) fixes a
+real UX gap: the menu used to show "Signaler"/"Ne plus voir les
+publications de ce créateur" unconditionally, even on the viewer's own
+publications, where neither option makes sense (you can't meaningfully
+report or mute yourself). It now branches on `viewerId === publication.
+auteur.id` — the top-level card's own author, i.e. the **reposter** for
+a repost row, not the embedded original's author, since the menu always
+acts on the card's own `publication.id` regardless of whether it's a
+plain post or a repost (a créateur can hide a repost they made, exactly
+like a plain post). `viewerId` is threaded down from a new
+`getViewerContext()` (`src/lib/publications.ts`, replacing the old
+`canManagePublications()` — same `est_admin || createur_verifie` query,
+now also returning the caller's own id) through `PublicationsList` →
+`PublicationCard` → `PublicationActions`, computed once per page exactly
+like `canRepost` already was, never re-derived per card.
+`masquer_ma_publication()`/`signaler_publication()` both re-verify
+ownership/eligibility server-side regardless of what the menu shows —
+same "never trust the client alone" discipline as everywhere else in
+this project; `viewerId` only decides which button(s) render.
+
+**The 🔁 repost button no longer disappears once the viewer has
+reposted** — it used to (Lot 5c's original one-way design: hide the
+button, since there was nothing further to do). Now it stays visible and
+its own fill state (`RepostIcon`'s `active` prop, same outline-vs-filled
+convention as the heart/share icons) reflects whether the viewer has
+already reposted, toggling on click. Eligibility to *show* the button at
+all is now `canRepost && repostDe === null && (reposted ||
+(visibilite === 'public' && autoriseRepost === 'tous'))` — the button
+stays visible to allow toggling off even if the underlying gates would
+now block a *new* repost (mirroring `toggler_repost_publication()`'s own
+"toggle-off checked before the create-path gates" ordering). Clicking it
+calls the same `/api/publications/[id]/repost` route (unchanged path,
+now wrapping the renamed RPC) and applies the RPC's own `reposted`
+return value to local state either direction, then `router.refresh()`s
+regardless of direction — both a new repost appearing and an existing
+one disappearing change *which rows* the page shows, not just a counter
+on one card.
+
+Tested end-to-end in `checklist_2_3.sql` with a real fixture (créateur A
+— verified, créateur B — verified, fan C — a stranger, admin D):
+`masquer_ma_publication()` rejects a non-owner (leaving `masque`
+untouched) and succeeds for the owner, with the masked row confirmed
+gone from `publications_visibles`; a second call on an already-masked
+row is confirmed to leave it masked forever (no unmask path exists);
+`toggler_repost_publication()` still rejects every original condition
+individually on a first-time repost (non-verified/non-admin caller,
+non-public target, `autorise_repost = 'personne'`, a masked target, and
+reposting a repost); the toggle itself is proven directly across a full
+create → delete → create cycle, with the delete independently confirmed
+at the database level (not just via the RPC's own return value); it
+never deletes a row that isn't a repost (a plain post survives the call
+completely unchanged); the quota-release chain is proven end to end (at
+the rate limit, a new repost is rejected; toggling an existing repost off
+frees a slot; a new repost then succeeds); the old `reposter_publication`
+name is confirmed gone outright (`undefined_function`, not merely
+inaccessible); and the full `0020`/`0021` security-grant pattern holds
+for both new/renamed functions. The authorship-aware menu and the
+repost button's fill-state toggle are UI-only and were verified visually
+instead (fr/en, light/dark) — see that pass's own notes for what was
+specifically checked.
 
 ## `accept_transaction`/`refuse_transaction`/`deliver_video` anonymous bypass — found and fixed (migration `0020`)
 
@@ -3966,23 +4137,42 @@ into chat).
   fan C — a stranger; admin D; fan E — a real supporter of A):
   `toggler_like_publication()` toggles on/off correctly and rejects
   liking a `soutiens`-only post a stranger can't fully see;
-  `reposter_publication()` rejects, individually, a non-verified/
+  `toggler_repost_publication()` rejects, individually, a non-verified/
   non-admin caller, a `soutiens`-only target, `autorise_repost =
-  'personne'`, a masked target, a double-repost by the same author, and
-  reposting a repost, then succeeds for a genuinely eligible caller/
-  target and shares its 10/24h rate limit with `publier_message()` (an
-  11th action — a repost — is rejected); the masking cascade is proven
-  directly — a repost disappears from **both** `publications_visibles`
-  and `publications_accueil` the instant its referenced original is
-  masked, while the repost's own `masque` flag stays `false` throughout,
-  the single most important behavior in this lot; `partager_publication()`
-  is confirmed idempotent (two calls from the same fan leave the count at
-  1, one row, not two); `toggler_mute_createur()` rejects a self-mute and
-  proves the mute asymmetry directly (excluded from `publications_accueil`,
-  completely unaffected in `publications_visibles`, for the same
-  querying fan), with a second toggle confirmed to un-mute; and the full
-  `0020`/`0021` security-grant pattern holds for all four new functions
-  plus the updated 4-arg `publier_message()`.
+  'personne'`, a masked target, and reposting a repost, then succeeds for
+  a genuinely eligible caller/target and shares its 10/24h rate limit
+  with `publier_message()` (an 11th action — a repost — is rejected); a
+  second call on the same target is confirmed to toggle the repost off
+  rather than being rejected (updated for migration `0032`, see below —
+  this file's own test coverage was updated in place rather than left
+  describing the original one-way behavior); the masking cascade is
+  proven directly — a repost disappears from **both**
+  `publications_visibles` and `publications_accueil` the instant its
+  referenced original is masked, while the repost's own `masque` flag
+  stays `false` throughout, the single most important behavior in this
+  lot; `partager_publication()` is confirmed idempotent (two calls from
+  the same fan leave the count at 1, one row, not two);
+  `toggler_mute_createur()` rejects a self-mute and proves the mute
+  asymmetry directly (excluded from `publications_accueil`, completely
+  unaffected in `publications_visibles`, for the same querying fan), with
+  a second toggle confirmed to un-mute; and the full `0020`/`0021`
+  security-grant pattern holds for all four new functions plus the
+  updated 4-arg `publier_message()`. Also covers the Lot 5c follow-up
+  (0032) with its own fixture (créateur A — verified, créateur B —
+  verified, fan C — a stranger, admin D): `masquer_ma_publication()`
+  rejects a non-owner (leaving `masque` untouched) and succeeds for the
+  owner, with the masked row confirmed gone from `publications_visibles`,
+  and a second call on an already-masked row confirmed to leave it
+  masked forever (no unmask path exists); `toggler_repost_publication()`
+  (renamed from `reposter_publication`, confirmed gone outright as
+  `undefined_function`, not merely inaccessible) is proven to toggle a
+  full create → delete → create cycle, with the delete independently
+  confirmed at the database level; it's confirmed to never delete a row
+  that isn't a repost (a plain post survives the call unchanged); the
+  quota-release chain is proven end to end (a rejection at the rate
+  limit, freed by toggling an existing repost off, then a successful new
+  repost); and the full `0020`/`0021` security-grant pattern holds for
+  both new/renamed functions.
 - `supabase/tests/stub_auth.sql` fakes just enough of Supabase's `auth`
   schema (an `auth.uid()` reading `app.current_user_id`, plus the
   `authenticated`/`anon`/`service_role` roles) for the real migrations to

@@ -60,6 +60,7 @@ describe("GET /[locale]/[handle] (percent-encoded '@' bug)", () => {
       badgesFidelite: [],
       publications: [],
       viewerCanRepost: false,
+      viewerId: null,
     });
   });
 

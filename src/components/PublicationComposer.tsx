@@ -65,7 +65,7 @@ export function PublicationComposer() {
           visibilite,
           // Only meaningful when visibilite is "public" -- a soutiens-only
           // post can never be reposted regardless of this value (see
-          // reposter_publication()'s own visibilite check), so there's
+          // toggler_repost_publication()'s own visibilite check), so there's
           // nothing to send differently when the checkbox is hidden.
           autorise_repost: autoriseRepost ? "tous" : "personne",
         }),
@@ -122,7 +122,7 @@ export function PublicationComposer() {
         </select>
 
         {/* Only meaningful when visibilite is "public" -- a soutiens-only
-            post can never be reposted regardless (reposter_publication()
+            post can never be reposted regardless (toggler_repost_publication()
             rejects any non-public target), so the checkbox is hidden
             rather than shown-but-disabled for that case. */}
         {visibilite === "public" && (

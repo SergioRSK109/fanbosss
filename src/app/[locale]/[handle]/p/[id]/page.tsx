@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { PublicationCard } from "@/components/PublicationCard";
-import { canManagePublications, getPublicationById } from "@/lib/publications";
+import { getPublicationById, getViewerContext } from "@/lib/publications";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 // Lot 5c: a single publication's permalink, usefanboss.com/@pseudo/p/{id}
@@ -43,11 +43,11 @@ export default async function PublicationPermalienPage({
   }
 
   const supabase = await createSupabaseServerClient();
-  const canRepost = await canManagePublications(supabase);
+  const { viewerId, canManagePublications: canRepost } = await getViewerContext(supabase);
 
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-4 p-5 sm:p-6">
-      <PublicationCard publication={publication} canRepost={canRepost} />
+      <PublicationCard publication={publication} canRepost={canRepost} viewerId={viewerId} />
     </main>
   );
 }

@@ -1,4 +1,4 @@
-import { canManagePublications, getPublicationsForAuteur, type Publication } from "@/lib/publications";
+import { getPublicationsForAuteur, getViewerContext, type Publication } from "@/lib/publications";
 import { getSignedDownloadUrl } from "@/lib/r2";
 import type { OffreType } from "@/lib/validation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -85,9 +85,13 @@ export interface CreateurProfileData {
   // Lot 5c -- whether the CURRENT viewer (not necessarily this profile's
   // own owner) is a verified créateur or admin, i.e. eligible to repost
   // any of the publications above. Computed once here rather than once
-  // per publication -- same canManagePublications() also backs /home's
+  // per publication -- same getViewerContext() also backs /home's
   // composer/repost eligibility.
   viewerCanRepost: boolean;
+  // Migration 0032 -- the current viewer's own id (null if logged out),
+  // so each publication's "..." menu can decide "Masquer ma publication"
+  // vs. "Signaler"/mute without a second query per card.
+  viewerId: string | null;
 }
 
 // `don` always leads the public offre list, regardless of when the
@@ -281,7 +285,7 @@ export async function getCreateurProfileData(
   });
 
   const publications = await getPublicationsForAuteur(createurId);
-  const viewerCanRepost = await canManagePublications(supabase);
+  const { viewerId, canManagePublications: viewerCanRepost } = await getViewerContext(supabase);
 
   return {
     createurId,
@@ -307,5 +311,6 @@ export async function getCreateurProfileData(
     badgesFidelite,
     publications,
     viewerCanRepost,
+    viewerId,
   };
 }

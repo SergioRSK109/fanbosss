@@ -41,8 +41,8 @@ export interface Publication {
   viewerAPartage: boolean;
   // Whether the CURRENT viewer has already reposted this exact
   // publication -- purely a UI eligibility signal (hide/disable the
-  // repost button ahead of time); reposter_publication() re-checks this
-  // server-side regardless, same "never trust the client alone"
+  // repost button ahead of time); toggler_repost_publication() re-checks
+  // this server-side regardless, same "never trust the client alone"
   // discipline as everywhere else in this project.
   viewerARepost: boolean;
   // Set only when this row is itself a repost (repost_de_id not null on
@@ -55,7 +55,8 @@ export interface Publication {
   // of a masked original from the rows this function ever sees, so
   // there's nothing to embed by the time hydration runs. Never nested
   // more than one level deep -- the DB rejects reposting a repost
-  // (reposter_publication), so a repost's own repostDe is always null.
+  // (toggler_repost_publication), so a repost's own repostDe is always
+  // null.
   repostDe: Publication | null;
 }
 
@@ -85,19 +86,29 @@ const IMAGE_SIGNED_URL_EXPIRY_SECONDS = 60 * 60; // 1h -- a soutiens-only image 
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 
-// The exact same population publier_message()/reposter_publication()
-// authorize server-side (verified créateur or admin) -- computed once
-// per page (composer visibility, repost-button eligibility on every card
-// on that page) rather than re-derived per publication, and never
-// trusted as the real guarantee either way: both RPCs re-check this
-// themselves regardless of what this function returns.
-export async function canManagePublications(supabase: SupabaseServerClient): Promise<boolean> {
+export interface ViewerContext {
+  // Null for a logged-out visitor -- every read path in this file
+  // already tolerates that (publications_visibles/publications_accueil
+  // both work fine for anon), this is purely what UI-layer code needs to
+  // decide "is this MY publication" (the "..." menu, migration 0032).
+  viewerId: string | null;
+  // The exact same population publier_message()/
+  // toggler_repost_publication() authorize server-side (verified
+  // créateur or admin) -- computed once per page (composer visibility,
+  // repost-button eligibility on every card on that page) rather than
+  // re-derived per publication, and never trusted as the real guarantee
+  // either way: both RPCs re-check this themselves regardless of what
+  // this function returns.
+  canManagePublications: boolean;
+}
+
+export async function getViewerContext(supabase: SupabaseServerClient): Promise<ViewerContext> {
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
   if (!user) {
-    return false;
+    return { viewerId: null, canManagePublications: false };
   }
 
   const { data } = await supabase
@@ -106,7 +117,10 @@ export async function canManagePublications(supabase: SupabaseServerClient): Pro
     .eq("id", user.id)
     .single();
 
-  return Boolean(data?.est_admin || data?.createur_verifie);
+  return {
+    viewerId: user.id,
+    canManagePublications: Boolean(data?.est_admin || data?.createur_verifie),
+  };
 }
 
 async function hydratePublications(
@@ -114,9 +128,10 @@ async function hydratePublications(
   rows: PublicationVisibleRow[],
   // `false` for the recursive fetch of reposted originals below --
   // reposting a repost is already rejected at the DB level
-  // (reposter_publication), so every row fetched that way has its own
-  // repost_de_id null and this flag is purely a cheap guard against ever
-  // attempting a pointless extra round trip, not a real recursion limit.
+  // (toggler_repost_publication), so every row fetched that way has its
+  // own repost_de_id null and this flag is purely a cheap guard against
+  // ever attempting a pointless extra round trip, not a real recursion
+  // limit.
   embedReposts = true,
 ): Promise<Publication[]> {
   const auteurIds = Array.from(new Set(rows.map((row) => row.auteur_id)));

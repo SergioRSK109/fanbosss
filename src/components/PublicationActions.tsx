@@ -17,13 +17,21 @@ import type { Publication } from "@/lib/publications";
 export function PublicationActions({
   publication,
   canRepost,
+  viewerId = null,
 }: {
   publication: Publication;
   // Same population as publier_message()'s own rule (verified créateur
-  // or admin) -- computed once per page (see canManagePublications in
+  // or admin) -- computed once per page (see getViewerContext in
   // lib/publications.ts) and threaded down here, never re-derived
   // per-card.
   canRepost: boolean;
+  // Migration 0032 -- decides the "..." menu's content: the publication's
+  // own author sees only "Masquer ma publication"; anyone else sees
+  // "Signaler" + mute, exactly as before. Both masquer_ma_publication()
+  // and signaler_publication() re-verify this server-side regardless
+  // (never trust the client alone) -- this is purely which button(s) to
+  // render.
+  viewerId?: string | null;
 }) {
   const t = useTranslations("Publications.actions");
   const router = useRouter();
@@ -44,19 +52,23 @@ export function PublicationActions({
   const [menuOpen, setMenuOpen] = useState(false);
   const [reportStatus, setReportStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [muteStatus, setMuteStatus] = useState<"idle" | "sending" | "error">("idle");
+  const [masquerStatus, setMasquerStatus] = useState<"idle" | "sending" | "error">("idle");
 
-  // "Éligible" per the brief: verified créateur/admin, target still
-  // public, its author still allows reposting, not already reposted by
-  // this viewer, and the target isn't itself already a repost --
-  // reposter_publication() re-checks every one of these server-side
-  // regardless (never trust the client alone), this is purely what
-  // decides whether the button renders at all.
+  const isOwnPublication = viewerId !== null && publication.auteur.id === viewerId;
+
+  // "Éligible" per the brief: verified créateur/admin, target isn't
+  // itself already a repost, and either the caller has already reposted
+  // it (toggling off is always allowed, regardless of the target's
+  // current visibilite/autorise_repost -- see
+  // toggler_repost_publication()'s own comment) or the target is still
+  // public and its author still allows reposting (first-time repost
+  // gates). toggler_repost_publication() re-checks every one of these
+  // server-side regardless -- this is purely what decides whether the
+  // button renders at all.
   const canShowRepost =
     canRepost &&
     publication.repostDe === null &&
-    publication.visibilite === "public" &&
-    publication.autoriseRepost === "tous" &&
-    !reposted;
+    (reposted || (publication.visibilite === "public" && publication.autoriseRepost === "tous"));
 
   async function handleLike() {
     if (likePending) return;
@@ -76,7 +88,11 @@ export function PublicationActions({
     setRepostError(false);
     const response = await fetch(`/api/publications/${publication.id}/repost`, { method: "POST" });
     if (response.ok) {
-      setReposted(true);
+      const body = await response.json();
+      setReposted(Boolean(body.reposted));
+      // Either direction changes which rows the page shows (a repost row
+      // appears or disappears from the feed), not just a number on this
+      // one card -- same reasoning as mute below.
       router.refresh();
     } else {
       setRepostError(true);
@@ -134,6 +150,24 @@ export function PublicationActions({
       router.refresh();
     } else {
       setMuteStatus("error");
+    }
+  }
+
+  async function handleMasquerMaPublication() {
+    setMasquerStatus("sending");
+    const response = await fetch(`/api/publications/${publication.id}/masquer-ma-publication`, {
+      method: "POST",
+    });
+    if (response.ok) {
+      setMenuOpen(false);
+      setMasquerStatus("idle");
+      // The publication disappears from every view the instant masque
+      // flips -- same as an admin's masquer_publication() -- so this
+      // card needs to vanish from the page, not just update a flag on
+      // itself.
+      router.refresh();
+    } else {
+      setMasquerStatus("error");
     }
   }
 
@@ -203,8 +237,8 @@ export function PublicationActions({
                 meant for the menu (caught live: Playwright reported the
                 tab bar's own <Link> "intercepts pointer events" when
                 trying to click a menu item). z-50 matches this project's
-                existing convention for a full-screen overlay that must
-                always win over the tab bar (ZoomablePhoto/PhotoCropper). */}
+                existing convention for an overlay that must always win
+                over the tab bar (ZoomablePhoto/PhotoCropper). */}
             <button
               type="button"
               aria-hidden
@@ -213,27 +247,40 @@ export function PublicationActions({
               onClick={() => setMenuOpen(false)}
             />
             <div className="card absolute right-0 z-50 mt-2 flex w-56 flex-col gap-1 p-1.5 text-sm">
-              {reportStatus === "sent" ? (
-                <p className="px-3 py-2 text-foreground-muted">{t("reportSent")}</p>
-              ) : (
+              {isOwnPublication ? (
                 <button
                   type="button"
-                  onClick={handleReport}
-                  disabled={reportStatus === "sending"}
+                  onClick={handleMasquerMaPublication}
+                  disabled={masquerStatus === "sending"}
                   className="rounded-xl px-3 py-2 text-left text-foreground-muted hover:bg-surface-muted hover:text-foreground"
                 >
-                  {reportStatus === "sending" ? t("reportSending") : t("reportButton")}
+                  {masquerStatus === "sending" ? t("masquerSending") : t("masquerButton")}
                 </button>
+              ) : (
+                <>
+                  {reportStatus === "sent" ? (
+                    <p className="px-3 py-2 text-foreground-muted">{t("reportSent")}</p>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleReport}
+                      disabled={reportStatus === "sending"}
+                      className="rounded-xl px-3 py-2 text-left text-foreground-muted hover:bg-surface-muted hover:text-foreground"
+                    >
+                      {reportStatus === "sending" ? t("reportSending") : t("reportButton")}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleMute}
+                    disabled={muteStatus === "sending"}
+                    className="rounded-xl px-3 py-2 text-left text-foreground-muted hover:bg-surface-muted hover:text-foreground"
+                  >
+                    {muteStatus === "sending" ? t("muteSending") : t("muteButton")}
+                  </button>
+                </>
               )}
-              <button
-                type="button"
-                onClick={handleMute}
-                disabled={muteStatus === "sending"}
-                className="rounded-xl px-3 py-2 text-left text-foreground-muted hover:bg-surface-muted hover:text-foreground"
-              >
-                {muteStatus === "sending" ? t("muteSending") : t("muteButton")}
-              </button>
-              {(reportStatus === "error" || muteStatus === "error") && (
+              {(reportStatus === "error" || muteStatus === "error" || masquerStatus === "error") && (
                 <p className="px-3 py-1 text-xs text-danger-600">{t("menuError")}</p>
               )}
             </div>

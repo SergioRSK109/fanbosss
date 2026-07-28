@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
-// Real eligibility lives in reposter_publication() itself (SECURITY
-// DEFINER -- verified créateurs/admins only, target must be public,
-// repost-allowed, not masked, not itself a repost, and under the shared
-// 10/24h rate limit -- migration 0031); this route is a thin wrapper,
-// same shape as every other RPC wrapper in this project.
+// Real behavior lives in toggler_repost_publication() itself (SECURITY
+// DEFINER -- a real toggle since migration 0032: first call creates a
+// repost under the same eligibility gates reposter_publication() always
+// had (verified créateurs/admins only, target must be public,
+// repost-allowed, not masked, not itself a repost, under the shared
+// 10/24h rate limit); a second call on the same original deletes the
+// repost instead. This route is a thin wrapper, same shape as every
+// other RPC wrapper in this project.
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -20,7 +23,7 @@ export async function POST(
     return NextResponse.json({ error: "not authenticated" }, { status: 401 });
   }
 
-  const { data, error } = await supabase.rpc("reposter_publication", {
+  const { data, error } = await supabase.rpc("toggler_repost_publication", {
     p_publication_id: id,
   });
 
@@ -29,5 +32,10 @@ export async function POST(
   }
 
   const row = data?.[0];
-  return NextResponse.json({ id: row?.id, type: row?.type, createdAt: row?.created_at });
+  return NextResponse.json({
+    reposted: row?.reposted,
+    id: row?.id,
+    type: row?.type,
+    createdAt: row?.created_at,
+  });
 }

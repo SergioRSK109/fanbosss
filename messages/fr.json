@@ -48,6 +48,8 @@
       "reportSent": "Signalement envoyé.",
       "muteButton": "Ne plus voir les publications de ce créateur",
       "muteSending": "Envoi...",
+      "masquerButton": "Masquer ma publication",
+      "masquerSending": "Envoi...",
       "menuError": "une erreur est survenue",
       "shareCopied": "Lien copié !",
       "repostError": "repost impossible"
