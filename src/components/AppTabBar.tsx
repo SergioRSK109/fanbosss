@@ -3,13 +3,20 @@
 import { useTranslations } from "next-intl";
 import { Link, usePathname } from "@/i18n/navigation";
 
-// Lot 3: the app's 4 fixed destinations, confirmed with the founder as a
-// mobile-app-style bottom tab bar rather than the previous mix of separate
-// pages linked ad hoc from /dashboard's own header. The route stays
-// /finance (internal name unchanged since Lot 2b) -- only the displayed
-// label is "Paiements"/"Payments", same "route name vs. label" split the
-// old dashboard header link already established.
+// Lot 3: the app's fixed bottom tab bar, mobile-app style, confirmed with
+// the founder, rather than the previous mix of separate pages linked ad
+// hoc from /dashboard's own header. The route stays /finance (internal
+// name unchanged since Lot 2b) -- only the displayed label is
+// "Paiements"/"Payments", same "route name vs. label" split the old
+// dashboard header link already established.
+//
+// Lot 5a: "Accueil" (/home) added as the new 1st tab, 5 total -- unlike
+// the other 4, /home stays reachable while logged out (see its own page
+// for why), so this bar itself renders the same regardless of auth state
+// (as it already did before this lot); only the destination pages
+// themselves decide whether to require a session.
 const TABS = [
+  { href: "/home", icon: "🏠", labelKey: "accueil" },
   { href: "/offres", icon: "🎁", labelKey: "offres" },
   { href: "/finance", icon: "💰", labelKey: "paiements" },
   { href: "/dashboard", icon: "📊", labelKey: "performance" },

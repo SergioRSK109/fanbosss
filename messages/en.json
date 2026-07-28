@@ -10,10 +10,36 @@
   },
   "AppTabBar": {
     "navLabel": "Main navigation",
+    "accueil": "Home",
     "performance": "Performance",
     "paiements": "Payments",
     "offres": "Offers",
     "reglages": "Settings"
+  },
+  "HomePage": {
+    "heading": "Home",
+    "previous": "Previous",
+    "next": "Next",
+    "pageIndicator": "Page {page} / {total}"
+  },
+  "Publications": {
+    "empty": "No publications yet.",
+    "anonymousAuteur": "A créateur",
+    "soutiensOnlyBadge": "Supporters only",
+    "teaser": {
+      "reservedTo": "Reserved for {auteur}'s supporters.",
+      "cta": "See this créateur's offers"
+    },
+    "composer": {
+      "contenuLabel": "What's new?",
+      "contenuPlaceholder": "Share an update with your fans...",
+      "visibilitePublic": "Public",
+      "visibiliteSoutiens": "Supporters only",
+      "submit": "Post",
+      "sending": "Posting...",
+      "uploadError": "couldn't upload the image",
+      "unknownError": "something went wrong"
+    }
   },
   "OffresPage": {
     "heading": "Offers"
@@ -137,7 +163,11 @@
       "anonymousCreateur": "A créateur"
     },
     "participer": "Participate",
-    "verified": "Verified"
+    "verified": "Verified",
+    "tabs": {
+      "offres": "Offers",
+      "publications": "Publications"
+    }
   },
   "PaiementRetour": {
     "heading": "Thank you!",

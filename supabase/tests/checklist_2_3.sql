@@ -3192,6 +3192,319 @@ begin
   end;
 end $$;
 
+-- ---------------------------------------------------------------------
+-- Lot 5a -- publications (créateur posts + FanBoss announcements), with
+-- visibility gating (migration 0029). Fixture: créateur A (verified),
+-- fan B (a real supporter of A -- a livree transaction), fan C (a
+-- stranger to A), admin D (not itself createur_verifie, to prove an
+-- admin's own verification status is irrelevant to posting as
+-- annonce_fanboss).
+-- ---------------------------------------------------------------------
+insert into users (id, createur_verifie, est_admin) values
+  ('5a000001-0000-0000-0000-000000000001', true, false),
+  ('5a000002-0000-0000-0000-000000000002', false, false),
+  ('5a000003-0000-0000-0000-000000000003', false, false),
+  ('5a000004-0000-0000-0000-000000000004', false, true);
+
+insert into offres (id, createur_id, type, prix) values
+  ('5a000010-0000-0000-0000-000000000010', '5a000001-0000-0000-0000-000000000001', 'don', null);
+
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('5a000011-0000-0000-0000-000000000011',
+   '5a000002-0000-0000-0000-000000000002',
+   '5a000001-0000-0000-0000-000000000001',
+   '5a000010-0000-0000-0000-000000000010', 10, 'livree');
+
+-- soutient_createur() correct for both a real supporter and a stranger.
+do $$
+begin
+  if not soutient_createur('5a000002-0000-0000-0000-000000000002', '5a000001-0000-0000-0000-000000000001') then
+    raise exception 'TEST FAILED: soutient_createur() should be true for a real supporter';
+  end if;
+  if soutient_createur('5a000003-0000-0000-0000-000000000003', '5a000001-0000-0000-0000-000000000001') then
+    raise exception 'TEST FAILED: soutient_createur() should be false for a stranger';
+  end if;
+  raise notice 'PASS: soutient_createur() correct for both a supporter and a stranger';
+end $$;
+
+-- Créateur A posts one public and one soutiens-only publication.
+select set_config('app.current_user_id', '5a000001-0000-0000-0000-000000000001', false);
+set role authenticated;
+select publier_message('Post public de A', null, 'public');
+select publier_message('Post reserve aux soutiens de A', null, 'soutiens');
+reset role;
+
+-- Admin D posts requesting visibilite='soutiens' -- must be forced to
+-- type=annonce_fanboss / visibilite=public regardless of what was asked.
+select set_config('app.current_user_id', '5a000004-0000-0000-0000-000000000004', false);
+set role authenticated;
+select publier_message('Annonce FanBoss', null, 'soutiens');
+reset role;
+
+do $$
+declare
+  v_row record;
+begin
+  select * into v_row from publications where auteur_id = '5a000004-0000-0000-0000-000000000004';
+  if v_row.type != 'annonce_fanboss' or v_row.visibilite != 'public' then
+    raise exception 'TEST FAILED: admin post got type=%, visibilite=% (expected annonce_fanboss/public)',
+      v_row.type, v_row.visibilite;
+  end if;
+  raise notice 'PASS: admin post auto-assigned type=annonce_fanboss, visibilite forced to public regardless of what was requested';
+end $$;
+
+-- The real point of this lot: the teaser is never accompanied by the
+-- real content in the DB response itself -- not just hidden client-side.
+-- A real supporter (B) sees BOTH of A's posts in full. Note the role
+-- switch is a top-level statement, not something done from inside a do
+-- block -- SET ROLE cannot be driven via set_config(), only a real
+-- top-level SET ROLE changes which role RLS/grants are evaluated
+-- against; the do $$ $$ blocks below only ever read/assert, they never
+-- try to switch role themselves.
+select set_config('app.current_user_id', '5a000002-0000-0000-0000-000000000002', false);
+set role authenticated;
+do $$
+declare
+  v_public_ok boolean;
+  v_soutiens_ok boolean;
+begin
+  select contenu is not null and contenu_complet = true into v_public_ok
+    from publications_visibles
+    where auteur_id = '5a000001-0000-0000-0000-000000000001' and visibilite = 'public';
+  select contenu is not null and contenu_complet = true into v_soutiens_ok
+    from publications_visibles
+    where auteur_id = '5a000001-0000-0000-0000-000000000001' and visibilite = 'soutiens';
+  if not v_public_ok or not v_soutiens_ok then
+    raise exception 'TEST FAILED: a real supporter should see BOTH posts in full';
+  end if;
+  raise notice 'PASS: a real supporter (soutient_createur = true) sees both the public and the soutiens-only post in full';
+end $$;
+reset role;
+
+-- A stranger (C) gets a real teaser for the soutiens-only post:
+-- contenu/image_r2_key are actually NULL in the row (never sent, not
+-- just hidden), and contenu_complet is a clean `false`, never SQL NULL
+-- (three-valued-logic pitfall caught and fixed while building this --
+-- see migration 0029's own comment).
+select set_config('app.current_user_id', '5a000003-0000-0000-0000-000000000003', false);
+set role authenticated;
+do $$
+declare
+  v_contenu text;
+  v_image_key text;
+  v_complet boolean;
+begin
+  select contenu, image_r2_key, contenu_complet into v_contenu, v_image_key, v_complet
+    from publications_visibles
+    where auteur_id = '5a000001-0000-0000-0000-000000000001' and visibilite = 'soutiens';
+  if v_contenu is not null or v_image_key is not null then
+    raise exception 'TEST FAILED: a stranger should never receive the real contenu/image_r2_key for a soutiens-only post';
+  end if;
+  if v_complet is distinct from false then
+    raise exception 'TEST FAILED: contenu_complet should be a clean false for a stranger, got %', v_complet;
+  end if;
+  raise notice 'PASS: a stranger gets a real teaser (contenu/image_r2_key NULL, contenu_complet = false), never the real content';
+end $$;
+reset role;
+
+-- An anonymous visitor gets the same real teaser.
+select set_config('app.current_user_id', '', false);
+set role anon;
+do $$
+declare
+  v_contenu text;
+  v_complet boolean;
+begin
+  select contenu, contenu_complet into v_contenu, v_complet
+    from publications_visibles
+    where auteur_id = '5a000001-0000-0000-0000-000000000001' and visibilite = 'soutiens';
+  if v_contenu is not null then
+    raise exception 'TEST FAILED: an anonymous viewer should never receive the real contenu for a soutiens-only post';
+  end if;
+  if v_complet is distinct from false then
+    raise exception 'TEST FAILED: contenu_complet should be a clean false for an anonymous viewer, got % (three-valued-logic regression?)', v_complet;
+  end if;
+  raise notice 'PASS: an anonymous (NULL auth.uid()) viewer also gets a real teaser, with a clean false contenu_complet, not SQL NULL';
+end $$;
+reset role;
+
+-- The créateur themselves always sees their own posts in full, regardless
+-- of visibilite.
+select set_config('app.current_user_id', '5a000001-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+declare
+  v_count int;
+begin
+  select count(*) into v_count from publications_visibles
+    where auteur_id = '5a000001-0000-0000-0000-000000000001' and contenu_complet = true;
+  if v_count != 2 then
+    raise exception 'TEST FAILED: the auteur should see both of their own posts in full, got % rows', v_count;
+  end if;
+  raise notice 'PASS: the auteur always sees their own posts in full';
+end $$;
+reset role;
+
+-- publications_accueil: scoped to currently-verified créateurs + every
+-- FanBoss announcement, regardless of the admin's own createur_verifie
+-- (false for admin D in this fixture).
+select set_config('app.current_user_id', '', false);
+set role anon;
+do $$
+declare
+  v_count int;
+begin
+  select count(*) into v_count from publications_accueil
+    where auteur_id in ('5a000001-0000-0000-0000-000000000001', '5a000004-0000-0000-0000-000000000004');
+  if v_count != 3 then
+    raise exception 'TEST FAILED: expected 3 rows in publications_accueil (2 from verified créateur A + 1 FanBoss announcement from D), got %', v_count;
+  end if;
+  raise notice 'PASS: publications_accueil includes a verified créateur''s posts and a FanBoss announcement regardless of the admin''s own createur_verifie';
+end $$;
+reset role;
+
+-- Rate limit: 10/24h, applied uniformly. A has already posted 2 -- fill
+-- to 10, then confirm the 11th is rejected.
+select set_config('app.current_user_id', '5a000001-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+declare
+  i int;
+begin
+  for i in 1..8 loop
+    perform publier_message('filler ' || i, null, 'public');
+  end loop;
+end $$;
+reset role;
+
+do $$
+declare
+  v_count int;
+begin
+  select count(*) into v_count from publications where auteur_id = '5a000001-0000-0000-0000-000000000001';
+  if v_count != 10 then
+    raise exception 'TEST FAILED: expected exactly 10 publications for A after filling the rate limit, got %', v_count;
+  end if;
+end $$;
+
+select set_config('app.current_user_id', '5a000001-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform publier_message('should fail, 11th in 24h', null, 'public');
+    raise exception 'TEST FAILED: an 11th publication within 24h was accepted';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then
+      raise;
+    end if;
+    if sqlerrm not like '%rate limit%' then
+      raise exception 'TEST FAILED: 11th publication rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: an 11th publication within 24h is rejected (%)', sqlerrm;
+  end;
+end $$;
+reset role;
+
+do $$
+declare
+  v_count int;
+begin
+  select count(*) into v_count from publications where auteur_id = '5a000001-0000-0000-0000-000000000001';
+  if v_count != 10 then
+    raise exception 'TEST FAILED: the rejected 11th attempt should not have left a row behind, count is now %', v_count;
+  end if;
+  raise notice 'PASS: the rejected 11th attempt left no row behind';
+end $$;
+
+-- A non-verified, non-admin caller cannot post at all.
+select set_config('app.current_user_id', '5a000003-0000-0000-0000-000000000003', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform publier_message('a stranger should not be able to post', null, 'public');
+    raise exception 'TEST FAILED: a non-verified, non-admin user was able to post';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm not like '%not authorized%' then
+      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: a non-verified, non-admin caller is rejected (%)', sqlerrm;
+  end;
+end $$;
+reset role;
+
+-- anon has no EXECUTE on publier_message() at all (real Postgres
+-- permission check, same 0020/0021 pattern as every other write RPC).
+select set_config('app.current_user_id', '', false);
+set role anon;
+do $$
+begin
+  begin
+    perform publier_message('anon should not post', null, 'public');
+    raise exception 'TEST FAILED: anon was able to call publier_message() at all';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE privilege on publier_message()';
+  end;
+end $$;
+reset role;
+
+-- authenticated with a NULL auth.uid() is rejected by the function's own
+-- check, same pattern as every other write RPC since migration 0020.
+select set_config('app.current_user_id', '', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform publier_message('null auth.uid() should not post', null, 'public');
+    raise exception 'TEST FAILED: authenticated with a NULL auth.uid() was able to post';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm != 'not authenticated' then
+      raise exception 'TEST FAILED: unexpected error for a NULL auth.uid(): %', sqlerrm;
+    end if;
+    raise notice 'PASS: authenticated with a NULL auth.uid() is rejected';
+  end;
+end $$;
+reset role;
+
+-- Positive + negative EXECUTE grant checks on peut_voir_publication_complete()
+-- -- the one deliberate exception in this codebase to "never grant a
+-- SECURITY DEFINER function to anon" (see migration 0029's own comment
+-- for why: it's a read-path helper embedded in a public view, not a
+-- caller-invoked action, and takes no fan-id parameter so there is no
+-- way to use it to ask about anyone else's relationship).
+do $$
+begin
+  if not has_function_privilege('anon', 'peut_voir_publication_complete(uuid,text)', 'EXECUTE') then
+    raise exception 'TEST FAILED: anon should have EXECUTE on peut_voir_publication_complete() (deliberate exception, see migration 0029)';
+  end if;
+  if not has_function_privilege('authenticated', 'peut_voir_publication_complete(uuid,text)', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lost EXECUTE on peut_voir_publication_complete()';
+  end if;
+  if has_function_privilege('anon', 'publier_message(text,text,text)', 'EXECUTE') then
+    raise exception 'TEST FAILED: anon should NOT have EXECUTE on publier_message()';
+  end if;
+  if not has_function_privilege('authenticated', 'publier_message(text,text,text)', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lost EXECUTE on publier_message()';
+  end if;
+  raise notice 'PASS: EXECUTE grants on peut_voir_publication_complete()/publier_message() are exactly as intended';
+end $$;
+
+-- 'home' reserved pseudo (new /home route, migration 0029): same pattern
+-- as 'classement'/'offres' above, exercising the reserved-word CHECK
+-- constraint directly on a fresh user with no prior pseudo change.
+do $$
+begin
+  begin
+    update users set pseudo = 'Home' where id = 'faceb001-0003-0003-0003-000000000003';
+    raise exception 'TEST FAILED: the new "home" route name was accepted as a pseudo';
+  exception when check_violation then
+    raise notice 'PASS: "home" is rejected as a pseudo (reserved-word list kept in sync with the new route)';
+  end;
+end $$;
+
 do $$
 begin
   raise notice 'ALL SQL CHECKLIST TESTS PASSED';

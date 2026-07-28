@@ -2,6 +2,13 @@ import { z } from "zod";
 
 export const WHATSAPP_PRIX_MINIMUM = 20;
 
+// Mirrors publications.contenu's own CHECK constraint (char_length
+// between 1 and 2000, migration 0029) exactly -- lives here rather than
+// in src/lib/publications.ts specifically so PublicationComposer.tsx (a
+// client component) can import it without pulling in that module's
+// server-only Supabase data-fetching functions into the client bundle.
+export const PUBLICATION_CONTENU_MAX_LENGTH = 2000;
+
 // Mirrors the DB trigger's `interval '30 days'` (migration 0010) exactly
 // -- shared by /api/profil (server-side enforcement) and the réglages
 // page (telling the user when they'll be able to change it again) so the
@@ -174,6 +181,7 @@ export const PSEUDO_MOTS_RESERVES = [
   "classement",
   "finance",
   "offres",
+  "home",
 ];
 
 // Shared by the /@pseudo lookup and the /explorer search box: ILIKE
@@ -234,5 +242,19 @@ export const demandeVerificationSchema = z
   .object({
     plateforme: z.enum(["tiktok", "instagram", "youtube"]),
     lien_compte: z.string().trim().url(),
+  })
+  .strict();
+
+// Lot 5a -- mirrors publications.contenu's own CHECK constraint
+// (char_length between 1 and 2000) and publier_message()'s visibilite
+// validation exactly, same "clean 400 instead of a raw Postgres error"
+// philosophy as every other schema in this file. `type` is never
+// accepted here at all -- publier_message() decides it server-side from
+// the caller's own est_admin/createur_verifie, never from client input.
+export const publierMessageSchema = z
+  .object({
+    contenu: z.string().trim().min(1).max(PUBLICATION_CONTENU_MAX_LENGTH),
+    image_r2_key: z.string().nullable().optional(),
+    visibilite: z.enum(["public", "soutiens"]).optional(),
   })
   .strict();
