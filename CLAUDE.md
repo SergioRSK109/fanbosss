@@ -1912,6 +1912,64 @@ reposted card (embedded original included) in a new tab, while a
 plain-post signalement in the same list shows no repost indicator — in
 both `fr` (light) and `/en/` (dark).
 
+## Admin dashboard reorganized into 4 top tabs (no migration)
+
+`/admin` had grown into 8 stacked sections with no grouping, all always
+visible on one long scroll. Reorganized into 4 tabs: **Vue d'ensemble**
+(the month's stats + top créateurs, both read-only), **Financier**
+(Remboursements manuels + Litiges + Retraits), **Contenu & confiance**
+(Vérifications créateur + Publications signalées), **Administration**
+(Gestion des admins).
+
+**Deliberately top tabs, not the bottom `AppTabBar` the créateur-facing
+`(app)` route group uses** — that one is a mobile-PWA pattern (fixed
+`inset-x-0 bottom-0`, per Lot 3); `/admin` is a business-only, desktop-
+first tool, so `AdminTabs.tsx` is a plain top-of-page tab row instead,
+visually modeled on the existing `ProfileTabs.tsx` (underline-on-active,
+`border-b`) rather than introducing a second competing tab-bar style.
+
+**Same "pre-built ReactNode per tab" pattern as `ProfileTabs.tsx`** — all
+4 tabs' content is still rendered server-side by `AdminPage` exactly as
+before (same JSX, same data, same `<section>`s) and handed into
+`AdminTabs` as props; the client component only toggles which one is
+visible (`hidden`, not conditional rendering, so a Manager's own
+in-flight `pendingId`/`errorById` state is never reset by switching
+tabs away and back). **No `*Manager` component's internal logic
+changed at all** — this is purely which page groups which section,
+confirmed by diff: every `RemboursementsManuelsManager`/`LitigesManager`/
+`RetraitsManager`/`VerificationsManager`/`PublicationsSignaleesManager`/
+`GestionAdminsManager` call site is byte-identical to before, just
+nested one level deeper.
+
+**Badges**: only Financier and Contenu & confiance carry one — Vue
+d'ensemble and Administration are plain reads with nothing to triage,
+per explicit instruction. `financierCount` = remboursements +
+litiges + retraits (all already-filtered-to-pending arrays' lengths
+summed) and `contenuConfianceCount` = verifications + publications
+signalées, computed once in `AdminPage` and passed down as plain
+numbers — `AdminTabs` itself decides whether to render the pill
+(`count > 0`), same "hide at zero" convention every individual section
+heading already used before this reorg (a bare tab label at 0, not a
+"(0)" pill, mirroring `{count > 0 && <span>...}` throughout this page).
+
+Covered by the existing `src/app/[locale]/admin/__tests__/page.test.ts`
+(unchanged assertions — the page still renders/still calls the same
+service-role queries, this reorg only touches how the JSX result is
+shaped) — no new unit test was needed for the tab-switching itself
+since it's pure client-side UI state, same reasoning `ProfileTabs.tsx`
+was never unit-tested either.
+
+Verified visually end-to-end (same throwaway mock-Supabase/Playwright
+technique, extended with a deliberately empty Financier fixture set
+specifically to exercise the zero-badge case alongside Contenu &
+confiance's non-zero one): Vue d'ensemble is the default active tab;
+clicking each of the other three swaps the visible content and leaves
+the others hidden; Financier's tab shows no badge at all (0 pending) while
+Contenu & confiance shows "2"; the repost signalement fix from the
+section above renders correctly inside its new Contenu & confiance
+home, permalink included; and all of the above holds in both `fr`
+(light) and `/en/` (dark).
+
 ## `accept_transaction`/`refuse_transaction`/`deliver_video` anonymous bypass — found and fixed (migration `0020`)
 
 A real, currently-exploitable vulnerability, flagged during unrelated

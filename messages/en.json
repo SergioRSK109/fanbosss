@@ -405,6 +405,12 @@
     "heading": "Administration",
     "noName": "(no name)",
     "deletedUser": "(deleted user)",
+    "tabs": {
+      "overview": "Overview",
+      "financier": "Financial",
+      "contenuConfiance": "Content & trust",
+      "administration": "Administration"
+    },
     "overviewHeading": "Overview -- this month",
     "statTransactions": "Transactions",
     "statGmvBrut": "Gross GMV",

@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { getTranslations } from "next-intl/server";
+import { AdminTabs } from "@/components/admin/AdminTabs";
 import { GestionAdminsManager, type AdminManageableUser } from "@/components/admin/GestionAdminsManager";
 import { LitigesManager, type LitigeEnAttente } from "@/components/admin/LitigesManager";
 import { PublicationsSignaleesManager } from "@/components/admin/PublicationsSignaleesManager";
@@ -268,10 +269,15 @@ export default async function AdminPage() {
     );
   });
 
-  return (
-    <main className="mx-auto flex max-w-2xl flex-col gap-8 p-5 pb-16 sm:p-6">
-      <h1 className="text-2xl font-bold">{t("heading")}</h1>
+  // Financier/Contenu & confiance are the only two tabs with a real
+  // "en attente" notion -- Vue d'ensemble and Administration are plain
+  // reads with nothing to triage, so AdminTabs never shows a badge for
+  // either (see its own prop comment).
+  const financierCount = remboursementsManuels.length + litiges.length + retraits.length;
+  const contenuConfianceCount = verifications.length + publicationsSignalees.length;
 
+  const overviewContent = (
+    <>
       <section>
         <h2 className="mb-3 text-lg font-bold">{t("overviewHeading")}</h2>
         <div className="grid grid-cols-3 gap-3">
@@ -290,6 +296,33 @@ export default async function AdminPage() {
         </div>
       </section>
 
+      <section>
+        <h2 className="mb-3 text-lg font-bold">{t("topCreateursHeading")}</h2>
+        {topCreateurs.length === 0 ? (
+          <p className="text-sm text-foreground-muted">{t("topCreateursEmpty")}</p>
+        ) : (
+          <ol className="flex flex-col gap-2">
+            {topCreateurs.map((c, index) => (
+              <li
+                key={c.createurId}
+                className="card flex items-center justify-between px-4 py-3"
+              >
+                <span className="text-sm font-medium">
+                  #{index + 1} {c.label}
+                </span>
+                <span className="text-sm font-semibold text-brand-600 dark:text-brand-300">
+                  {c.volume.toFixed(0)}$
+                </span>
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
+    </>
+  );
+
+  const financierContent = (
+    <>
       <section>
         <h2 className="mb-3 text-lg font-bold">
           {t("remboursementsHeading")}
@@ -328,7 +361,11 @@ export default async function AdminPage() {
         <p className="mb-3 text-sm text-foreground-muted">{t("retraitsIntro")}</p>
         <RetraitsManager demandes={retraits} />
       </section>
+    </>
+  );
 
+  const contenuConfianceContent = (
+    <>
       <section>
         <h2 className="mb-3 text-lg font-bold">{t("verificationHeading")}</h2>
         <p className="mb-3 text-sm text-foreground-muted">{t("verificationIntro")}</p>
@@ -347,34 +384,28 @@ export default async function AdminPage() {
         <p className="mb-3 text-sm text-foreground-muted">{t("publicationsSignaleesIntro")}</p>
         <PublicationsSignaleesManager signalements={publicationsSignalees} />
       </section>
+    </>
+  );
 
-      <section>
-        <h2 className="mb-3 text-lg font-bold">{t("topCreateursHeading")}</h2>
-        {topCreateurs.length === 0 ? (
-          <p className="text-sm text-foreground-muted">{t("topCreateursEmpty")}</p>
-        ) : (
-          <ol className="flex flex-col gap-2">
-            {topCreateurs.map((c, index) => (
-              <li
-                key={c.createurId}
-                className="card flex items-center justify-between px-4 py-3"
-              >
-                <span className="text-sm font-medium">
-                  #{index + 1} {c.label}
-                </span>
-                <span className="text-sm font-semibold text-brand-600 dark:text-brand-300">
-                  {c.volume.toFixed(0)}$
-                </span>
-              </li>
-            ))}
-          </ol>
-        )}
-      </section>
+  const administrationContent = (
+    <section>
+      <h2 className="mb-3 text-lg font-bold">{t("gestionAdminsHeading")}</h2>
+      <GestionAdminsManager users={manageableUsers} />
+    </section>
+  );
 
-      <section>
-        <h2 className="mb-3 text-lg font-bold">{t("gestionAdminsHeading")}</h2>
-        <GestionAdminsManager users={manageableUsers} />
-      </section>
+  return (
+    <main className="mx-auto flex max-w-2xl flex-col gap-8 p-5 pb-16 sm:p-6">
+      <h1 className="text-2xl font-bold">{t("heading")}</h1>
+
+      <AdminTabs
+        overviewContent={overviewContent}
+        financierContent={financierContent}
+        contenuConfianceContent={contenuConfianceContent}
+        administrationContent={administrationContent}
+        financierCount={financierCount}
+        contenuConfianceCount={contenuConfianceCount}
+      />
     </main>
   );
 }
