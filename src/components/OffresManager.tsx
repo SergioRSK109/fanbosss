@@ -583,7 +583,7 @@ function OffreRow({
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ contentType: file.type }),
+            body: JSON.stringify({ contentType: file.type, size: file.size }),
           },
         );
         const uploadUrlBody = await uploadUrlResponse.json();

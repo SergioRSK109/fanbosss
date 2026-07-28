@@ -1,5 +1,5 @@
 import { getTranslations } from "next-intl/server";
-import { Link } from "@/i18n/navigation";
+import { Link, redirect } from "@/i18n/navigation";
 import { PublicationComposer } from "@/components/PublicationComposer";
 import { PublicationsList } from "@/components/PublicationsList";
 import {
@@ -9,13 +9,19 @@ import {
 } from "@/lib/publications";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
-// Lot 5a: the "Accueil" tab -- unlike the other 4 AppTabBar destinations,
-// this page is publicly browsable while logged out (the whole point of
-// the visibility layer is that an anonymous visitor can see public posts
-// and a locked teaser for soutiens-only ones, see publications_visibles/
-// publications_accueil in migration 0029), so it deliberately does NOT
-// redirect an unauthenticated visitor to /login the way /dashboard,
-// /finance, /offres, /parametres all do.
+// Security audit fix: /home used to be deliberately reachable while
+// logged out (Lot 5a's own original design -- the visibility layer was
+// built so an anonymous visitor could see public posts and a locked
+// teaser for soutiens-only ones). That decision is reversed here: /home
+// now requires a session, same guard every other (app) page
+// (/dashboard, /finance, /offres, /parametres) already uses. The
+// publications_visibles-backed permalink page (/[handle]/p/[id]) and a
+// créateur's own public profile (/[handle]) are UNAFFECTED and still
+// deliberately stay reachable logged out -- only this one feed page's
+// own access changed. publications_accueil's `anon` grant was revoked
+// to match (migration 0033) -- this redirect is what makes that revoke
+// safe: getPublicationsAccueil() below is now only ever called for an
+// authenticated caller.
 export default async function HomePage({
   params,
   searchParams,
@@ -27,6 +33,14 @@ export default async function HomePage({
   const sp = await searchParams;
   const t = await getTranslations({ locale, namespace: "HomePage" });
   const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect({ href: "/login", locale });
+    return;
+  }
 
   // The composer is shown only for an admin or a créateur_verifie (the
   // brief's own rule) -- but publier_message() re-checks this exact same

@@ -35,12 +35,57 @@ function getBucketName(): string {
   return bucket;
 }
 
-export async function getSignedUploadUrl(key: string, contentType: string) {
+// Security audit fix: getSignedUploadUrl() used to sign no size limit at
+// all -- a caller could request a URL for a tiny declared ContentType and
+// then PUT an arbitrarily large file. Every upload in this app is either
+// an image (profile photo, publication image) or a video (offer
+// video/shoutout delivery); contenu_debloque accepts an arbitrary
+// ContentType (it's a créateur-supplied unlockable file, not necessarily
+// either), so it falls back to the more permissive video-sized cap rather
+// than the tighter image one.
+export const MAX_UPLOAD_SIZE_BYTES = {
+  image: 10 * 1024 * 1024, // 10 MB
+  video: 200 * 1024 * 1024, // 200 MB
+} as const;
+
+export function maxUploadSizeBytes(contentType: string): number {
+  return contentType.startsWith("image/")
+    ? MAX_UPLOAD_SIZE_BYTES.image
+    : MAX_UPLOAD_SIZE_BYTES.video;
+}
+
+export interface UploadSizeCheck {
+  ok: boolean;
+  maxBytes: number;
+}
+
+// Pure, called by every upload-url route before ever minting a signed
+// URL -- the real server-side rejection this fix is about, not just the
+// client-side duration/size checks a caller can simply skip by hitting
+// the API directly.
+export function checkUploadSize(size: number, contentType: string): UploadSizeCheck {
+  const maxBytes = maxUploadSizeBytes(contentType);
+  return { ok: Number.isFinite(size) && size > 0 && size <= maxBytes, maxBytes };
+}
+
+// `contentLength` is baked into the signed request the same way
+// `contentType` already was (see CLAUDE.md's "Mobile upload bug" section
+// -- a ContentType mismatch between what was signed and what's actually
+// PUT is already confirmed, empirically, to make R2 reject the request).
+// This is what makes the size cap a REAL server-side guarantee rather
+// than a client-side-only check: a caller can declare a small size to
+// pass the route's own checkUploadSize() gate, but the actual PUT's
+// Content-Length (set automatically by the browser from the real file
+// being sent, not something a caller can override via fetch) then has to
+// match this exact signed value -- uploading anything else fails R2's
+// own signature verification, independent of any application code.
+export async function getSignedUploadUrl(key: string, contentType: string, contentLength: number) {
   const client = getR2Client();
   const command = new PutObjectCommand({
     Bucket: getBucketName(),
     Key: key,
     ContentType: contentType,
+    ContentLength: contentLength,
   });
   return getSignedUrl(client, command, { expiresIn: SIGNED_URL_EXPIRY_SECONDS });
 }

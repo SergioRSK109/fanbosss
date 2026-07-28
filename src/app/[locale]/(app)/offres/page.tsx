@@ -1,6 +1,7 @@
 import { getTranslations } from "next-intl/server";
 import { redirect } from "@/i18n/navigation";
 import { DemandesEnAttente } from "@/components/DemandesEnAttente";
+import { LivraisonsEnAttente } from "@/components/LivraisonsEnAttente";
 import { OffresManager } from "@/components/OffresManager";
 import type { OffreType } from "@/lib/validation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -32,19 +33,35 @@ export default async function OffresPage({
     return;
   }
 
-  const [{ data: offres }, { data: demandes }, { data: profil }] = await Promise.all([
-    supabase
-      .from("offres")
-      .select("id, type, prix, libelle, actif, config")
-      .eq("createur_id", user.id),
-    supabase
-      .from("transactions")
-      .select("id, montant, deadline_acceptation, offres(type), created_at")
-      .eq("createur_id", user.id)
-      .eq("statut", "en_attente")
-      .order("deadline_acceptation", { ascending: true }),
-    supabase.from("users").select("dernier_vu_demandes_at").eq("id", user.id).single(),
-  ]);
+  const [{ data: offres }, { data: demandes }, { data: profil }, { data: livraisons }] =
+    await Promise.all([
+      supabase
+        .from("offres")
+        .select("id, type, prix, libelle, actif, config")
+        .eq("createur_id", user.id),
+      supabase
+        .from("transactions")
+        .select("id, montant, deadline_acceptation, offres(type), created_at")
+        .eq("createur_id", user.id)
+        .eq("statut", "en_attente")
+        .order("deadline_acceptation", { ascending: true }),
+      supabase.from("users").select("dernier_vu_demandes_at").eq("id", user.id).single(),
+      // Security audit fix: accepted (validee) video/shoutout
+      // transactions still awaiting the créateur's own file upload --
+      // this list never existed before (see LivraisonsEnAttente.tsx's
+      // own comment). In practice only video/shoutout transactions ever
+      // sit at `validee` at all (every other type either cascades
+      // straight through to livree or skips validee entirely -- see
+      // CLAUDE.md's "Transaction lifecycle"), so no extra offer-type
+      // filter is needed here, same reasoning DemandesEnAttente's own
+      // query already relies on for `en_attente`.
+      supabase
+        .from("transactions")
+        .select("id, montant, deadline_livraison, offres(type, libelle)")
+        .eq("createur_id", user.id)
+        .eq("statut", "validee")
+        .order("deadline_livraison", { ascending: true }),
+    ]);
 
   // Montant collecté per campagne, computed live via
   // campagnes_montant_collecte (migration 0017) -- same view the public
@@ -101,6 +118,24 @@ export default async function OffresPage({
               montant: number;
               deadline_acceptation: string | null;
               offres: { type: OffreType } | null;
+            }[]
+          }
+        />
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-lg font-bold">{t("livraisonsHeading")}</h2>
+        <p className="mb-3 text-sm text-foreground-muted">{t("livraisons.intro")}</p>
+        <LivraisonsEnAttente
+          livraisons={
+            (livraisons ?? []).map((livraison) => ({
+              ...livraison,
+              offres: Array.isArray(livraison.offres) ? livraison.offres[0] : livraison.offres,
+            })) as {
+              id: string;
+              montant: number;
+              deadline_livraison: string | null;
+              offres: { type: OffreType; libelle: string | null } | null;
             }[]
           }
         />

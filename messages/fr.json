@@ -243,6 +243,7 @@
     "choosePseudo": "en choisir un",
     "demandesHeading": "Demandes en attente de votre réponse",
     "nouvellesDemandes": "{count, plural, one {# nouvelle} other {# nouvelles}}",
+    "livraisonsHeading": "Livraisons en attente",
     "offresHeading": "Vos offres",
     "statutShort": {
       "en_attente": "En attente",
@@ -283,6 +284,17 @@
       "row": "{type} · {montant}$ · à répondre avant {date}",
       "accept": "Accepter",
       "refuse": "Refuser"
+    },
+    "livraisons": {
+      "intro": "Vidéos/shoutouts acceptés en attente de ta livraison -- durée maximale : 90 secondes.",
+      "empty": "Aucune livraison en attente.",
+      "row": "{type} · {montant}$ · à livrer avant {date}",
+      "dureeTropLongue": "Vidéo trop longue ({duree}s) -- la durée maximale est de {max} secondes.",
+      "lectureImpossible": "Impossible de lire la durée de cette vidéo. Réessaie avec un autre fichier.",
+      "uploadImpossible": "Échec de l'envoi de la vidéo.",
+      "livraisonImpossible": "Échec de la livraison.",
+      "envoiEnCours": "Envoi en cours...",
+      "livrer": "Livrer"
     },
     "transactionActions": {
       "reveal": {
