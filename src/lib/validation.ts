@@ -256,5 +256,12 @@ export const publierMessageSchema = z
     contenu: z.string().trim().min(1).max(PUBLICATION_CONTENU_MAX_LENGTH),
     image_r2_key: z.string().nullable().optional(),
     visibilite: z.enum(["public", "soutiens"]).optional(),
+    // Lot 5c (migration 0031) -- "Autoriser le repost par d'autres
+    // créateurs", only meaningful when visibilite is 'public' (a
+    // soutiens-only post can never be reposted regardless of this value,
+    // since reposter_publication() already rejects any non-public
+    // target). Forced to 'tous' server-side for an admin post either
+    // way, same as visibilite itself -- see publier_message().
+    autorise_repost: z.enum(["personne", "tous"]).optional(),
   })
   .strict();

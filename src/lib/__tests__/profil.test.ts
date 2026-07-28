@@ -108,6 +108,11 @@ describe("getCreateurProfileData -- badge de fidélité", () => {
     fixtures: Record<string, Row | Row[] | null>,
   ) {
     return {
+      // getCreateurProfileData now also calls canManagePublications()
+      // (Lot 5c) to compute viewerCanRepost -- a logged-out viewer here,
+      // so getUser() resolving to no user is enough for it to short
+      // -circuit to false without ever touching a "users" fixture.
+      auth: { getUser: async () => ({ data: { user: null } }) },
       from: (table: string) => {
         fromSpy(table);
         return {

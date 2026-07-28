@@ -2,7 +2,13 @@ import { useTranslations } from "next-intl";
 import { PublicationCard } from "@/components/PublicationCard";
 import type { Publication } from "@/lib/publications";
 
-export function PublicationsList({ publications }: { publications: Publication[] }) {
+export function PublicationsList({
+  publications,
+  canRepost = false,
+}: {
+  publications: Publication[];
+  canRepost?: boolean;
+}) {
   const t = useTranslations("Publications");
 
   if (publications.length === 0) {
@@ -13,7 +19,7 @@ export function PublicationsList({ publications }: { publications: Publication[]
     <ul className="flex flex-col gap-3">
       {publications.map((publication) => (
         <li key={publication.id}>
-          <PublicationCard publication={publication} />
+          <PublicationCard publication={publication} canRepost={canRepost} />
         </li>
       ))}
     </ul>

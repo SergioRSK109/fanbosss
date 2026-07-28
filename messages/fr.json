@@ -26,10 +26,7 @@
     "empty": "Aucune publication pour le moment.",
     "anonymousAuteur": "Un créateur",
     "soutiensOnlyBadge": "Réservé aux soutiens",
-    "reportButton": "Signaler",
-    "reportSending": "Envoi...",
-    "reportSent": "Signalement envoyé.",
-    "reportError": "signalement impossible",
+    "repostedBy": "{auteur} a reposté",
     "teaser": {
       "reservedTo": "Réservé aux soutiens de {auteur}.",
       "cta": "Voir les offres de ce créateur"
@@ -39,10 +36,21 @@
       "contenuPlaceholder": "Partage une actu avec tes fans...",
       "visibilitePublic": "Public",
       "visibiliteSoutiens": "Mes soutiens uniquement",
+      "autoriseRepost": "Autoriser le repost par d'autres créateurs",
       "submit": "Publier",
       "sending": "Publication...",
       "uploadError": "envoi de l'image impossible",
       "unknownError": "une erreur est survenue"
+    },
+    "actions": {
+      "reportButton": "Signaler",
+      "reportSending": "Envoi...",
+      "reportSent": "Signalement envoyé.",
+      "muteButton": "Ne plus voir les publications de ce créateur",
+      "muteSending": "Envoi...",
+      "menuError": "une erreur est survenue",
+      "shareCopied": "Lien copié !",
+      "repostError": "repost impossible"
     }
   },
   "OffresPage": {

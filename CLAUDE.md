@@ -1329,6 +1329,298 @@ flips to "Signalement envoyé.", and the admin's new "Publications
 signalées" section renders the flagged content with both action buttons
 — in both `fr` and `/en/`-prefixed sessions.
 
+## Engagement on publications — likes, reposts, share counts, mute (Lot 5c, migration `0031`)
+
+Follow-up to Lot 5b (migration `0030`, above). A fan or créateur can like a
+publication, a verified créateur/admin can repost one, anyone can share a
+permalink (now counted, not just copied), and a fan can mute a créateur
+from their own `/home` feed. **Lot 5d (likes on other things, e.g.
+comments) is not started here** — this lot is publications-engagement
+only, same scoping discipline as every earlier lot in this sequence.
+
+**Schema**: `publications_likes`/`publications_partages` (each
+`publication_id, fan_id, created_at`, composite PK — a real per-fan
+uniqueness guarantee, not just an app-level check) and
+`publications_mutes` (`fan_id, createur_muet_id, created_at`, composite
+PK, plus `check (fan_id != createur_muet_id)` — the DB-level half of the
+self-mute rejection, mirrored by a friendlier RPC-level error, same
+"defense in depth, constraint is the real guarantee" shape as every other
+unique/check-backed rule in this project). None of the three tables has
+an INSERT/UPDATE/DELETE policy for `authenticated` at all — same
+"state machine only via a vetted RPC" pattern as `publications` itself;
+every read a caller needs (counts, "did I already like/share/repost
+this") is served through the views below, never a direct table read.
+
+`publications` gained `autorise_repost text not null default 'tous'
+check (... in ('personne', 'tous'))` (chosen by the ORIGINAL's own
+author, same "the author controls it" shape as `visibilite`) and
+`repost_de_id uuid references publications(id)` (no `ON DELETE` clause —
+this codebase still has no publication-delete path at all, only masking,
+so a dangling reference can never arise). `contenu`'s `NOT NULL` was
+dropped and replaced with `publications_contenu_coherent`: a plain post
+needs `repost_de_id is null` and a real 1–2000-char `contenu`; a repost
+needs the opposite (`repost_de_id is not null` and `contenu is null`).
+The original CHECK on `contenu`'s length is untouched and still holds
+whenever `contenu` isn't null — a CHECK constraint never fails on NULL,
+so nothing needed to change there. `idx_repost_unique` (a partial unique
+index on `(auteur_id, repost_de_id) where repost_de_id is not null`) is
+the real guarantee against a double-repost by the same author;
+`reposter_publication()`'s own explicit check (below) exists only to
+give a clean error message before ever hitting it.
+
+**Four new `SECURITY DEFINER` RPCs**, same discipline as every write RPC
+since migration `0020` (`auth.uid() is null → raise`, `revoke all ...
+from public` + `grant execute ... to authenticated` only — never `anon`,
+unlike `peut_voir_publication_complete()`'s deliberate exception, since
+every one of these four is a caller-specific action):
+
+- **`toggler_like_publication(p_publication_id)`** — re-uses
+  `peut_voir_publication_complete()` exactly as `signaler_publication()`
+  already does (migration `0030`): "on ne peut pas aimer un teaser qu'on
+  n'a pas lu", same eligibility rule as reporting. Toggles a row in
+  `publications_likes` and returns `(liked, likes_count)` so the caller
+  never needs a second round trip to learn the new count.
+- **`reposter_publication(p_publication_id)`** — reserved to verified
+  créateurs/admins (the exact population `publier_message()` already
+  authorizes, re-verified independently here, never trusted from a prior
+  check). Every rejection condition is checked and reported individually
+  — target not found, masked, non-public, `autorise_repost = 'personne'`,
+  already itself a repost, already reposted by this same caller, or the
+  shared rate limit (see below) — so both the SQL checklist and a real
+  error message can tell them apart. On success, inserts a new
+  `publications` row: `auteur_id` = the caller, `type` auto-assigned
+  exactly like `publier_message()` (`annonce_fanboss` for an admin,
+  `createur` otherwise), `contenu = null`, `repost_de_id` = the target,
+  `visibilite` always forced to `'public'` — a restricted repost would be
+  meaningless, since eligibility already requires the target to be public
+  in the first place.
+- **`partager_publication(p_publication_id)`** — deliberately **no**
+  visibility check at all, unlike the other three: sharing a link reveals
+  nothing the permalink page (below) doesn't already show that exact same
+  viewer, so gating the RPC itself would just be a redundant, confusing
+  second check. Idempotent via `on conflict do nothing` on
+  `publications_partages`'s own primary key — a second share by the same
+  fan never inflates the count. Returns the fresh `partages_count`.
+- **`toggler_mute_createur(p_createur_id)`** — plain toggle on
+  `publications_mutes`, rejecting a self-mute attempt with a clean error
+  on top of the table's own CHECK. Returns `muted`.
+
+**`publier_message()` itself gained a 4th parameter,
+`p_autorise_repost`**, forced to `'tous'` for an admin's
+`annonce_fanboss` post — same "server decides for this type, never the
+client" rule already applied to `visibilite` for that exact type
+(migration `0029`). The old 3-arg signature was **dropped outright**
+(`drop function if exists publier_message(text, text, text);`) rather
+than kept as a second overload — this project doesn't carry
+backwards-compatibility shims, and the one caller (`POST
+/api/publications`) was updated in the same change. **A real bug caught
+empirically before it shipped, the same "reproduce before trusting"
+discipline this file has followed since the pseudo-cooldown/`0020`/
+`0029` bugs**: `reposter_publication()`'s own OUT parameters (`id, type,
+created_at`) shadow plain column references the exact same way
+`creer_demande_verification()`/`publier_message()` already documented —
+an unqualified `id` in its target-publication lookup raised "column
+reference is ambiguous" against the OUT parameter instead of resolving
+to the table column, caught by actually running the function against a
+throwaway database (not assumed from reading the code) and fixed by
+table-qualifying every column in that `select ... into`.
+
+**Views**: `publications_visibles`/`publications_accueil` gain
+`likes_count`, `partages_count`, `viewer_a_aime`, `viewer_a_partage`
+(sub-selects/`exists()` on the new tables, same style as
+`contenu_complet`'s own `peut_voir_publication_complete()` call) — plus
+two more not explicitly listed in the original brief but needed to make
+the rest of it actually work, flagged here rather than silently added:
+`reposts_count` (the brief's own UI spec asks for a counter next to the
+repost button, so this reuses the identical "count of rows referencing
+this publication" shape as the two counts above, just counting
+`publications` whose `repost_de_id` points back at this row instead of a
+dedicated table) and `viewer_a_reposte` (the brief's own repost-button
+eligibility rule includes "not already reposted by this viewer", which
+needs a per-viewer flag the same way `viewer_a_aime` does —
+`reposter_publication()` re-checks this exact condition server-side
+regardless, this is purely a UI signal to hide/disable the button ahead
+of time).
+
+**The masking cascade — the single most important behavior in this
+lot, verified empirically (`checklist_2_3.sql`) before trusting it,
+same discipline as every non-obvious Postgres mechanism in this
+project**: a repost's own `masque` flag is not the only thing that can
+make it disappear. `publications_visibles` now `left join`s back to the
+referenced original (`orig`), and its `where` clause excludes a row
+whenever `p.repost_de_id is not null and orig.masque = true` — so the
+instant an admin masks the *original* (via the existing
+`masquer_publication()`, migration `0030` — nothing about that function
+changed), every repost pointing at it disappears from both
+`publications_visibles` and `publications_accueil` too, even though the
+repost row itself was never touched (`masque` stays `false` on it
+forever — confirmed directly, not assumed). `orig` is `null` for a plain
+post, so the added clause is a no-op for every row that isn't a repost.
+
+**Mute is deliberately asymmetric between the two surfaces, flagged as
+the second design decision worth stating plainly**: `publications_mutes`
+is consulted **only** by `publications_accueil` (`/home`'s global feed),
+never by `publications_visibles` (a créateur's own profile page,
+`/@pseudo` or `/createur/[id]`). Muting someone is a personal
+"stop showing me this in my feed" preference, not a block — a fan who
+mutes a créateur can still deliberately visit that créateur's profile
+and see everything exactly as before; only the passive, algorithmic
+surface (`/home`) respects the mute. This mirrors real-world mute
+semantics (Twitter/Instagram-style) rather than a block, and was
+verified directly: the same fixture fan sees a muted créateur's posts
+vanish from `publications_accueil` while `publications_visibles` for
+that same créateur, queried by that same fan, is completely unaffected.
+
+**Reposting deliberately consumes the exact same 10/24h rate limit as a
+plain post — the first design decision worth stating plainly, since it
+shapes how a future "why was my repost rejected" question should be
+answered**: `reposter_publication()`'s rate-limit check is the identical
+query `publier_message()` already runs (`count(*) from publications
+where auteur_id = caller and created_at > now() - 24h`) — since a repost
+is a normal row in the same `publications` table (distinguished only by
+`repost_de_id`/`contenu` being set or not), this single shared query
+already counts posts and reposts together with zero special-casing
+needed. A créateur who reposts 10 things in a day has no budget left to
+also post normally until the window rolls over, and vice versa — this is
+intentional, not an oversight: allowing reposts to bypass the limit (or
+tracking them separately) would open a real spam vector (reposting is
+strictly cheaper than composing original content), and this project's
+whole `publier_message()` rate limit already exists specifically to cap
+spam floods "regardless of who's posting" (migration `0029`'s own
+wording) — a repost is just another kind of post from that lens.
+
+**New route, `src/app/[locale]/[handle]/p/[id]/page.tsx`** — a
+publication's permalink (`usefanboss.com/@pseudo/p/{id}`), nested one
+level deeper than the existing `/[handle]` catch (no routing ambiguity —
+Next.js treats a different segment count as a different route
+regardless). Reuses `PublicationCard`/`PublicationTeaser` rather than
+duplicating the teaser/`contenu_complet` rendering a second time, via a
+new `getPublicationById()` (`src/lib/publications.ts`) that reads the
+exact same `publications_visibles` view every other read path already
+does. Like `/home`, this page deliberately does **not** redirect a
+logged-out visitor — the whole point of a shareable link is that an
+anonymous visitor can open it and see either the real content or a real
+teaser, per their own actual visibility, not get bounced to `/login`
+first. The URL's own `@handle` segment is re-verified against the
+publication's real author (case-insensitive) rather than trusted —
+`/@wrong-handle/p/{id}` 404s, same "never trust what the URL merely
+claims" discipline as every other route in this project.
+
+**Repost embedding in the UI**: `PublicationCard.tsx` was split into a
+new internal `PublicationBody` (author row + contenu/image + badges,
+extracted so a plain post and a repost's embedded original render this
+identically rather than two slightly-different ways) plus the outer
+card. A repost row shows a small "🔁 {reposter} a reposté" header (using
+the *repost's own* auteur/type, so an admin's repost still shows the
+FanBoss pill on this line) above the embedded original, itself
+teaser-shaped for the current viewer via the exact same
+`publications_visibles` row `getPublicationById`/`hydratePublications`
+already fetched for it — a `soutiens`-only original a stranger reposted
+still renders as a real locked teaser inside the repost card, never the
+real content. Recursion is naturally capped at one level: the DB rejects
+reposting a repost, so `repostDe.repostDe` is always `null`; the
+`embedReposts` guard in `hydratePublications()` is a cheap defensive
+no-op on top of that DB guarantee, not a real recursion limit.
+
+**Icons** (`src/components/ui/icons.tsx`) are hand-made inline SVG —
+this project has no icon library (`lucide-react` confirmed absent) and
+otherwise leans on plain emoji, but the brief asked for these 4 buttons
+specifically to get consistent SVG treatment. Every path uses
+`currentColor`, never a hardcoded hex, so the wrapping button's own
+Tailwind text-color class (`text-danger-500`, `text-accent-500`,
+`text-foreground-muted`, ...) is what actually paints the icon in both
+light and dark mode — same CSS-variable-driven discipline as everywhere
+else in this app. `HeartIcon`/`ShareIcon` reuse one path each for both
+outline (at rest) and filled (once liked/shared) states — real closed
+shapes, so toggling `fill`/`stroke` is enough. `RepostIcon` has no
+natural solid-fill body (a retweet loop is two open arrows around a
+rounded rectangle, not a closed shape) — its "filled at the active
+state" idea is expressed on the two arrowheads instead, which do have a
+real area to fill; the loop body itself stays a stroked outline in both
+states. `MenuIcon` (three parallel bars) has no active/inactive state —
+it's a menu trigger, not a toggle.
+
+**`PublicationActions.tsx`** — like → repost → partager → menu, exactly
+per the brief's ordering. Like/share update local component state
+directly from each RPC's own response (both already return the fresh
+count, so there's no reason to re-fetch the whole page for one counter
+to update); repost and mute instead call `router.refresh()`, since both
+actually change *which rows* the page shows (a new repost row now
+exists; a muted créateur's posts should vanish from `/home`), not just a
+number on one card — same "local state for a counter, `router.refresh()`
+for a real list change" split this project already uses elsewhere (e.g.
+`ParametresForm`'s pseudo/bio saves vs. the admin managers'
+`router.refresh()`-on-success pattern). The repost button only renders
+when `canRepost && repostDe === null && visibilite === 'public' &&
+autoriseRepost === 'tous' && !viewerARepost` — every one of those is
+re-checked server-side by `reposter_publication()` regardless, this is
+purely what decides whether the button is worth showing at all.
+`canRepost` is computed once per page (`canManagePublications()`,
+`src/lib/publications.ts` — the exact same `est_admin ||
+createur_verifie` query `/home`'s own composer-visibility check already
+ran, now shared rather than duplicated a third time across `/home`,
+`getCreateurProfileData`, and the new permalink page) and threaded down
+through `PublicationsList`/`PublicationCard`, never re-derived per
+publication. **`ReportPublicationButton.tsx` was deleted outright**
+(confirmed unused via grep before deleting, not left as dead code) — its
+logic moved into the "☰" menu inside `PublicationActions`, alongside the
+new "Ne plus voir les publications de ce créateur" mute option, exactly
+as the brief specified; a locked teaser still shows neither action,
+since the menu itself only ever renders from the full-content branch
+(`PublicationCard`'s own `contenuComplet` check already gates it, same
+as before).
+
+**Composer checkbox**: `PublicationComposer.tsx` gained "Autoriser le
+repost par d'autres créateurs", checked by default, rendered only when
+`visibilite === "public"` — hidden rather than shown-disabled for
+`soutiens`, since the value is genuinely inert in that case
+(`reposter_publication()`'s own `visibilite` check already rejects any
+non-public target regardless of `autorise_repost`, so there's nothing
+for the hidden checkbox's value to have affected either way).
+
+**What was *not* built or verified in this lot, flagged rather than
+silently skipped, matching this project's own honesty discipline**: no
+throwaway mock-Supabase/Playwright harness was stood up this session to
+visually drive the new UI end-to-end (the technique this file describes
+using for essentially every earlier lot) — the DB layer (every RPC,
+view, and the masking cascade) was verified empirically against a real
+throwaway Postgres database exactly as described above, and the full
+`npm test`/`npm run tsc`/`npm run lint`/`npm run test:sql` suite was run
+and passes, but a future session should still drive the actual browser
+flow (like/repost/share/mute buttons, the composer checkbox, the
+permalink page) before treating the UI layer as fully proven the way the
+SQL layer now is.
+
+Tested end-to-end in `checklist_2_3.sql` with a real fixture (créateur A
+— verified, posts the originals; créateur B — verified, reposts;
+fan C — a stranger to A, not verified/admin; admin D — not itself
+`createur_verifie`; fan E — a real supporter of A via a `livree`
+transaction): `toggler_like_publication()` toggles on then off with the
+count following correctly, rejects liking a `soutiens`-only post a
+stranger can't fully see (no row left behind), and rejects a `NULL
+auth.uid()`; `reposter_publication()` rejects, individually, a
+non-verified/non-admin caller, a `soutiens`-only target, a target with
+`autorise_repost = 'personne'`, a masked target, a double-repost of the
+same target by the same author, and reposting a repost — then succeeds
+for a genuinely eligible caller/target, with `type` auto-assigned to
+`createur`; the shared rate limit rejects an 11th action (a repost, on
+top of 1 repost + 9 plain posts already made) with no row left behind;
+the masking cascade is proven directly — a repost is visible in both
+views, then disappears from **both** the instant its referenced original
+is masked, while the repost's own `masque` flag is confirmed to stay
+`false` throughout; `partager_publication()` is confirmed idempotent
+(two calls from the same fan leave the count at 1, with exactly one
+`publications_partages` row, not two); `toggler_mute_createur()` rejects
+a self-mute attempt, and the asymmetry is proven directly (a muted
+créateur's posts vanish from `publications_accueil` while
+`publications_visibles` for that same créateur is unaffected, for the
+same querying fan), with a second toggle call confirmed to actually
+un-mute; and the full `0020`/`0021` security-grant pattern holds for all
+four new functions plus the updated 4-arg `publier_message()` (`anon`
+has no `EXECUTE` on any of them, `authenticated` with a `NULL
+auth.uid()` is rejected by each function's own check, and
+`authenticated` still holds `EXECUTE` on all five).
+
 ## `accept_transaction`/`refuse_transaction`/`deliver_video` anonymous bypass — found and fixed (migration `0020`)
 
 A real, currently-exploitable vulnerability, flagged during unrelated
@@ -3619,7 +3911,29 @@ into chat).
   rejects a non-admin, `rejeter` leaves the publication's `masque`
   untouched while `masquer` sets it, a second decision on an
   already-handled report is rejected, and the full `0020`/`0021`
-  security-grant pattern holds for all three new functions.
+  security-grant pattern holds for all three new functions. Also covers
+  Lot 5c's publication engagement (0031) with its own fixture (créateur A
+  — verified, posts the originals; créateur B — verified, reposts;
+  fan C — a stranger; admin D; fan E — a real supporter of A):
+  `toggler_like_publication()` toggles on/off correctly and rejects
+  liking a `soutiens`-only post a stranger can't fully see;
+  `reposter_publication()` rejects, individually, a non-verified/
+  non-admin caller, a `soutiens`-only target, `autorise_repost =
+  'personne'`, a masked target, a double-repost by the same author, and
+  reposting a repost, then succeeds for a genuinely eligible caller/
+  target and shares its 10/24h rate limit with `publier_message()` (an
+  11th action — a repost — is rejected); the masking cascade is proven
+  directly — a repost disappears from **both** `publications_visibles`
+  and `publications_accueil` the instant its referenced original is
+  masked, while the repost's own `masque` flag stays `false` throughout,
+  the single most important behavior in this lot; `partager_publication()`
+  is confirmed idempotent (two calls from the same fan leave the count at
+  1, one row, not two); `toggler_mute_createur()` rejects a self-mute and
+  proves the mute asymmetry directly (excluded from `publications_accueil`,
+  completely unaffected in `publications_visibles`, for the same
+  querying fan), with a second toggle confirmed to un-mute; and the full
+  `0020`/`0021` security-grant pattern holds for all four new functions
+  plus the updated 4-arg `publier_message()`.
 - `supabase/tests/stub_auth.sql` fakes just enough of Supabase's `auth`
   schema (an `auth.uid()` reading `app.current_user_id`, plus the
   `authenticated`/`anon`/`service_role` roles) for the real migrations to

@@ -17,6 +17,7 @@ export function PublicationComposer() {
   const router = useRouter();
   const [contenu, setContenu] = useState("");
   const [visibilite, setVisibilite] = useState<"public" | "soutiens">("public");
+  const [autoriseRepost, setAutoriseRepost] = useState(true);
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState("");
@@ -58,7 +59,16 @@ export function PublicationComposer() {
       const response = await fetch("/api/publications", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contenu: trimmed, image_r2_key: imageR2Key, visibilite }),
+        body: JSON.stringify({
+          contenu: trimmed,
+          image_r2_key: imageR2Key,
+          visibilite,
+          // Only meaningful when visibilite is "public" -- a soutiens-only
+          // post can never be reposted regardless of this value (see
+          // reposter_publication()'s own visibilite check), so there's
+          // nothing to send differently when the checkbox is hidden.
+          autorise_repost: autoriseRepost ? "tous" : "personne",
+        }),
       });
       const body = await response.json();
       if (!response.ok) {
@@ -68,6 +78,7 @@ export function PublicationComposer() {
       setContenu("");
       setFile(null);
       setVisibilite("public");
+      setAutoriseRepost(true);
       setStatus("idle");
       router.refresh();
     } catch (error) {
@@ -109,6 +120,22 @@ export function PublicationComposer() {
           <option value="public">{t("visibilitePublic")}</option>
           <option value="soutiens">{t("visibiliteSoutiens")}</option>
         </select>
+
+        {/* Only meaningful when visibilite is "public" -- a soutiens-only
+            post can never be reposted regardless (reposter_publication()
+            rejects any non-public target), so the checkbox is hidden
+            rather than shown-but-disabled for that case. */}
+        {visibilite === "public" && (
+          <label className="flex items-center gap-1.5 text-sm text-foreground-muted">
+            <input
+              type="checkbox"
+              checked={autoriseRepost}
+              onChange={(event) => setAutoriseRepost(event.target.checked)}
+              className="h-4 w-4 rounded border-border accent-brand-500"
+            />
+            {t("autoriseRepost")}
+          </label>
+        )}
 
         <button
           type="submit"
