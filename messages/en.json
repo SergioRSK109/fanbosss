@@ -26,6 +26,10 @@
     "empty": "No publications yet.",
     "anonymousAuteur": "A créateur",
     "soutiensOnlyBadge": "Supporters only",
+    "reportButton": "Report",
+    "reportSending": "Sending...",
+    "reportSent": "Report sent.",
+    "reportError": "couldn't send the report",
     "teaser": {
       "reservedTo": "Reserved for {auteur}'s supporters.",
       "cta": "See this créateur's offers"
@@ -399,6 +403,15 @@
     "remboursementsIntro": "Transactions refunded on FanBoss's side but not yet actually refunded via CinetPay (see CLAUDE.md “Automatic CinetPay refunds”). Once the refund has been done manually in the CinetPay dashboard, mark it as processed here.",
     "verificationHeading": "Verifications",
     "verificationIntro": "Tier 1 (free): the créateur adds the displayed code to their bio, an admin confirms visually. Tier 2: a conflict (same display name as someone else) requires third-party identity verification (KYC) -- no automated integration exists yet, see CLAUDE.md.",
+    "publicationsSignaleesHeading": "Reported publications",
+    "publicationsSignaleesIntro": "Hide removes the publication everywhere (profile and Home feed) and closes the report. Reject closes the report without touching the publication.",
+    "publicationsSignalees": {
+      "empty": "No reported publications pending.",
+      "reportedBy": "reported by {reporter}",
+      "raisonLabel": "Reason: {raison}",
+      "masquer": "Hide the publication",
+      "rejeter": "Reject the report"
+    },
     "topCreateursHeading": "Top 10 créateurs by volume -- this month",
     "topCreateursEmpty": "No transactions this month.",
     "gestionAdminsHeading": "Manage admins",

@@ -3505,6 +3505,361 @@ begin
   end;
 end $$;
 
+-- ---------------------------------------------------------------------
+-- Lot 5b -- moderation for Lot 5a's publications (migration 0030): a
+-- fan/créateur can flag a publication, and an admin can hide it (or
+-- reject the flag). Fixture: créateur A (verified), fan B (a real
+-- supporter of A -- a livree transaction), fan C (a stranger), admin D.
+-- Publications inserted directly with known ids (bypassing
+-- publier_message() -- that RPC's own behavior is already covered by
+-- the Lot 5a section above; this section only needs known publication
+-- ids to exercise the new moderation RPCs against).
+--
+-- Note: report ids ARE auto-generated (via signaler_publication()), so
+-- every lookup of a report's id happens here as the superuser (this
+-- session's default role, before any SET ROLE), stashed into a
+-- set_config() GUC, and read back via current_setting() from inside the
+-- role-switched block that needs it -- reading the raw publications/
+-- reports tables directly as authenticated/anon would otherwise hit
+-- "permission denied", since this stub_auth.sql harness (unlike a real
+-- Supabase project) never grants authenticated/anon any table-level
+-- privileges at all, only RLS policies; a real project's authenticated
+-- role has the base grant Supabase provisions automatically, with RLS
+-- then doing the actual restricting. Confirmed empirically (a throwaway
+-- DB run hit exactly this "permission denied for table publications"
+-- wall on a first draft of this test) before restructuring around it.
+-- ---------------------------------------------------------------------
+insert into users (id, createur_verifie, est_admin) values
+  ('a1000000-0000-0000-0000-000000000001', true, false),
+  ('b1000000-0000-0000-0000-000000000002', false, false),
+  ('c1000000-0000-0000-0000-000000000003', false, false),
+  ('d1000000-0000-0000-0000-000000000004', false, true);
+
+insert into offres (id, createur_id, type, prix) values
+  ('e1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000001', 'don', null);
+
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('f1000000-0000-0000-0000-000000000001',
+   'b1000000-0000-0000-0000-000000000002',
+   'a1000000-0000-0000-0000-000000000001',
+   'e1000000-0000-0000-0000-000000000001', 10, 'livree');
+
+insert into publications (id, auteur_id, type, contenu, visibilite) values
+  ('51000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000001', 'createur', 'Post public de A', 'public'),
+  ('51000000-0000-0000-0000-000000000002', 'a1000000-0000-0000-0000-000000000001', 'createur', 'Post soutiens de A', 'soutiens'),
+  ('51000000-0000-0000-0000-000000000003', 'a1000000-0000-0000-0000-000000000001', 'createur', 'Deuxieme post public de A', 'public');
+
+-- signaler_publication: a stranger (C) cannot report the soutiens-only
+-- post they can't fully see -- reusing peut_voir_publication_complete()
+-- exactly as it already exists for the Lot 5a visibility layer.
+select set_config('app.current_user_id', 'c1000000-0000-0000-0000-000000000003', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform signaler_publication('51000000-0000-0000-0000-000000000002', 'contenu inapproprie');
+    raise exception 'TEST FAILED: a stranger reported a post they cannot fully see';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm not like '%cannot report%' then
+      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: signaler_publication() rejects reporting a post the viewer cannot fully see (teaser)';
+  end;
+end $$;
+reset role;
+
+do $$
+begin
+  if exists (select 1 from reports where reporter_id = 'c1000000-0000-0000-0000-000000000003') then
+    raise exception 'TEST FAILED: the rejected report attempt left a row behind';
+  end if;
+  raise notice 'PASS: the rejected report attempt left no row behind';
+end $$;
+
+-- The real supporter (B) CAN report the same post (they can see it in full).
+select set_config('app.current_user_id', 'b1000000-0000-0000-0000-000000000002', false);
+set role authenticated;
+do $$
+begin
+  perform signaler_publication('51000000-0000-0000-0000-000000000002', 'contenu inapproprie');
+end $$;
+reset role;
+
+do $$
+declare
+  v_row record;
+begin
+  select * into v_row from reports
+    where reporter_id = 'b1000000-0000-0000-0000-000000000002'
+      and reported_user_id = 'a1000000-0000-0000-0000-000000000001';
+  if v_row.id is null then
+    raise exception 'TEST FAILED: a real supporter''s report was not recorded';
+  end if;
+  if v_row.type != 'signalement' or v_row.statut != 'en_attente' or v_row.publication_id != '51000000-0000-0000-0000-000000000002' then
+    raise exception 'TEST FAILED: report row has wrong shape: type=%, statut=%, publication_id=%',
+      v_row.type, v_row.statut, v_row.publication_id;
+  end if;
+  perform set_config('app.tmp_report_id_b', v_row.id::text, false);
+  raise notice 'PASS: a real supporter can report a post they can fully see, recorded correctly (type=signalement, statut=en_attente, publication_id set)';
+end $$;
+
+-- masquer_publication: non-admin rejected.
+select set_config('app.current_user_id', 'b1000000-0000-0000-0000-000000000002', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform masquer_publication('51000000-0000-0000-0000-000000000001', true);
+    raise exception 'TEST FAILED: a non-admin was able to call masquer_publication()';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm != 'not authorized' then
+      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: masquer_publication() rejects a non-admin caller';
+  end;
+end $$;
+reset role;
+
+-- masquer_publication: admin succeeds, and the masked publication
+-- disappears from publications_visibles/publications_accueil (even for
+-- the auteur themselves, and even though it was public).
+select set_config('app.current_user_id', 'd1000000-0000-0000-0000-000000000004', false);
+set role authenticated;
+do $$
+begin
+  perform masquer_publication('51000000-0000-0000-0000-000000000001', true);
+end $$;
+reset role;
+
+select set_config('app.current_user_id', 'a1000000-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+declare
+  v_count int;
+begin
+  select count(*) into v_count from publications_visibles
+    where id = '51000000-0000-0000-0000-000000000001';
+  if v_count != 0 then
+    raise exception 'TEST FAILED: a masked public post is still visible in publications_visibles (even to its own auteur), count=%', v_count;
+  end if;
+  raise notice 'PASS: a masked publication disappears from publications_visibles entirely, even for its own auteur';
+end $$;
+reset role;
+
+select set_config('app.current_user_id', '', false);
+set role anon;
+do $$
+declare
+  v_count int;
+begin
+  select count(*) into v_count from publications_accueil
+    where id = '51000000-0000-0000-0000-000000000001';
+  if v_count != 0 then
+    raise exception 'TEST FAILED: a masked publication still appears in publications_accueil, count=%', v_count;
+  end if;
+  raise notice 'PASS: a masked publication disappears from publications_accueil too';
+end $$;
+reset role;
+
+do $$
+declare
+  v_masque boolean;
+begin
+  select masque into v_masque from publications where id = '51000000-0000-0000-0000-000000000001';
+  if v_masque is distinct from true then
+    raise exception 'TEST FAILED: masque should be true after masquer_publication(), got %', v_masque;
+  end if;
+  raise notice 'PASS: masquer_publication() actually set masque=true on the target row';
+end $$;
+
+-- traiter_signalement_publication: non-admin rejected. (report id looked
+-- up as superuser above, into app.tmp_report_id_b.)
+select set_config('app.current_user_id', 'b1000000-0000-0000-0000-000000000002', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform traiter_signalement_publication(current_setting('app.tmp_report_id_b')::uuid, 'rejeter');
+    raise exception 'TEST FAILED: a non-admin was able to call traiter_signalement_publication()';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm != 'not authorized' then
+      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: traiter_signalement_publication() rejects a non-admin caller';
+  end;
+end $$;
+reset role;
+
+-- traiter_signalement_publication('rejeter'): report becomes rejete,
+-- the reported publication (the soutiens-only one) is left untouched.
+select set_config('app.current_user_id', 'd1000000-0000-0000-0000-000000000004', false);
+set role authenticated;
+do $$
+begin
+  perform traiter_signalement_publication(current_setting('app.tmp_report_id_b')::uuid, 'rejeter');
+end $$;
+reset role;
+
+do $$
+declare
+  v_statut text;
+  v_masque boolean;
+begin
+  select statut into v_statut from reports where reporter_id = 'b1000000-0000-0000-0000-000000000002';
+  if v_statut != 'rejete' then
+    raise exception 'TEST FAILED: report statut should be rejete, got %', v_statut;
+  end if;
+  select masque into v_masque from publications where id = '51000000-0000-0000-0000-000000000002';
+  if v_masque is distinct from false then
+    raise exception 'TEST FAILED: rejecting a report should never touch the publication''s masque flag, got %', v_masque;
+  end if;
+  raise notice 'PASS: rejeter sets the report to rejete and leaves the publication untouched (masque still false)';
+end $$;
+
+-- A second decision on an already-handled report is rejected (re-entrancy
+-- guard), same "already handled" pattern as every other admin RPC.
+select set_config('app.current_user_id', 'd1000000-0000-0000-0000-000000000004', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform traiter_signalement_publication(current_setting('app.tmp_report_id_b')::uuid, 'masquer');
+    raise exception 'TEST FAILED: a second decision on an already-handled report was accepted';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm not like '%already handled%' then
+      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: a second decision on an already-handled report is rejected';
+  end;
+end $$;
+reset role;
+
+-- traiter_signalement_publication('masquer'): a fresh report, masks the
+-- publication AND marks the report traite.
+select set_config('app.current_user_id', 'c1000000-0000-0000-0000-000000000003', false);
+set role authenticated;
+do $$
+begin
+  perform signaler_publication('51000000-0000-0000-0000-000000000003', 'spam');
+end $$;
+reset role;
+
+do $$
+declare
+  v_report_id uuid;
+begin
+  select id into v_report_id from reports
+    where reporter_id = 'c1000000-0000-0000-0000-000000000003';
+  perform set_config('app.tmp_report_id_c', v_report_id::text, false);
+end $$;
+
+select set_config('app.current_user_id', 'd1000000-0000-0000-0000-000000000004', false);
+set role authenticated;
+do $$
+begin
+  perform traiter_signalement_publication(current_setting('app.tmp_report_id_c')::uuid, 'masquer');
+end $$;
+reset role;
+
+do $$
+declare
+  v_statut text;
+  v_masque boolean;
+begin
+  select statut into v_statut from reports where reporter_id = 'c1000000-0000-0000-0000-000000000003';
+  select masque into v_masque from publications where id = '51000000-0000-0000-0000-000000000003';
+  if v_statut != 'traite' then
+    raise exception 'TEST FAILED: report statut should be traite, got %', v_statut;
+  end if;
+  if v_masque is distinct from true then
+    raise exception 'TEST FAILED: masquer should have set masque=true on the reported publication, got %', v_masque;
+  end if;
+  raise notice 'PASS: masquer both masks the publication and marks the report traite';
+end $$;
+
+-- anon has no EXECUTE at all on any of the three new functions.
+select set_config('app.current_user_id', '', false);
+set role anon;
+do $$
+begin
+  begin
+    perform signaler_publication('00000000-0000-0000-0000-000000000000', 'x');
+    raise exception 'TEST FAILED: anon could call signaler_publication()';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE on signaler_publication()';
+  end;
+  begin
+    perform masquer_publication('00000000-0000-0000-0000-000000000000', true);
+    raise exception 'TEST FAILED: anon could call masquer_publication()';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE on masquer_publication()';
+  end;
+  begin
+    perform traiter_signalement_publication('00000000-0000-0000-0000-000000000000', 'rejeter');
+    raise exception 'TEST FAILED: anon could call traiter_signalement_publication()';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE on traiter_signalement_publication()';
+  end;
+end $$;
+reset role;
+
+-- authenticated with a NULL auth.uid() is rejected everywhere.
+select set_config('app.current_user_id', '', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform signaler_publication('00000000-0000-0000-0000-000000000000', 'x');
+    raise exception 'TEST FAILED: authenticated with a NULL auth.uid() could call signaler_publication()';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm != 'not authenticated' then
+      raise exception 'TEST FAILED: unexpected error: %', sqlerrm;
+    end if;
+    raise notice 'PASS: signaler_publication() rejects a NULL auth.uid()';
+  end;
+  begin
+    perform masquer_publication('00000000-0000-0000-0000-000000000000', true);
+    raise exception 'TEST FAILED: authenticated with a NULL auth.uid() could call masquer_publication()';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm != 'not authorized' then
+      raise exception 'TEST FAILED: unexpected error: %', sqlerrm;
+    end if;
+    raise notice 'PASS: masquer_publication() rejects a NULL auth.uid() (NULL-safe est_admin check)';
+  end;
+  begin
+    perform traiter_signalement_publication('00000000-0000-0000-0000-000000000000', 'rejeter');
+    raise exception 'TEST FAILED: authenticated with a NULL auth.uid() could call traiter_signalement_publication()';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm != 'not authorized' then
+      raise exception 'TEST FAILED: unexpected error: %', sqlerrm;
+    end if;
+    raise notice 'PASS: traiter_signalement_publication() rejects a NULL auth.uid()';
+  end;
+end $$;
+reset role;
+
+-- Positive: authenticated still holds EXECUTE on all three new functions.
+do $$
+begin
+  if not has_function_privilege('authenticated', 'signaler_publication(uuid,text)', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lost EXECUTE on signaler_publication()';
+  end if;
+  if not has_function_privilege('authenticated', 'masquer_publication(uuid,boolean)', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lost EXECUTE on masquer_publication()';
+  end if;
+  if not has_function_privilege('authenticated', 'traiter_signalement_publication(uuid,text)', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lost EXECUTE on traiter_signalement_publication()';
+  end if;
+  raise notice 'PASS: authenticated still holds EXECUTE on all three new functions';
+end $$;
+
 do $$
 begin
   raise notice 'ALL SQL CHECKLIST TESTS PASSED';

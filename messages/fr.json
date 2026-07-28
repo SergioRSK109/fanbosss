@@ -26,6 +26,10 @@
     "empty": "Aucune publication pour le moment.",
     "anonymousAuteur": "Un créateur",
     "soutiensOnlyBadge": "Réservé aux soutiens",
+    "reportButton": "Signaler",
+    "reportSending": "Envoi...",
+    "reportSent": "Signalement envoyé.",
+    "reportError": "signalement impossible",
     "teaser": {
       "reservedTo": "Réservé aux soutiens de {auteur}.",
       "cta": "Voir les offres de ce créateur"
@@ -399,6 +403,15 @@
     "remboursementsIntro": "Transactions remboursées côté FanBoss mais pas encore réellement remboursées via CinetPay (voir CLAUDE.md « Automatic CinetPay refunds »). Une fois le remboursement fait manuellement dans le dashboard CinetPay, marque-le comme traité ici.",
     "verificationHeading": "Vérifications",
     "verificationIntro": "Palier 1 (gratuit) : le créateur ajoute le code affiché à sa bio, un admin confirme visuellement. Palier 2 : un conflit (même nom d'affichage que quelqu'un d'autre) nécessite une vérification d'identité tierce (KYC) -- aucune intégration automatisée n'existe encore, voir CLAUDE.md.",
+    "publicationsSignaleesHeading": "Publications signalées",
+    "publicationsSignaleesIntro": "Masquer retire la publication de partout (profil et fil Accueil) et clôt le signalement. Rejeter clôt le signalement sans toucher à la publication.",
+    "publicationsSignalees": {
+      "empty": "Aucune publication signalée en attente.",
+      "reportedBy": "signalé par {reporter}",
+      "raisonLabel": "Raison : {raison}",
+      "masquer": "Masquer la publication",
+      "rejeter": "Rejeter le signalement"
+    },
     "topCreateursHeading": "Top 10 créateurs par volume -- ce mois-ci",
     "topCreateursEmpty": "Aucune transaction ce mois-ci.",
     "gestionAdminsHeading": "Gestion des admins",
