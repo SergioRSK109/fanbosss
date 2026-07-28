@@ -16,6 +16,18 @@ vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServiceRoleClient: vi.fn(),
 }));
 
+// PublicationsSignaleesManager (rendered as real JSX here, unlike the
+// managers explicitly mocked below) now links to a publication's
+// permalink via the real next-intl Link -- same "real next-intl
+// navigation drags in a next/navigation resolution that doesn't work
+// under plain Vitest" issue already worked around in the Home page test.
+// AdminPage is only ever called directly here (never rendered to a real
+// DOM), so the JSX element tree already carries the real href regardless
+// of what this mock's Link implementation does.
+vi.mock("@/i18n/navigation", () => ({
+  Link: (props: { href: string; children?: import("react").ReactNode }) => props,
+}));
+
 // AdminPage calls getTranslations("Admin") directly in its own body
 // (for the noName/deletedUser fallback labels) before any JSX is ever
 // constructed -- unlike a translated *client* component (only ever

@@ -419,6 +419,8 @@
       "empty": "No reported publications pending.",
       "reportedBy": "reported by {reporter}",
       "raisonLabel": "Reason: {raison}",
+      "repostIndicator": "Repost of {auteur}:",
+      "openPublication": "View the reported publication",
       "masquer": "Hide the publication",
       "rejeter": "Reject the report"
     },

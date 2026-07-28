@@ -419,6 +419,8 @@
       "empty": "Aucune publication signalée en attente.",
       "reportedBy": "signalé par {reporter}",
       "raisonLabel": "Raison : {raison}",
+      "repostIndicator": "Repost de {auteur} :",
+      "openPublication": "Voir la publication signalée",
       "masquer": "Masquer la publication",
       "rejeter": "Rejeter le signalement"
     },
