@@ -1,3 +1,4 @@
+import { getPublicationsForAuteur, type Publication } from "@/lib/publications";
 import { getSignedDownloadUrl } from "@/lib/r2";
 import type { OffreType } from "@/lib/validation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -76,6 +77,11 @@ export interface CreateurProfileData {
     pseudo: string | null;
     depuis: string;
   }[];
+  // Lot 5a -- this créateur's own publications, teaser-shaped per the
+  // current viewer by publications_visibles. Not filtered by this
+  // créateur's current verification status (unlike /home's feed) -- see
+  // getPublicationsForAuteur's own comment for why.
+  publications: Publication[];
 }
 
 // `don` always leads the public offre list, regardless of when the
@@ -268,6 +274,8 @@ export async function getCreateurProfileData(
     };
   });
 
+  const publications = await getPublicationsForAuteur(createurId);
+
   return {
     createurId,
     displayName: resolveDisplayName(profil.nom_affichage, profil.pseudo),
@@ -290,5 +298,6 @@ export async function getCreateurProfileData(
     },
     supporters,
     badgesFidelite,
+    publications,
   };
 }

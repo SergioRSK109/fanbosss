@@ -1,5 +1,7 @@
 import { useLocale, useTranslations } from "next-intl";
 import { CheckoutButton } from "@/components/CheckoutButton";
+import { ProfileTabs } from "@/components/ProfileTabs";
+import { PublicationsList } from "@/components/PublicationsList";
 import { ReportButton } from "@/components/ReportButton";
 import { ShareCampagneButton } from "@/components/ShareCampagneButton";
 import { RankBadge } from "@/components/ui/RankBadge";
@@ -75,6 +77,7 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
     ranks,
     supporters,
     badgesFidelite,
+    publications,
   } = profile;
   const hasSocialLinks = Object.values(socialLinks).some(Boolean);
   const hasRanks =
@@ -175,151 +178,158 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
         </section>
       )}
 
-      {campagnes.length > 0 && (
-        <section
-          className={`flex flex-col gap-3 px-5 ${
-            supporters.length > 0 || hasRanks ? "mt-6" : "mt-8"
-          }`}
-        >
-          <h2 className="text-lg font-bold">{t("campagnes.heading")}</h2>
-          {campagnes.map((campagne) => {
-            const status = computeCampagneStatus({
-              actif: campagne.actif,
-              montantCollecte: campagne.montantCollecte,
-              objectif: campagne.objectif,
-              dateFin: campagne.dateFin,
-            });
-            const progressPercent = computeCampagneProgressPercent(
-              campagne.montantCollecte,
-              campagne.objectif,
-            );
-            const joursRestants = computeJoursRestants(campagne.dateFin);
+      <div className={supporters.length > 0 || hasRanks ? "mt-6" : "mt-8"}>
+        <ProfileTabs
+          offresContent={
+            <>
+              {campagnes.length > 0 && (
+                <section className="flex flex-col gap-3 px-5">
+                  <h2 className="text-lg font-bold">{t("campagnes.heading")}</h2>
+                  {campagnes.map((campagne) => {
+                    const status = computeCampagneStatus({
+                      actif: campagne.actif,
+                      montantCollecte: campagne.montantCollecte,
+                      objectif: campagne.objectif,
+                      dateFin: campagne.dateFin,
+                    });
+                    const progressPercent = computeCampagneProgressPercent(
+                      campagne.montantCollecte,
+                      campagne.objectif,
+                    );
+                    const joursRestants = computeJoursRestants(campagne.dateFin);
 
-            return (
-              // Stable anchor so "Partager cette campagne" can link
-              // straight at this one card, not just the profile in
-              // general -- scroll-mt-6 keeps it clear of any future
-              // sticky header even though there isn't one today.
-              <div
-                key={campagne.id}
-                id={`campagne-${campagne.id}`}
-                className="card scroll-mt-6 flex flex-col gap-3 p-4"
-              >
-                {/* 1. Title + status */}
-                <div className="flex items-start justify-between gap-2">
-                  <h3 className="font-semibold leading-snug">{campagne.titre}</h3>
-                  {status === "objectif_atteint" && (
-                    <span className="shrink-0 rounded-full bg-success-500/15 px-2.5 py-1 text-xs font-semibold text-success-600">
-                      {t("campagnes.badgeObjectifAtteint")}
-                    </span>
-                  )}
-                  {status === "terminee" && (
-                    <span className="shrink-0 rounded-full bg-foreground-muted/15 px-2.5 py-1 text-xs font-semibold text-foreground-muted">
-                      {t("campagnes.badgeTerminee")}
-                    </span>
-                  )}
-                </div>
+                    return (
+                      // Stable anchor so "Partager cette campagne" can link
+                      // straight at this one card, not just the profile in
+                      // general -- scroll-mt-6 keeps it clear of any future
+                      // sticky header even though there isn't one today.
+                      <div
+                        key={campagne.id}
+                        id={`campagne-${campagne.id}`}
+                        className="card scroll-mt-6 flex flex-col gap-3 p-4"
+                      >
+                        {/* 1. Title + status */}
+                        <div className="flex items-start justify-between gap-2">
+                          <h3 className="font-semibold leading-snug">{campagne.titre}</h3>
+                          {status === "objectif_atteint" && (
+                            <span className="shrink-0 rounded-full bg-success-500/15 px-2.5 py-1 text-xs font-semibold text-success-600">
+                              {t("campagnes.badgeObjectifAtteint")}
+                            </span>
+                          )}
+                          {status === "terminee" && (
+                            <span className="shrink-0 rounded-full bg-foreground-muted/15 px-2.5 py-1 text-xs font-semibold text-foreground-muted">
+                              {t("campagnes.badgeTerminee")}
+                            </span>
+                          )}
+                        </div>
 
-                {/* 2. Progress bar + montant collecté + pourcentage,
-                    together -- the track itself carries a visible border
-                    so it reads as a bar even at 0% filled, not just once
-                    it starts filling in. */}
-                <div>
-                  <div className="h-2 overflow-hidden rounded-full border border-border bg-surface-muted">
-                    <div
-                      className="h-full rounded-full bg-brand-500"
-                      style={{ width: `${progressPercent}%` }}
-                    />
-                  </div>
-                  <p className="mt-1.5 text-sm font-medium">
-                    {t("campagnes.collecteEtPourcentage", {
-                      collecte: formatMontant(campagne.montantCollecte, locale),
-                      pourcentage: Math.round(progressPercent),
-                    })}
+                        {/* 2. Progress bar + montant collecté + pourcentage,
+                            together -- the track itself carries a visible border
+                            so it reads as a bar even at 0% filled, not just once
+                            it starts filling in. */}
+                        <div>
+                          <div className="h-2 overflow-hidden rounded-full border border-border bg-surface-muted">
+                            <div
+                              className="h-full rounded-full bg-brand-500"
+                              style={{ width: `${progressPercent}%` }}
+                            />
+                          </div>
+                          <p className="mt-1.5 text-sm font-medium">
+                            {t("campagnes.collecteEtPourcentage", {
+                              collecte: formatMontant(campagne.montantCollecte, locale),
+                              pourcentage: Math.round(progressPercent),
+                            })}
+                          </p>
+                        </div>
+
+                        {/* 3. Objectif + description of the cause */}
+                        <div className="flex flex-col gap-1">
+                          <p className="text-sm font-medium text-foreground-muted">
+                            {t("campagnes.objectifLabel", {
+                              objectif: formatMontant(campagne.objectif, locale),
+                            })}
+                          </p>
+                          {campagne.description && (
+                            <p className="text-sm text-foreground-muted">
+                              {campagne.description}
+                            </p>
+                          )}
+                          {status === "active" && joursRestants !== null && (
+                            <p className="text-xs text-foreground-muted">
+                              {joursRestants > 0
+                                ? t("campagnes.joursRestants", { jours: joursRestants })
+                                : t("campagnes.dernierJour")}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* 4. Amount field + Payer button */}
+                        {status === "active" && (
+                          <div className="flex justify-end">
+                            <CheckoutButton offreId={campagne.id} type="campagne" />
+                          </div>
+                        )}
+
+                        <div className="border-t border-border pt-2">
+                          <ShareCampagneButton campagneId={campagne.id} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </section>
+              )}
+
+              <ul className={`flex flex-col gap-3 px-5 ${campagnes.length > 0 ? "mt-6" : ""}`}>
+                {offres.map((offre) => (
+                  <li key={offre.id} className="card flex flex-col gap-3 p-4">
+                    <div className="flex items-center gap-3">
+                      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-brand-50 text-xl dark:bg-white/10">
+                        {OFFER_ICONS[offre.type]}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[0.95rem] font-semibold leading-snug">
+                          {labels[offre.type] ?? offre.type}
+                          {offre.libelle && ` · ${offre.libelle}`}
+                        </p>
+                        {offre.prix !== null && (
+                          <p className="font-bold text-brand-600 dark:text-brand-300">
+                            {offre.prix}$
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex justify-end">
+                      <CheckoutButton offreId={offre.id} type={offre.type} />
+                    </div>
+                    {/* Always-visible, not a hover tooltip: most visitors are on
+                        mobile, where hover states aren't reachable at all. */}
+                    {REASSURANCE_KEYS[offre.type] && (
+                      <div className="flex items-start gap-1.5 border-t border-border pt-2.5">
+                        <span aria-hidden className="mt-0.5 text-xs">
+                          🛡️
+                        </span>
+                        <p className="text-xs leading-snug text-foreground-muted">
+                          {t(REASSURANCE_KEYS[offre.type]!)}
+                        </p>
+                      </div>
+                    )}
+                  </li>
+                ))}
+                {offres.length === 0 && campagnes.length === 0 && (
+                  <p className="text-center text-sm text-foreground-muted">
+                    {t("noActiveOffers")}
                   </p>
-                </div>
-
-                {/* 3. Objectif + description of the cause */}
-                <div className="flex flex-col gap-1">
-                  <p className="text-sm font-medium text-foreground-muted">
-                    {t("campagnes.objectifLabel", {
-                      objectif: formatMontant(campagne.objectif, locale),
-                    })}
-                  </p>
-                  {campagne.description && (
-                    <p className="text-sm text-foreground-muted">{campagne.description}</p>
-                  )}
-                  {status === "active" && joursRestants !== null && (
-                    <p className="text-xs text-foreground-muted">
-                      {joursRestants > 0
-                        ? t("campagnes.joursRestants", { jours: joursRestants })
-                        : t("campagnes.dernierJour")}
-                    </p>
-                  )}
-                </div>
-
-                {/* 4. Amount field + Payer button */}
-                {status === "active" && (
-                  <div className="flex justify-end">
-                    <CheckoutButton offreId={campagne.id} type="campagne" />
-                  </div>
                 )}
-
-                <div className="border-t border-border pt-2">
-                  <ShareCampagneButton campagneId={campagne.id} />
-                </div>
-              </div>
-            );
-          })}
-        </section>
-      )}
-
-      <ul
-        className={`flex flex-col gap-3 px-5 ${
-          campagnes.length > 0 || supporters.length > 0 || hasRanks ? "mt-6" : "mt-8"
-        }`}
-      >
-        {offres.map((offre) => (
-          <li key={offre.id} className="card flex flex-col gap-3 p-4">
-            <div className="flex items-center gap-3">
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-brand-50 text-xl dark:bg-white/10">
-                {OFFER_ICONS[offre.type]}
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[0.95rem] font-semibold leading-snug">
-                  {labels[offre.type] ?? offre.type}
-                  {offre.libelle && ` · ${offre.libelle}`}
-                </p>
-                {offre.prix !== null && (
-                  <p className="font-bold text-brand-600 dark:text-brand-300">
-                    {offre.prix}$
-                  </p>
-                )}
-              </div>
+              </ul>
+            </>
+          }
+          publicationsContent={
+            <div className="px-5">
+              <PublicationsList publications={publications} />
             </div>
-            <div className="flex justify-end">
-              <CheckoutButton offreId={offre.id} type={offre.type} />
-            </div>
-            {/* Always-visible, not a hover tooltip: most visitors are on
-                mobile, where hover states aren't reachable at all. */}
-            {REASSURANCE_KEYS[offre.type] && (
-              <div className="flex items-start gap-1.5 border-t border-border pt-2.5">
-                <span aria-hidden className="mt-0.5 text-xs">
-                  🛡️
-                </span>
-                <p className="text-xs leading-snug text-foreground-muted">
-                  {t(REASSURANCE_KEYS[offre.type]!)}
-                </p>
-              </div>
-            )}
-          </li>
-        ))}
-        {offres.length === 0 && campagnes.length === 0 && (
-          <p className="text-center text-sm text-foreground-muted">
-            {t("noActiveOffers")}
-          </p>
-        )}
-      </ul>
+          }
+        />
+      </div>
 
       {/* Créateurs THIS profile supports as a fan (migration 0022) --
           only ever non-empty when this profile owner's own

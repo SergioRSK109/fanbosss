@@ -968,6 +968,238 @@ console errors, and dark mode (`colorScheme: "dark"`) rendering correctly
 via the app's existing CSS-variable overrides with no tab-bar-specific
 dark-mode code needed.
 
+## Publications — créateur posts + FanBoss announcements, with visibility gating (Lot 5a, migration `0029`)
+
+A créateur (once verified) or an admin can post short text updates
+("Quoi de neuf ?", up to 2000 chars, one optional image), visible either
+to everyone (`public`) or only to that créateur's own supporters
+(`soutiens`) — shown on the créateur's own profile (new "Publications"
+tab) and, for verified créateurs' posts plus every FanBoss announcement,
+on a new global `/home` feed. **Lot 5b (moderation of the `masque`
+flag — an admin's ability to actually hide a reported/inappropriate
+publication) is a deliberate follow-up, not built here**: `masque` exists
+in the schema and is already honored by every read path (a `masque=true`
+row never appears, not even as a teaser), but nothing in this lot ever
+sets it to `true` — there is no moderation UI yet, same "structure only,
+no UI yet" posture this project has already used for other two-part
+features (créateur verification's palier 2, litige resolution before
+`0026`).
+
+**Schema**: `publications` (`id, auteur_id, type, contenu, image_r2_key,
+visibilite, masque, created_at`), given exactly as specified —
+`type check (type in ('createur', 'annonce_fanboss'))`,
+`contenu check (char_length(contenu) between 1 and 2000)`,
+`visibilite check (visibilite in ('public', 'soutiens')) default
+'public'`, `masque boolean not null default false`. Two indexes
+(`(auteur_id, created_at desc)`, `(created_at desc)`) — the first backs
+the profile page's own-posts query, the second the global feed's
+newest-first ordering. RLS: `publications_select_own` (`auteur_id =
+auth.uid()`), same self-only default as every other user-owned table —
+no INSERT/UPDATE policy for authenticated at all, every write goes
+through `publier_message()` below, same "state machine only via a
+vetted RPC" shape as `transactions`/`demandes_verification`.
+
+**`soutient_createur(p_fan_id, p_createur_id)`** is exactly the plain
+(non-`security definer`) function specified — `exists (select 1 from
+transactions where fan_id = p_fan_id and createur_id = p_createur_id and
+statut = 'livree')`. Deliberately invoker-rights: a direct call by an
+authenticated caller stays scoped by `transactions`' own RLS (`fan_id =
+auth.uid() or createur_id = auth.uid()`), which is exactly right for a
+fan checking their own support relationship and conservatively `false`
+(never a leak) for asking about someone else's.
+
+**The server-side access layer — the actual point of this lot — needed
+one non-obvious fix, found by testing rather than assumed.** The
+straightforward-looking design (a public view calling `soutient_createur()`
+directly in its `SELECT` list to decide teaser-vs-full per row) was
+**built, then empirically disproven** against a throwaway database before
+being trusted, per this project's standing "reproduce a non-obvious
+Postgres mechanism before relying on it" discipline (the same discipline
+that already caught the pseudo-cooldown/admin-escalation/`0020` bugs):
+a plain (non-`security definer`) function called from inside a view does
+**not** inherit the view owner's RLS-bypass the way a table referenced
+directly in the view's own `FROM`-list does — Postgres evaluates that
+function's internal query under the *actual querying role's* privileges,
+not the view owner's. A minimal reproduction (a throwaway
+`t_secret`/`restricted_role`/`migrator_role` setup, mirroring this
+project's real `authenticated`/migration-role split) confirmed it
+directly: calling a plain invoker-rights function from a view's `SELECT`
+list came back `false` for every row regardless of the real answer, while
+the exact same check written as a `security definer` function (or
+inlined directly in the view) came back correct. **The fix**:
+`peut_voir_publication_complete(p_auteur_id, p_visibilite)` is a small
+`security definer` wrapper (`p_visibilite = 'public' or auth.uid() =
+p_auteur_id or (auth.uid() is not null and soutient_createur(auth.uid(),
+p_auteur_id))`) — a `security definer` function's execution context (and
+that of any invoker-rights function it calls internally, confirmed the
+same empirical way) runs as the function owner, the same bypass mechanism
+`classement_volume`/`profils_explorables` etc. already rely on for the
+tables they reference directly. This is also the one deliberate exception
+in this codebase to "never grant a `security definer` function to
+`anon`" (migrations `0020`/`0021`): `anon` needs a real, non-erroring
+answer here too (an anonymous profile visitor), which is always "show the
+teaser" — safe specifically because this function takes no fan-id
+parameter at all (always `auth.uid()` internally), so there's no way to
+use it to ask about anyone else's relationship. A second pitfall caught
+the same way: `auth.uid() = p_auteur_id` is SQL `NULL` (not `false`) for
+an anonymous caller, and `false OR NULL` is itself `NULL`
+(three-valued logic) — without an explicit `coalesce(..., false)`
+wrapping the whole expression, `contenu_complet` would surface as SQL
+`NULL` instead of a clean boolean for an anonymous viewer, even though
+the `CASE WHEN` for `contenu`/`image_r2_key` happens to still treat a
+`NULL` condition as "not true" either way. Verified directly, not
+assumed: an anonymous viewer's `contenu_complet` is `false`, never blank/
+`NULL`.
+
+**`publications_visibles`** (view, granted to `authenticated, anon`) is
+the actual per-row teaser/full decision: `contenu`/`image_r2_key` are
+each a `case when peut_voir_publication_complete(...) then <col> else
+null end`, and `contenu_complet` is that same function's raw boolean —
+an **explicit** flag, never something the app has to infer from
+nullability (`contenu` can never be legitimately null on a real row, the
+table's own CHECK requires 1-2000 chars, so nulling it out is
+unambiguous evidence of a teaser either way, but an explicit flag is
+clearer to consume and removes any need to guess). Excludes `masque =
+true` rows entirely, not even as a teaser — Lot 5b's flag, already
+effective before that lot builds any UI to set it. **`publications_accueil`**
+layers on top (`join users ... where u.createur_verifie = true or
+v.type = 'annonce_fanboss'`) for the global feed — scoped to *currently*
+verified créateurs (not frozen at post time, same "always compute live"
+principle as `campagnes_montant_collecte`/the verification conflict
+check) plus every FanBoss announcement regardless of the posting admin's
+own `createur_verifie`. **Deliberate asymmetry**: a créateur's own
+`/[handle]`/`/createur/[id]` profile page reads `publications_visibles`
+directly (filtered by `auteur_id`, no verification filter at all) — so
+an unverified créateur's past posts stay visible on their own profile
+even after they've dropped out of the global feed. Not an oversight;
+"requête filtrée auteur_id" was the brief's own instruction for the
+profile tab, and the two surfaces answer genuinely different questions
+("what has this créateur posted" vs. "what should the front page
+promote").
+
+**`publier_message(p_contenu, p_image_r2_key default null, p_visibilite
+default 'public')`** is a `security definer` RPC, same discipline as
+every write RPC since migration `0020` (`auth.uid() is null` rejected,
+`revoke all ... from public` + `grant execute ... to authenticated`
+only). Server-decided, never trusted from the client: `type` is admin →
+`annonce_fanboss` (`visibilite` force-overwritten to `'public'` — a
+FanBoss announcement soutiens-only makes no sense), else `createur` —
+re-verified here that the caller is actually an admin **or**
+`createur_verifie` at all (`raise exception 'not authorized: verified
+créateurs or admins only'` otherwise), the same "never trust the client
+alone" reasoning as the whatsapp price floor/age gate, even though the
+composer UI is already gated the same way. If a caller is somehow both
+(an admin who's also independently `createur_verifie`), admin wins —
+posting as an admin is a platform announcement, not a personal update; a
+product judgment call, flagged as such since the brief didn't
+disambiguate. Rate-limited to 10 per rolling 24h window
+(`created_at > now() - interval '24 hours'`), applied uniformly with no
+admin exception — a spam flood is a spam flood regardless of who's
+posting. **A real bug caught before it shipped**: this function's
+`returns table (id, type, visibilite, created_at)` OUT parameters shadow
+plain column references the exact same way `creer_demande_verification()`
+already documented (migration `0023`) — an unqualified `where id =
+v_user_id`/`created_at > ...` inside the function body raised "column
+reference is ambiguous" against the OUT parameter instead of resolving
+to the table column, caught empirically (a throwaway DB run, not
+assumed) and fixed by table-qualifying (`users.id`,
+`publications.created_at`, `publications.auteur_id`).
+
+**`/api/publications`** (POST) is a thin RPC wrapper, same shape as every
+other one in this project — `publierMessageSchema` (`src/lib/validation.ts`)
+mirrors `publications.contenu`'s own CHECK constraint
+(`PUBLICATION_CONTENU_MAX_LENGTH = 2000`, deliberately kept in
+`validation.ts` rather than `src/lib/publications.ts` specifically so
+`PublicationComposer.tsx`, a client component, can import the constant
+without pulling that module's server-only Supabase data-fetching
+functions into the client bundle — caught by a real Turbopack build
+error, not spotted by inspection, the first time the constant lived
+next to `getPublicationsForAuteur`/`getPublicationsAccueil` instead).
+**`/api/publications/upload-url`** (POST) mirrors
+`content-upload-url`'s pattern (offres) — re-checks admin-or-`createur_verifie`
+before minting a presigned R2 PUT URL (`publications/{userId}/{uuid}`),
+redundant with, not a substitute for, `publier_message()`'s own re-check
+— and additionally rejects any non-`image/*` content type, since this
+route's only purpose is publication images (`content-upload-url` accepts
+arbitrary content types for its own, different, `contenu_debloque`
+purpose).
+
+**`src/lib/publications.ts`** — `getPublicationsForAuteur(auteurId)` (the
+profile tab) and `getPublicationsAccueil(page)` (the paginated `/home`
+feed, `PUBLICATIONS_ACCUEIL_PAGE_SIZE = 10`, same `.range()`/`{count:
+"exact"}` pattern as `/explorer`) both read their respective view, then
+hydrate each row's `auteur` (`profils_publics`, resolved once per unique
+author id, batched — a busy poster's photo isn't re-signed once per one
+of their several posts) and `imageUrl` (a presigned R2 GET, 1h expiry —
+deliberately shorter than profile photos' 24h: a `soutiens`-only image is
+genuinely sensitive, unlike a profile photo, even though a fresh URL is
+minted on every render regardless).
+
+**UI**: `PublicationTeaser.tsx` is a real, visually distinct "locked"
+component (lock emoji, "Réservé aux soutiens de {auteur}", a link to the
+créateur's own profile — which is already sufficient since Offres is
+that profile's default tab, no query-param deep-link needed) — not
+CSS-blurred real text, because the server never sends the real
+`contenu`/`image_r2_key` for a teaser row in the first place; there is
+nothing for a client-side blur to hide. `PublicationCard.tsx` renders
+either the teaser or the full card (author, optional "FanBoss"/"Réservé
+aux soutiens" pill, contenu, optional image) based on `contenuComplet`
+alone, never on whether `contenu` happens to be null. `ProfileTabs.tsx`
+(new client component) is a plain client-side tab switch (no navigation,
+no query param) between "Offres" (default — campagnes + the offres
+list, exactly what used to be `CreateurProfileView`'s only content below
+the header) and "Publications" (the new list) — both tabs' content is
+already rendered server-side by `CreateurProfileView` and just handed in
+as pre-built React nodes; supporters/rank badges stay above the tabs
+(identity, not tied to either tab), `badgesFidelite` stays below (same
+reasoning). `PublicationComposer.tsx` (client) is shown only when the
+page decides to (admin or `createur_verifie`) — textarea + optional image
++ Public/Mes soutiens `<select>`, uploads the image first (if any) then
+calls `/api/publications`, `router.refresh()`s on success so the new
+post appears via the page's own fresh server data, not local state.
+
+**`/home`** (`src/app/[locale]/(app)/home/page.tsx`) is the new 5th
+`AppTabBar` destination — **Accueil**, added first (`🏠`), left of
+Offres/Paiements/Performance/Réglages. Unlike the other 4, this page
+deliberately does **not** redirect a logged-out visitor to `/login` —
+the whole point of the visibility layer is that an anonymous visitor can
+browse public posts and see a locked teaser for `soutiens`-only ones, so
+gating the page itself behind a session would defeat that. The shared
+`(app)` layout's own auth check is unaffected (it already only
+conditionally shows the profile-link card, never redirects), so this
+needed no layout change — only this one page's own absence of a
+redirect. `/home` added to `PSEUDO_MOTS_RESERVES` (`src/lib/validation.ts`)
+and `users_pseudo_not_reserved` (DB, migration `0029`) — same two-places
+discipline as every previous route addition.
+
+Tested end-to-end in `checklist_2_3.sql` with a real fixture (créateur A
+— verified, fan B — a real supporter via a `livree` transaction, fan C —
+a stranger, admin D — deliberately **not** itself `createur_verifie`, to
+prove an admin's own verification status is irrelevant to posting as
+`annonce_fanboss`): `soutient_createur()` correct for both the supporter
+and the stranger; an admin's post is forced to
+`type=annonce_fanboss`/`visibilite=public` regardless of what was
+requested; **the teaser is never accompanied by the real content in the
+DB response itself** — a real supporter sees both a créateur's `public`
+and `soutiens` post in full, while a stranger *and* an anonymous viewer
+both get `contenu`/`image_r2_key = NULL` and a clean `contenu_complet =
+false` (not SQL `NULL`) for the `soutiens` one; the créateur always sees
+their own posts in full; `publications_accueil` includes the verified
+créateur's posts and the FanBoss announcement together; the 10/24h rate
+limit rejects an 11th post within the window and leaves no row behind;
+a non-verified, non-admin caller is rejected outright; and the full
+`0020`/`0021` security pattern holds (`anon` has no `EXECUTE` on
+`publier_message()`, `authenticated` with a `NULL auth.uid()` is
+rejected, and — the one deliberate exception — `anon` **does** correctly
+have `EXECUTE` on `peut_voir_publication_complete()`). Verified visually
+end-to-end too (same throwaway mock-Supabase/Playwright technique used
+throughout this file): the composer renders only for a
+`createur_verifie` user, a locked teaser card renders distinctly from a
+real post on both `/home` and the profile page's Publications tab, the
+5-tab `AppTabBar` shows Accueil first and highlights it correctly, and
+all of the above holds in both `fr` and `/en/`-prefixed sessions and in
+dark mode.
+
 ## `accept_transaction`/`refuse_transaction`/`deliver_video` anonymous bypass — found and fixed (migration `0020`)
 
 A real, currently-exploitable vulnerability, flagged during unrelated
@@ -3227,7 +3459,27 @@ into chat).
   `solde_wallet_createur()` rejecting a caller asking for someone else's
   balance. Also covers the Lot 3 `/offres` route addition (0028): the
   `'offres'` reserved-pseudo CHECK constraint rejects a fresh user
-  attempting to set it, same pattern as the `'classement'` test.
+  attempting to set it, same pattern as the `'classement'` test. Also
+  covers Lot 5a's publications (0029) with a real fixture (a verified
+  créateur, a real supporter via a `livree` transaction, a stranger, and
+  an admin who is deliberately *not* itself `createur_verifie`):
+  `soutient_createur()` correct for both the supporter and the stranger;
+  an admin's post is forced to `type=annonce_fanboss`/`visibilite=public`
+  regardless of what was requested; a real supporter sees both a
+  créateur's `public` and `soutiens` post in full via
+  `publications_visibles`, while a stranger and an anonymous viewer both
+  get `contenu`/`image_r2_key = NULL` and a clean `contenu_complet =
+  false` (not SQL NULL) for the `soutiens` one — the actual proof the
+  teaser is a DB-level guarantee, not a client-side hide; the créateur
+  always sees their own posts in full; `publications_accueil` includes
+  the verified créateur's posts and the FanBoss announcement together;
+  the 10/24h rate limit rejects an 11th post within the window and leaves
+  no row behind; a non-verified, non-admin caller is rejected outright;
+  and the full `0020`/`0021` security-grant pattern holds, including the
+  one deliberate exception where `anon` **does** correctly have `EXECUTE`
+  on `peut_voir_publication_complete()` (see CLAUDE.md's own section on
+  why). Also covers the `'home'` reserved pseudo (0029), same pattern as
+  `'classement'`/`'offres'`.
 - `supabase/tests/stub_auth.sql` fakes just enough of Supabase's `auth`
   schema (an `auth.uid()` reading `app.current_user_id`, plus the
   `authenticated`/`anon`/`service_role` roles) for the real migrations to

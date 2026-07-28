@@ -58,6 +58,7 @@ describe("GET /[locale]/[handle] (percent-encoded '@' bug)", () => {
       ranks: { volume: null, reactivite: null, progression: null },
       supporters: [],
       badgesFidelite: [],
+      publications: [],
     });
   });
 
