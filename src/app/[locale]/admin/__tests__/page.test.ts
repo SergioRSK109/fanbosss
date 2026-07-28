@@ -61,16 +61,18 @@ function buildAuthedClient(user: { id: string } | null, estAdmin: boolean) {
   };
 }
 
-// Every chain method (select/gte/eq/in/is/order) returns a new instance
-// of the same thenable, resolving to `{ data, error: null }` regardless
-// of how deep the real page's query chain goes -- avoids hand-modeling
-// each of page.tsx's different chain shapes off the same `.from()` call.
+// Every chain method (select/gte/eq/in/is/not/order) returns a new
+// instance of the same thenable, resolving to `{ data, error: null }`
+// regardless of how deep the real page's query chain goes -- avoids
+// hand-modeling each of page.tsx's different chain shapes off the same
+// `.from()` call.
 function buildQueryChain(): PromiseLike<{ data: unknown[]; error: null }> & {
   select: () => ReturnType<typeof buildQueryChain>;
   gte: () => ReturnType<typeof buildQueryChain>;
   eq: () => ReturnType<typeof buildQueryChain>;
   in: () => ReturnType<typeof buildQueryChain>;
   is: () => ReturnType<typeof buildQueryChain>;
+  not: () => ReturnType<typeof buildQueryChain>;
   order: () => ReturnType<typeof buildQueryChain>;
 } {
   const promise = Promise.resolve({ data: [], error: null });
@@ -80,6 +82,7 @@ function buildQueryChain(): PromiseLike<{ data: unknown[]; error: null }> & {
     eq: buildQueryChain,
     in: buildQueryChain,
     is: buildQueryChain,
+    not: buildQueryChain,
     order: buildQueryChain,
   });
 }

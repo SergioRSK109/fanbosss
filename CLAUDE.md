@@ -1200,6 +1200,135 @@ real post on both `/home` and the profile page's Publications tab, the
 all of the above holds in both `fr` and `/en/`-prefixed sessions and in
 dark mode.
 
+## Moderation of publications (Lot 5b, migration `0030`)
+
+A fan or créateur can flag a publication they've actually read (never a
+locked teaser), and an admin can hide it — or reject the flag and leave
+it visible. **Lot 5c (likes) is the next step after this one, not
+started here.**
+
+**Schema — extends the existing `reports` table, not a new one, per
+explicit instruction**: `reports` gained a single nullable
+`publication_id uuid references publications(id) on delete set null`
+column. Nullable means every existing (WhatsApp-adjacent, `ReportButton.tsx`)
+report row is completely untouched — same table, same three-statut
+workflow (`en_attente`/`traite`/`rejete`), same admin worklist mechanism,
+just one more column that's only ever set by the new publication-report
+path below. `reports` still has no `traite_par`/`traite_at`/`note_admin`
+columns at all (deliberately not added here either, matching "juste une
+colonne en plus") — see the admin UI note below for what that rules out.
+
+**`signaler_publication(p_publication_id, p_raison)`** is a `security
+definer` RPC (needs to read an arbitrary publication's `auteur_id`/
+`visibilite` regardless of who owns it — `publications_select_own`'s RLS
+is self-only). "On ne signale pas un teaser qu'on n'a pas lu": it
+re-uses `peut_voir_publication_complete()` exactly as Lot 5a already
+built it — no duplicated eligibility logic — and rejects outright if the
+caller can't see the target publication's full content. On success it
+inserts into `reports` with `type = 'signalement'`, `reported_user_id`
+= the publication's `auteur_id`, `publication_id` set, `statut =
+'en_attente'`. Same `auth.uid() is null → raise` + `revoke all from
+public` / `grant execute to authenticated` discipline as every write RPC
+since migration `0020`.
+
+**`masquer_publication(p_publication_id, p_masque)`** is a standalone
+moderation primitive — admin-only (re-verifies `est_admin` internally,
+same `not exists(...)` NULL-safe shape as `mark_remboursement_manuel_traite`/
+`resoudre_litige`/`traiter_retrait`), and **only** toggles the `masque`
+flag Lot 5a already added to the schema. `publications_visibles`/
+`publications_accueil` already exclude `masque = true` rows entirely —
+this is the exact "already effective before Lot 5b builds any UI to set
+it" gap Lot 5a flagged, now closed. Nothing on the display side needed
+to change at all; verified directly (below) that a masked publication
+disappears from both views immediately, even for its own auteur.
+
+**`traiter_signalement_publication(p_report_id, p_decision)`** is the
+admin action behind the "Publications signalées" worklist below —
+resolves one *report*, not the publication in isolation. This is a
+second RPC, not folded into `masquer_publication`, precisely because
+`reports` has no admin-decision columns of its own (see the schema note
+above) — this function is the only admin-only write path for a report's
+own `statut`, for *either* outcome. `p_decision = 'masquer'` updates
+`publications.masque = true` directly (not a nested call to
+`masquer_publication()` — the admin check would just be re-verified for
+nothing, since this function is already inside its own verified-admin
+security-definer context) and sets the report `statut = 'traite'`;
+`p_decision = 'rejeter'` only ever touches the report, the publication is
+left completely untouched. Same re-entrancy guard as every other admin
+RPC (`statut != 'en_attente' → already handled`, raised rather than
+silently re-applied).
+
+**`/api/publications/[id]/signaler`** (POST) and
+**`/api/admin/traiter-signalement-publication`** (POST) are both thin
+RPC wrappers, same shape as every other one in this project — neither
+re-implements any of the real eligibility/authorization logic, which
+lives entirely in the two RPCs above.
+
+**UI**: `ReportPublicationButton.tsx` (new, small client component,
+mirroring `ReportButton.tsx`'s own simplicity — no raison text collected
+there either) renders **only** from `PublicationCard.tsx` (the
+full-content view) — never from `PublicationTeaser.tsx`, consistent with
+`signaler_publication()`'s own server-side restriction: a locked post
+has no "Signaler" affordance to click in the first place, so there's
+nothing for the UI to even attempt. `PublicationsSignaleesManager.tsx`
+(admin) mirrors `LitigesManager.tsx`/`RetraitsManager.tsx`'s interactive
+pattern (per-row `pendingId`/`errorById`, `router.refresh()` on success)
+but **deliberately has no note field**, unlike those two — there is no
+column to persist one to (see the schema note above). Each row shows the
+auteur, the reporter, the flagged publication's own contenu (read via
+the admin's service-role query, regardless of the publication's own
+`visibilite`/`masque` state — an admin must be able to read what was
+reported to judge it), and the optional `raison`, with two buttons:
+"Masquer la publication" / "Rejeter le signalement". `/admin/page.tsx`'s
+new query filters `reports` to `.not("publication_id", "is", null)` and
+`.eq("statut", "en_attente")` — a resolved report (either outcome)
+naturally drops out of this list since `statut` moves off `en_attente`
+either way, same "the query's own filter is what removes a handled row"
+principle as every other admin worklist in this project.
+
+**A real, non-obvious test-harness gotcha, caught before it wasted more
+time than it should have**: an early draft of the SQL checklist test for
+this lot tried to `SELECT ... FROM publications`/`FROM reports` directly
+while impersonating `authenticated`/`anon` via `SET ROLE`, and hit a
+flat "permission denied for table publications" — not an RLS-filtered
+empty result, an outright grant error. This is **not** a bug in the
+migration: this project's `stub_auth.sql` test harness (unlike a real
+Supabase project) never grants `authenticated`/`anon` any table-level
+privilege at all, only the RLS policies themselves — a real Supabase
+project provisions the base grant automatically, with RLS then doing the
+actual restricting. The fix was to the *test*, not the schema: look up
+any id generated by an RPC (report ids, being `gen_random_uuid()`
+defaults, aren't known in advance) as the superuser — this session's
+default role, before any `SET ROLE` — stash it via `set_config()`, and
+read it back via `current_setting()` from inside the role-switched block
+that actually needs it, rather than ever re-querying the raw table while
+impersonating a restricted role.
+
+Tested end-to-end in `checklist_2_3.sql` with a real fixture (créateur A
+— verified, fan B — a real supporter via a `livree` transaction, fan C —
+a stranger, admin D): `signaler_publication()` rejects a stranger
+reporting a soutiens-only post they can't fully see (leaving no row
+behind) and accepts the same report from a real supporter, recorded with
+the correct shape (`type=signalement`, `statut=en_attente`,
+`publication_id` set); `masquer_publication()` rejects a non-admin,
+and — once an admin calls it — the masked publication disappears from
+both `publications_visibles` (even for its own auteur) and
+`publications_accueil` immediately, with the underlying row otherwise
+untouched; `traiter_signalement_publication()` rejects a non-admin,
+`rejeter` sets the report to `rejete` while leaving the publication's
+`masque` untouched, a second decision on an already-handled report is
+rejected, and `masquer` both masks the publication and marks the report
+`traite`; and the full `0020`/`0021` security-grant pattern holds for
+all three new functions (`anon` has no `EXECUTE` on any of them,
+`authenticated` with a `NULL auth.uid()` is rejected by each function's
+own check, and `authenticated` still holds `EXECUTE` on all three).
+Verified visually end-to-end too (same throwaway mock-Supabase/Playwright
+technique used throughout this file): "Signaler" renders on both full
+posts on `/home` and is absent from the locked teaser card, clicking it
+flips to "Signalement envoyé.", and the admin's new "Publications
+signalées" section renders the flagged content with both action buttons
+— in both `fr` and `/en/`-prefixed sessions.
+
 ## `accept_transaction`/`refuse_transaction`/`deliver_video` anonymous bypass — found and fixed (migration `0020`)
 
 A real, currently-exploitable vulnerability, flagged during unrelated
@@ -3479,7 +3608,18 @@ into chat).
   one deliberate exception where `anon` **does** correctly have `EXECUTE`
   on `peut_voir_publication_complete()` (see CLAUDE.md's own section on
   why). Also covers the `'home'` reserved pseudo (0029), same pattern as
-  `'classement'`/`'offres'`.
+  `'classement'`/`'offres'`. Also covers Lot 5b's publication moderation
+  (0030) with the same fixture: `signaler_publication()` rejects a
+  stranger reporting a soutiens-only post they can't fully see (no row
+  left behind) and accepts the identical report from a real supporter,
+  recorded with the correct shape; `masquer_publication()` rejects a
+  non-admin and, for an admin, makes the masked publication disappear
+  from both `publications_visibles` (even for its own auteur) and
+  `publications_accueil` immediately; `traiter_signalement_publication()`
+  rejects a non-admin, `rejeter` leaves the publication's `masque`
+  untouched while `masquer` sets it, a second decision on an
+  already-handled report is rejected, and the full `0020`/`0021`
+  security-grant pattern holds for all three new functions.
 - `supabase/tests/stub_auth.sql` fakes just enough of Supabase's `auth`
   schema (an `auth.uid()` reading `app.current_user_id`, plus the
   `authenticated`/`anon`/`service_role` roles) for the real migrations to

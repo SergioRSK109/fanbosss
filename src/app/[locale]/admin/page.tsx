@@ -3,6 +3,10 @@ import { getTranslations } from "next-intl/server";
 import { GestionAdminsManager, type AdminManageableUser } from "@/components/admin/GestionAdminsManager";
 import { LitigesManager, type LitigeEnAttente } from "@/components/admin/LitigesManager";
 import {
+  PublicationsSignaleesManager,
+  type PublicationSignalee,
+} from "@/components/admin/PublicationsSignaleesManager";
+import {
   RemboursementsManuelsManager,
   type RemboursementManuel,
 } from "@/components/admin/RemboursementsManuelsManager";
@@ -64,6 +68,7 @@ export default async function AdminPage() {
     { data: allUsers },
     { data: authUsersPage },
     { data: verificationRows },
+    { data: signalementRows },
   ] = await Promise.all([
     serviceSupabase
       .from("transactions")
@@ -104,6 +109,18 @@ export default async function AdminPage() {
       .from("demandes_verification")
       .select("id, createur_id, plateforme, lien_compte, code_verification, statut")
       .in("statut", ["en_attente", "conflit"])
+      .order("created_at", { ascending: true }),
+    // Lot 5b: publications a fan/créateur flagged (migration 0030) --
+    // oldest first, same operational-queue principle as the other admin
+    // worklists. `.not("publication_id", "is", null)` scopes this to
+    // publication reports only -- the pre-existing WhatsApp-adjacent
+    // report flow (ReportButton.tsx) never sets that column, so those
+    // rows never show up here.
+    serviceSupabase
+      .from("reports")
+      .select("id, raison, created_at, reporter_id, reported_user_id, publications(contenu)")
+      .not("publication_id", "is", null)
+      .eq("statut", "en_attente")
       .order("created_at", { ascending: true }),
   ]);
 
@@ -192,6 +209,18 @@ export default async function AdminPage() {
     statut: d.statut as "en_attente" | "conflit",
   }));
 
+  const publicationsSignalees: PublicationSignalee[] = (signalementRows ?? []).map((row) => {
+    const publication = Array.isArray(row.publications) ? row.publications[0] : row.publications;
+    return {
+      id: row.id,
+      contenu: publication?.contenu ?? "",
+      raison: row.raison,
+      createdAt: row.created_at,
+      reporterLabel: userLabelById.get(row.reporter_id) ?? t("deletedUser"),
+      auteurLabel: userLabelById.get(row.reported_user_id) ?? t("deletedUser"),
+    };
+  });
+
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-8 p-5 pb-16 sm:p-6">
       <h1 className="text-2xl font-bold">{t("heading")}</h1>
@@ -257,6 +286,19 @@ export default async function AdminPage() {
         <h2 className="mb-3 text-lg font-bold">{t("verificationHeading")}</h2>
         <p className="mb-3 text-sm text-foreground-muted">{t("verificationIntro")}</p>
         <VerificationsManager demandes={verifications} />
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-lg font-bold">
+          {t("publicationsSignaleesHeading")}
+          {publicationsSignalees.length > 0 && (
+            <span className="ml-2 rounded-full bg-accent-500 px-2 py-0.5 text-xs font-bold text-white">
+              {publicationsSignalees.length}
+            </span>
+          )}
+        </h2>
+        <p className="mb-3 text-sm text-foreground-muted">{t("publicationsSignaleesIntro")}</p>
+        <PublicationsSignaleesManager signalements={publicationsSignalees} />
       </section>
 
       <section>

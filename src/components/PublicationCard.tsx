@@ -1,5 +1,6 @@
 import { useLocale, useTranslations } from "next-intl";
 import { PublicationTeaser } from "@/components/PublicationTeaser";
+import { ReportPublicationButton } from "@/components/ReportPublicationButton";
 import type { Publication } from "@/lib/publications";
 
 function formatDate(iso: string, locale: string): string {
@@ -63,6 +64,10 @@ export function PublicationCard({ publication }: { publication: Publication }) {
           className="max-h-96 w-full rounded-2xl object-cover"
         />
       )}
+
+      <div className="border-t border-border pt-2">
+        <ReportPublicationButton publicationId={publication.id} />
+      </div>
     </article>
   );
 }
