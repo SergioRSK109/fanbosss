@@ -28,6 +28,7 @@ export async function POST(request: NextRequest) {
     p_contenu: parsed.data.contenu,
     p_image_r2_key: parsed.data.image_r2_key ?? null,
     p_visibilite: parsed.data.visibilite ?? "public",
+    p_autorise_repost: parsed.data.autorise_repost ?? "tous",
   });
 
   if (error) {

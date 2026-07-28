@@ -26,10 +26,7 @@
     "empty": "No publications yet.",
     "anonymousAuteur": "A créateur",
     "soutiensOnlyBadge": "Supporters only",
-    "reportButton": "Report",
-    "reportSending": "Sending...",
-    "reportSent": "Report sent.",
-    "reportError": "couldn't send the report",
+    "repostedBy": "{auteur} reposted",
     "teaser": {
       "reservedTo": "Reserved for {auteur}'s supporters.",
       "cta": "See this créateur's offers"
@@ -39,10 +36,21 @@
       "contenuPlaceholder": "Share an update with your fans...",
       "visibilitePublic": "Public",
       "visibiliteSoutiens": "Supporters only",
+      "autoriseRepost": "Allow other créateurs to repost",
       "submit": "Post",
       "sending": "Posting...",
       "uploadError": "couldn't upload the image",
       "unknownError": "something went wrong"
+    },
+    "actions": {
+      "reportButton": "Report",
+      "reportSending": "Sending...",
+      "reportSent": "Report sent.",
+      "muteButton": "Stop seeing this créateur's publications",
+      "muteSending": "Sending...",
+      "menuError": "something went wrong",
+      "shareCopied": "Link copied!",
+      "repostError": "couldn't repost"
     }
   },
   "OffresPage": {

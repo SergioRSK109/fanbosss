@@ -2,7 +2,11 @@ import { getTranslations } from "next-intl/server";
 import { Link } from "@/i18n/navigation";
 import { PublicationComposer } from "@/components/PublicationComposer";
 import { PublicationsList } from "@/components/PublicationsList";
-import { getPublicationsAccueil, PUBLICATIONS_ACCUEIL_PAGE_SIZE } from "@/lib/publications";
+import {
+  canManagePublications,
+  getPublicationsAccueil,
+  PUBLICATIONS_ACCUEIL_PAGE_SIZE,
+} from "@/lib/publications";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 // Lot 5a: the "Accueil" tab -- unlike the other 4 AppTabBar destinations,
@@ -23,24 +27,16 @@ export default async function HomePage({
   const sp = await searchParams;
   const t = await getTranslations({ locale, namespace: "HomePage" });
   const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
 
   // The composer is shown only for an admin or a créateur_verifie (the
   // brief's own rule) -- but publier_message() re-checks this exact same
   // rule again server-side regardless of what this page decides to show,
   // same "never trust the client alone" discipline as everywhere else in
-  // this project.
-  let canCompose = false;
-  if (user) {
-    const { data: profil } = await supabase
-      .from("users")
-      .select("est_admin, createur_verifie")
-      .eq("id", user.id)
-      .single();
-    canCompose = Boolean(profil?.est_admin || profil?.createur_verifie);
-  }
+  // this project. Lot 5c: reposter_publication() authorizes the exact
+  // same population, so this one query also decides every card's repost
+  // eligibility on this page -- canManagePublications is the single
+  // source of truth for both.
+  const canManage = await canManagePublications(supabase);
 
   const page = Math.max(1, Number(sp.page) || 1);
   const { publications, total } = await getPublicationsAccueil(page);
@@ -54,9 +50,9 @@ export default async function HomePage({
     <main className="mx-auto flex max-w-2xl flex-col gap-6 p-5 sm:p-6">
       <h1 className="text-2xl font-bold">{t("heading")}</h1>
 
-      {canCompose && <PublicationComposer />}
+      {canManage && <PublicationComposer />}
 
-      <PublicationsList publications={publications} />
+      <PublicationsList publications={publications} canRepost={canManage} />
 
       {totalPages > 1 && (
         <div className="flex items-center justify-between">
