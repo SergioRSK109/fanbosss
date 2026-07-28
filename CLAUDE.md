@@ -1841,6 +1841,77 @@ repost button's fill-state toggle are UI-only and were verified visually
 instead (fr/en, light/dark) — see that pass's own notes for what was
 specifically checked.
 
+## Admin "Publications signalées": repost-aware content + permalink (Lot 5c follow-up, no migration)
+
+A gap left over from Lot 5c's repost feature (migration `0031`): the
+admin worklist for flagged publications (`/admin`'s "Publications
+signalées", Lot 5b) only ever selected `publications(contenu)` on the
+reported row. Once reposts existed, a signalement on a repost showed a
+**blank** content card — a repost's own `contenu` is always `NULL`
+(`publications_contenu_coherent`) — with no indication why, and no way
+for the admin to see what was actually flagged in its real context (a
+locked embedded original, badges, image). Pure admin-side query/UI fix,
+no schema change and no new migration.
+
+**`buildPublicationSignalee()` (`src/lib/adminPublicationsSignalees.ts`)**
+is a new pure function, extracted specifically so this logic is
+unit-testable without a DOM or a real Supabase client — same discipline
+as `classifyPaiementRecu()`/`computeCampagneStatus()` elsewhere in this
+codebase. `/admin/page.tsx`'s reports query now selects
+`publications(id, contenu, repost_de_id)` (was just `contenu`), then a
+second, dependent service-role query fetches `id, contenu, auteur_id`
+for every distinct `repost_de_id` that actually showed up among pending
+signalements — run after the page's main `Promise.all` since it needs
+those ids first. `buildPublicationSignalee()` then decides, per row:
+when `repost_de_id` is set, show the **original's** `contenu` (never the
+repost's own, always-null one) and set `isRepost = true` with a
+`repostOriginalLabel` (`@pseudo` of the original's author, preferred
+since it's what an admin can actually act on, falling back to a
+resolved display-name label, then `t("deletedUser")` if the original
+can't be found at all — defensive only, since this codebase has no
+delete path for anything but a repost row).
+
+**The permalink always targets the REPORTED publication, never the
+original** — `id`/`pseudo` on the returned `PublicationSignalee` come
+from the reported row itself (`reported_user_id`, which
+`signaler_publication()` always sets to the reported publication's own
+`auteur_id` — migration `0030`), specifically so the admin's "Voir la
+publication signalée" link (`/@pseudo/p/{id}`, the Lot 5c permalink
+page) opens exactly what the reporter saw and flagged — a repost's own
+card, with its embedded (possibly locked) original — not a different
+page for the original alone. No link renders at all when the reported
+author never set a pseudo, since the permalink page 404s on a missing
+pseudo by design (see "Public handle" above) — linking to a route
+guaranteed to 404 would be worse than no link.
+
+**`PublicationsSignaleesManager.tsx`** now imports its `PublicationSignalee`
+type from the new lib module instead of declaring its own (one
+definition, not two that could drift), renders a `"Repost de {auteur} :"`
+line above the content bubble only when `isRepost` is true, and the new
+permalink link via the locale-aware `Link` from `@/i18n/navigation`
+(`target="_blank"` — same "open it in full context before deciding"
+reasoning as `VerificationsManager`'s external `lienCompte` link).
+
+Covered by `src/lib/__tests__/adminPublicationsSignalees.test.ts`: a
+plain-post signalement shows its own contenu; a repost signalement
+resolves the original's contenu (asserted `!== ""`, the exact failure
+mode this fix closes) and the correct `@pseudo` indicator, with the
+permalink `id`/`pseudo` still pointing at the repost, not the original;
+a missing-pseudo original falls back to a display-name label; and a
+genuinely-missing original (defensive only) falls back to the
+deleted-user label without erroring. No SQL test was added — this is a
+TypeScript query/UI fix reading columns that already existed, not a new
+DB constraint/trigger/RPC.
+
+Verified visually end-to-end (same throwaway mock-Supabase/Playwright
+technique used throughout this file, extended with an admin fixture user
+and `reports`/raw-`publications`/`/auth/v1/admin/users` mock support): a
+repost signalement shows "Repost de @sergio :" above the original's real
+text (never blank) with a working permalink that opens the actual
+reposted card (embedded original included) in a new tab, while a
+plain-post signalement in the same list shows no repost indicator — in
+both `fr` (light) and `/en/` (dark).
+
 ## `accept_transaction`/`refuse_transaction`/`deliver_video` anonymous bypass — found and fixed (migration `0020`)
 
 A real, currently-exploitable vulnerability, flagged during unrelated

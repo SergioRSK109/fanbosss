@@ -2,10 +2,7 @@ import { notFound } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { GestionAdminsManager, type AdminManageableUser } from "@/components/admin/GestionAdminsManager";
 import { LitigesManager, type LitigeEnAttente } from "@/components/admin/LitigesManager";
-import {
-  PublicationsSignaleesManager,
-  type PublicationSignalee,
-} from "@/components/admin/PublicationsSignaleesManager";
+import { PublicationsSignaleesManager } from "@/components/admin/PublicationsSignaleesManager";
 import {
   RemboursementsManuelsManager,
   type RemboursementManuel,
@@ -15,6 +12,11 @@ import {
   VerificationsManager,
   type DemandeVerificationAdmin,
 } from "@/components/admin/VerificationsManager";
+import {
+  buildPublicationSignalee,
+  type PublicationOriginalRow,
+  type PublicationSignalee,
+} from "@/lib/adminPublicationsSignalees";
 import { resolveDisplayName } from "@/lib/profil";
 import { createSupabaseServerClient, createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 import type { OffreType } from "@/lib/validation";
@@ -115,10 +117,15 @@ export default async function AdminPage() {
     // worklists. `.not("publication_id", "is", null)` scopes this to
     // publication reports only -- the pre-existing WhatsApp-adjacent
     // report flow (ReportButton.tsx) never sets that column, so those
-    // rows never show up here.
+    // rows never show up here. `repost_de_id` is selected so a
+    // signalement on a repost can be resolved to its original's real
+    // contenu below (a repost's own contenu is always null -- see
+    // buildPublicationSignalee()).
     serviceSupabase
       .from("reports")
-      .select("id, raison, created_at, reporter_id, reported_user_id, publications(contenu)")
+      .select(
+        "id, raison, created_at, reporter_id, reported_user_id, publications(id, contenu, repost_de_id)",
+      )
       .not("publication_id", "is", null)
       .eq("statut", "en_attente")
       .order("created_at", { ascending: true }),
@@ -130,6 +137,7 @@ export default async function AdminPage() {
       resolveDisplayName(u.nom_affichage, u.pseudo) ?? t("noName"),
     ]),
   );
+  const pseudoById = new Map((allUsers ?? []).map((u) => [u.id, u.pseudo]));
 
   // Vue d'ensemble du mois en cours -- gross (all statuses, including
   // refused/refunded): "brut" is deliberately unadjusted, see CLAUDE.md.
@@ -209,16 +217,55 @@ export default async function AdminPage() {
     statut: d.statut as "en_attente" | "conflit",
   }));
 
+  // A signalement on a repost carries a repost row whose own `contenu` is
+  // always null (publications_contenu_coherent) -- fetch the referenced
+  // original's real contenu (and its author, for the "Repost de X"
+  // indicator) in one follow-up batch, run after the main Promise.all
+  // since it depends on which repost_de_id values actually showed up.
+  const reportedRepostOriginalIds = [
+    ...new Set(
+      (signalementRows ?? [])
+        .map((row) => {
+          const publication = Array.isArray(row.publications) ? row.publications[0] : row.publications;
+          return publication?.repost_de_id ?? null;
+        })
+        .filter((id): id is string => id !== null),
+    ),
+  ];
+
+  const { data: repostOriginalRows } =
+    reportedRepostOriginalIds.length > 0
+      ? await serviceSupabase
+          .from("publications")
+          .select("id, contenu, auteur_id")
+          .in("id", reportedRepostOriginalIds)
+      : { data: [] as { id: string; contenu: string | null; auteur_id: string }[] };
+
+  const originalById = new Map<string, PublicationOriginalRow>(
+    (repostOriginalRows ?? []).map((r) => [
+      r.id,
+      { id: r.id, contenu: r.contenu, auteurId: r.auteur_id },
+    ]),
+  );
+
   const publicationsSignalees: PublicationSignalee[] = (signalementRows ?? []).map((row) => {
     const publication = Array.isArray(row.publications) ? row.publications[0] : row.publications;
-    return {
-      id: row.id,
-      contenu: publication?.contenu ?? "",
-      raison: row.raison,
-      createdAt: row.created_at,
-      reporterLabel: userLabelById.get(row.reporter_id) ?? t("deletedUser"),
-      auteurLabel: userLabelById.get(row.reported_user_id) ?? t("deletedUser"),
-    };
+    return buildPublicationSignalee(
+      {
+        reportId: row.id,
+        raison: row.raison,
+        createdAt: row.created_at,
+        reporterId: row.reporter_id,
+        reportedUserId: row.reported_user_id,
+        publication: publication
+          ? { id: publication.id, contenu: publication.contenu, repostDeId: publication.repost_de_id }
+          : null,
+      },
+      originalById,
+      pseudoById,
+      userLabelById,
+      t("deletedUser"),
+    );
   });
 
   return (
