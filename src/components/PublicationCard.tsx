@@ -84,15 +84,23 @@ function PublicationBody({ publication }: { publication: Publication }) {
 export function PublicationCard({
   publication,
   canRepost = false,
+  viewerId = null,
 }: {
   publication: Publication;
   // Same population as publier_message()'s own rule -- computed once per
-  // page (canManagePublications, lib/publications.ts) and threaded all
-  // the way down here. Defaults to false so a call site that genuinely
-  // has no viewer context (there is none today, but this keeps the
-  // component safe if one is ever added) never shows a repost button it
-  // can't actually authorize.
+  // page (getViewerContext, lib/publications.ts) and threaded all the way
+  // down here. Defaults to false so a call site that genuinely has no
+  // viewer context (there is none today, but this keeps the component
+  // safe if one is ever added) never shows a repost button it can't
+  // actually authorize.
   canRepost?: boolean;
+  // Migration 0032 -- the current viewer's own id (null if logged out or
+  // not yet threaded through by a call site). Used only to decide the
+  // "..." menu's content ("Masquer ma publication" vs. "Signaler"/mute);
+  // masquer_ma_publication()/signaler_publication() both re-verify
+  // ownership server-side regardless, this is purely which button(s) to
+  // show.
+  viewerId?: string | null;
 }) {
   const t = useTranslations("Publications");
   const { auteur } = publication;
@@ -128,12 +136,12 @@ export function PublicationCard({
           cannot fully see"). A repost row's OWN contenu_complet is always
           true regardless of the embedded original's lock state (a
           repost's own visibilite is forced 'public' by
-          reposter_publication()), so this check correctly keeps the
-          repost's action bar visible even when its embedded original is
-          a locked teaser. */}
+          toggler_repost_publication()), so this check correctly keeps
+          the repost's action bar visible even when its embedded original
+          is a locked teaser. */}
       {publication.contenuComplet && (
         <div className="border-t border-border pt-2">
-          <PublicationActions publication={publication} canRepost={canRepost} />
+          <PublicationActions publication={publication} canRepost={canRepost} viewerId={viewerId} />
         </div>
       )}
     </article>

@@ -3,8 +3,8 @@ import { Link } from "@/i18n/navigation";
 import { PublicationComposer } from "@/components/PublicationComposer";
 import { PublicationsList } from "@/components/PublicationsList";
 import {
-  canManagePublications,
   getPublicationsAccueil,
+  getViewerContext,
   PUBLICATIONS_ACCUEIL_PAGE_SIZE,
 } from "@/lib/publications";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -32,11 +32,12 @@ export default async function HomePage({
   // brief's own rule) -- but publier_message() re-checks this exact same
   // rule again server-side regardless of what this page decides to show,
   // same "never trust the client alone" discipline as everywhere else in
-  // this project. Lot 5c: reposter_publication() authorizes the exact
-  // same population, so this one query also decides every card's repost
-  // eligibility on this page -- canManagePublications is the single
-  // source of truth for both.
-  const canManage = await canManagePublications(supabase);
+  // this project. Lot 5c: toggler_repost_publication() authorizes the
+  // exact same population, so this one query also decides every card's
+  // repost eligibility on this page. viewerId (migration 0032) is what
+  // each card's "..." menu uses to decide "Masquer ma publication" vs.
+  // "Signaler"/mute.
+  const { viewerId, canManagePublications: canManage } = await getViewerContext(supabase);
 
   const page = Math.max(1, Number(sp.page) || 1);
   const { publications, total } = await getPublicationsAccueil(page);
@@ -52,7 +53,7 @@ export default async function HomePage({
 
       {canManage && <PublicationComposer />}
 
-      <PublicationsList publications={publications} canRepost={canManage} />
+      <PublicationsList publications={publications} canRepost={canManage} viewerId={viewerId} />
 
       {totalPages > 1 && (
         <div className="flex items-center justify-between">

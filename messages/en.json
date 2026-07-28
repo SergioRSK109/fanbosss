@@ -48,6 +48,8 @@
       "reportSent": "Report sent.",
       "muteButton": "Stop seeing this créateur's publications",
       "muteSending": "Sending...",
+      "masquerButton": "Hide my publication",
+      "masquerSending": "Sending...",
       "menuError": "something went wrong",
       "shareCopied": "Link copied!",
       "repostError": "couldn't repost"

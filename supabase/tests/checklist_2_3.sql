@@ -3987,14 +3987,14 @@ set role authenticated;
 do $$
 begin
   begin
-    perform reposter_publication(current_setting('app.tmp_p1')::uuid);
+    perform toggler_repost_publication(current_setting('app.tmp_p1')::uuid);
     raise exception 'TEST FAILED: a non-verified, non-admin user was able to repost';
   exception when others then
     if sqlerrm like 'TEST FAILED%' then raise; end if;
     if sqlerrm not like '%not authorized%' then
       raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
     end if;
-    raise notice 'PASS: reposter_publication() rejects a non-verified, non-admin caller';
+    raise notice 'PASS: toggler_repost_publication() rejects a non-verified, non-admin caller';
   end;
 end $$;
 reset role;
@@ -4005,14 +4005,14 @@ set role authenticated;
 do $$
 begin
   begin
-    perform reposter_publication(current_setting('app.tmp_p2')::uuid);
+    perform toggler_repost_publication(current_setting('app.tmp_p2')::uuid);
     raise exception 'TEST FAILED: a soutiens-only publication was reposted';
   exception when others then
     if sqlerrm like 'TEST FAILED%' then raise; end if;
     if sqlerrm not like '%non-public%' then
       raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
     end if;
-    raise notice 'PASS: reposter_publication() rejects a non-public target';
+    raise notice 'PASS: toggler_repost_publication() rejects a non-public target';
   end;
 end $$;
 reset role;
@@ -4035,14 +4035,14 @@ set role authenticated;
 do $$
 begin
   begin
-    perform reposter_publication(current_setting('app.tmp_p3')::uuid);
+    perform toggler_repost_publication(current_setting('app.tmp_p3')::uuid);
     raise exception 'TEST FAILED: a publication with autorise_repost=personne was reposted';
   exception when others then
     if sqlerrm like 'TEST FAILED%' then raise; end if;
     if sqlerrm not like '%not allowed by the author%' then
       raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
     end if;
-    raise notice 'PASS: reposter_publication() rejects a target whose author set autorise_repost=personne';
+    raise notice 'PASS: toggler_repost_publication() rejects a target whose author set autorise_repost=personne';
   end;
 end $$;
 reset role;
@@ -4073,45 +4073,52 @@ set role authenticated;
 do $$
 begin
   begin
-    perform reposter_publication(current_setting('app.tmp_p4')::uuid);
+    perform toggler_repost_publication(current_setting('app.tmp_p4')::uuid);
     raise exception 'TEST FAILED: a masked publication was reposted';
   exception when others then
     if sqlerrm like 'TEST FAILED%' then raise; end if;
     if sqlerrm not like '%hidden%' then
       raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
     end if;
-    raise notice 'PASS: reposter_publication() rejects a masked target';
+    raise notice 'PASS: toggler_repost_publication() rejects a masked target';
   end;
 end $$;
 reset role;
 
--- B successfully reposts P1, then double-reposting the same target is
--- rejected.
+-- B successfully reposts P1. A second call now toggles it OFF (real
+-- delete) and a third toggles it back ON -- this function became a real
+-- toggle in migration 0032 (renamed from reposter_publication(), which
+-- used to reject a second call outright as "already reposted"; see the
+-- dedicated "Follow-up to Lot 5c" section further down for the full
+-- toggle-cycle coverage, quota release, and non-repost-row safety). This
+-- block only needs to end with B holding exactly one live repost of P1,
+-- so the rate-limit fill right after it still adds up to 10.
 select set_config('app.current_user_id', '5c000002-0000-0000-0000-000000000002', false);
 set role authenticated;
 do $$
-declare v_id uuid; v_type text;
+declare v_id uuid; v_type text; v_reposted boolean;
 begin
-  select id, type into v_id, v_type from reposter_publication(current_setting('app.tmp_p1')::uuid);
-  if v_id is null or v_type != 'createur' then
-    raise exception 'TEST FAILED: reposter_publication() did not insert the expected row (id=%, type=%)', v_id, v_type;
+  select reposted, id, type into v_reposted, v_id, v_type from toggler_repost_publication(current_setting('app.tmp_p1')::uuid);
+  if v_reposted is distinct from true or v_id is null or v_type != 'createur' then
+    raise exception 'TEST FAILED: toggler_repost_publication() did not insert the expected row (reposted=%, id=%, type=%)', v_reposted, v_id, v_type;
   end if;
-  perform set_config('app.tmp_r1', v_id::text, false);
-  raise notice 'PASS: reposter_publication() succeeds for an eligible caller/target, type auto-assigned to createur';
+  raise notice 'PASS: toggler_repost_publication() succeeds for an eligible caller/target, type auto-assigned to createur';
 end $$;
 
 do $$
+declare v_id uuid; v_reposted boolean;
 begin
-  begin
-    perform reposter_publication(current_setting('app.tmp_p1')::uuid);
-    raise exception 'TEST FAILED: the same author reposted the same publication twice';
-  exception when others then
-    if sqlerrm like 'TEST FAILED%' then raise; end if;
-    if sqlerrm not like '%already reposted%' then
-      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
-    end if;
-    raise notice 'PASS: reposter_publication() rejects a double-repost of the same target by the same author';
-  end;
+  select reposted into v_reposted from toggler_repost_publication(current_setting('app.tmp_p1')::uuid);
+  if v_reposted is distinct from false then
+    raise exception 'TEST FAILED: a second call on the same target should toggle the repost OFF, got reposted=%', v_reposted;
+  end if;
+
+  select reposted, id into v_reposted, v_id from toggler_repost_publication(current_setting('app.tmp_p1')::uuid);
+  if v_reposted is distinct from true or v_id is null then
+    raise exception 'TEST FAILED: a third call should toggle the repost back ON, got reposted=%, id=%', v_reposted, v_id;
+  end if;
+  perform set_config('app.tmp_r1', v_id::text, false);
+  raise notice 'PASS: toggler_repost_publication() is a real toggle -- a second call un-reposts, a third re-reposts';
 end $$;
 reset role;
 
@@ -4122,14 +4129,14 @@ set role authenticated;
 do $$
 begin
   begin
-    perform reposter_publication(current_setting('app.tmp_r1')::uuid);
+    perform toggler_repost_publication(current_setting('app.tmp_r1')::uuid);
     raise exception 'TEST FAILED: a repost of a repost was accepted';
   exception when others then
     if sqlerrm like 'TEST FAILED%' then raise; end if;
     if sqlerrm not like '%cannot repost a repost%' then
       raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
     end if;
-    raise notice 'PASS: reposter_publication() rejects reposting a repost';
+    raise notice 'PASS: toggler_repost_publication() rejects reposting a repost';
   end;
 end $$;
 reset role;
@@ -4174,14 +4181,14 @@ set role authenticated;
 do $$
 begin
   begin
-    perform reposter_publication(current_setting('app.tmp_p5')::uuid);
+    perform toggler_repost_publication(current_setting('app.tmp_p5')::uuid);
     raise exception 'TEST FAILED: an 11th action (repost) within 24h was accepted, rate limit not shared with publier_message()';
   exception when others then
     if sqlerrm like 'TEST FAILED%' then raise; end if;
     if sqlerrm not like '%rate limit%' then
       raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
     end if;
-    raise notice 'PASS: reposter_publication() shares publier_message()''s 10/24h rate limit -- an 11th action (a repost) is rejected';
+    raise notice 'PASS: toggler_repost_publication() shares publier_message()''s 10/24h rate limit -- an 11th action (a repost) is rejected';
   end;
 end $$;
 reset role;
@@ -4221,7 +4228,7 @@ set role authenticated;
 do $$
 declare v_id uuid;
 begin
-  select id into v_id from reposter_publication(current_setting('app.tmp_p6')::uuid);
+  select id into v_id from toggler_repost_publication(current_setting('app.tmp_p6')::uuid);
   perform set_config('app.tmp_r2', v_id::text, false);
 end $$;
 reset role;
@@ -4391,10 +4398,10 @@ begin
     raise notice 'PASS: anon has no EXECUTE on toggler_like_publication()';
   end;
   begin
-    perform reposter_publication('00000000-0000-0000-0000-000000000000');
-    raise exception 'TEST FAILED: anon could call reposter_publication()';
+    perform toggler_repost_publication('00000000-0000-0000-0000-000000000000');
+    raise exception 'TEST FAILED: anon could call toggler_repost_publication()';
   exception when insufficient_privilege then
-    raise notice 'PASS: anon has no EXECUTE on reposter_publication()';
+    raise notice 'PASS: anon has no EXECUTE on toggler_repost_publication()';
   end;
   begin
     perform partager_publication('00000000-0000-0000-0000-000000000000');
@@ -4426,14 +4433,14 @@ begin
     raise notice 'PASS: toggler_like_publication() rejects a NULL auth.uid()';
   end;
   begin
-    perform reposter_publication('00000000-0000-0000-0000-000000000000');
-    raise exception 'TEST FAILED: authenticated with a NULL auth.uid() could call reposter_publication()';
+    perform toggler_repost_publication('00000000-0000-0000-0000-000000000000');
+    raise exception 'TEST FAILED: authenticated with a NULL auth.uid() could call toggler_repost_publication()';
   exception when others then
     if sqlerrm like 'TEST FAILED%' then raise; end if;
     if sqlerrm != 'not authenticated' then
       raise exception 'TEST FAILED: unexpected error: %', sqlerrm;
     end if;
-    raise notice 'PASS: reposter_publication() rejects a NULL auth.uid()';
+    raise notice 'PASS: toggler_repost_publication() rejects a NULL auth.uid()';
   end;
   begin
     perform partager_publication('00000000-0000-0000-0000-000000000000');
@@ -4463,8 +4470,8 @@ begin
   if not has_function_privilege('authenticated', 'toggler_like_publication(uuid)', 'EXECUTE') then
     raise exception 'TEST FAILED: authenticated lost EXECUTE on toggler_like_publication()';
   end if;
-  if not has_function_privilege('authenticated', 'reposter_publication(uuid)', 'EXECUTE') then
-    raise exception 'TEST FAILED: authenticated lost EXECUTE on reposter_publication()';
+  if not has_function_privilege('authenticated', 'toggler_repost_publication(uuid)', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lost EXECUTE on toggler_repost_publication()';
   end if;
   if not has_function_privilege('authenticated', 'partager_publication(uuid)', 'EXECUTE') then
     raise exception 'TEST FAILED: authenticated lost EXECUTE on partager_publication()';
@@ -4479,6 +4486,503 @@ begin
     raise exception 'TEST FAILED: anon should NOT have EXECUTE on publier_message()';
   end if;
   raise notice 'PASS: authenticated holds EXECUTE on all 4 new functions and the updated publier_message(); anon holds none';
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Follow-up to Lot 5c -- créateur self-masking, an authorship-aware
+-- menu (UI-only, verified visually not here), and the repost toggle
+-- (migration 0032). Fixture: créateur A (verified), créateur B
+-- (verified), fan C (a stranger -- not verified, not admin), admin D.
+-- ---------------------------------------------------------------------
+insert into users (id, createur_verifie, est_admin) values
+  ('00320001-0000-0000-0000-000000000001', true, false),
+  ('00320002-0000-0000-0000-000000000002', true, false),
+  ('00320003-0000-0000-0000-000000000003', false, false),
+  ('00320004-0000-0000-0000-000000000004', false, true);
+
+-- A posts P1 (public, repostable).
+select set_config('app.current_user_id', '00320001-0000-0000-0000-000000000001', false);
+set role authenticated;
+select publier_message('0032 P1 public repostable', null, 'public', 'tous');
+reset role;
+
+do $$
+declare v_id uuid;
+begin
+  select id into v_id from publications where contenu = '0032 P1 public repostable';
+  perform set_config('app.tmp_p1', v_id::text, false);
+end $$;
+
+-- =======================================================================
+-- masquer_ma_publication() -- self-only, one-way.
+-- =======================================================================
+
+-- Non-owner (B) cannot mask A's post.
+select set_config('app.current_user_id', '00320002-0000-0000-0000-000000000002', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform masquer_ma_publication(current_setting('app.tmp_p1')::uuid);
+    raise exception 'TEST FAILED: a non-owner masked someone else''s publication';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm not like '%only hide your own%' then
+      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: masquer_ma_publication() rejects a non-owner';
+  end;
+end $$;
+reset role;
+
+do $$
+declare v_masque boolean;
+begin
+  select masque into v_masque from publications where id = current_setting('app.tmp_p1')::uuid;
+  if v_masque is distinct from false then
+    raise exception 'TEST FAILED: the rejected attempt should not have touched masque, got %', v_masque;
+  end if;
+  raise notice 'PASS: the rejected non-owner attempt left masque untouched';
+end $$;
+
+-- Owner (A) can mask their own post.
+select set_config('app.current_user_id', '00320001-0000-0000-0000-000000000001', false);
+set role authenticated;
+select masquer_ma_publication(current_setting('app.tmp_p1')::uuid);
+reset role;
+
+do $$
+declare v_masque boolean;
+begin
+  select masque into v_masque from publications where id = current_setting('app.tmp_p1')::uuid;
+  if v_masque is distinct from true then
+    raise exception 'TEST FAILED: masquer_ma_publication() should have set masque=true, got %', v_masque;
+  end if;
+  raise notice 'PASS: the owner can mask their own publication';
+end $$;
+
+-- It disappears from the public views like any masked publication.
+select set_config('app.current_user_id', '', false);
+set role anon;
+do $$
+declare v_count int;
+begin
+  select count(*) into v_count from publications_visibles where id = current_setting('app.tmp_p1')::uuid;
+  if v_count != 0 then
+    raise exception 'TEST FAILED: a self-masked publication should disappear from publications_visibles, got % rows', v_count;
+  end if;
+  raise notice 'PASS: a self-masked publication disappears from publications_visibles';
+end $$;
+reset role;
+
+-- No way to unmask: there is no boolean parameter at all, so calling it
+-- again on an already-masked post is a no-op success (masque stays
+-- true) -- the only reversal path is the admin-only masquer_publication().
+select set_config('app.current_user_id', '00320001-0000-0000-0000-000000000001', false);
+set role authenticated;
+select masquer_ma_publication(current_setting('app.tmp_p1')::uuid);
+reset role;
+
+do $$
+declare v_masque boolean;
+begin
+  select masque into v_masque from publications where id = current_setting('app.tmp_p1')::uuid;
+  if v_masque is distinct from true then
+    raise exception 'TEST FAILED: a publication masked via masquer_ma_publication() should stay masked forever (no unmask param exists), got %', v_masque;
+  end if;
+  raise notice 'PASS: masquer_ma_publication() is one-way -- a créateur can never unmask their own publication through it';
+end $$;
+
+-- Grants: anon none, NULL auth.uid() rejected, authenticated holds EXECUTE.
+select set_config('app.current_user_id', '', false);
+set role anon;
+do $$
+begin
+  begin
+    perform masquer_ma_publication('00000000-0000-0000-0000-000000000000');
+    raise exception 'TEST FAILED: anon could call masquer_ma_publication()';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE on masquer_ma_publication()';
+  end;
+end $$;
+reset role;
+
+select set_config('app.current_user_id', '', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform masquer_ma_publication('00000000-0000-0000-0000-000000000000');
+    raise exception 'TEST FAILED: authenticated with a NULL auth.uid() could call masquer_ma_publication()';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm != 'not authenticated' then
+      raise exception 'TEST FAILED: unexpected error: %', sqlerrm;
+    end if;
+    raise notice 'PASS: masquer_ma_publication() rejects a NULL auth.uid()';
+  end;
+end $$;
+reset role;
+
+do $$
+begin
+  if not has_function_privilege('authenticated', 'masquer_ma_publication(uuid)', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lost EXECUTE on masquer_ma_publication()';
+  end if;
+  raise notice 'PASS: authenticated holds EXECUTE on masquer_ma_publication()';
+end $$;
+
+-- =======================================================================
+-- toggler_repost_publication() -- a real toggle now, renamed from
+-- reposter_publication().
+-- =======================================================================
+
+-- The old name is truly gone, not kept as an overload/alias.
+do $$
+begin
+  begin
+    perform reposter_publication('00000000-0000-0000-0000-000000000000');
+    raise exception 'TEST FAILED: reposter_publication() still exists and is callable';
+  exception when undefined_function then
+    raise notice 'PASS: reposter_publication() no longer exists (renamed, not aliased)';
+  end;
+end $$;
+
+-- A fresh target from A for the toggle tests.
+select set_config('app.current_user_id', '00320001-0000-0000-0000-000000000001', false);
+set role authenticated;
+select publier_message('0032 P2 toggle target', null, 'public', 'tous');
+reset role;
+
+do $$
+declare v_id uuid;
+begin
+  select id into v_id from publications where contenu = '0032 P2 toggle target';
+  perform set_config('app.tmp_p2', v_id::text, false);
+end $$;
+
+-- Every rejection condition on the FIRST repost still applies,
+-- individually.
+select set_config('app.current_user_id', '00320003-0000-0000-0000-000000000003', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform toggler_repost_publication(current_setting('app.tmp_p2')::uuid);
+    raise exception 'TEST FAILED: a non-verified, non-admin caller reposted';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm not like '%not authorized%' then
+      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: toggler_repost_publication() rejects a non-verified, non-admin caller';
+  end;
+end $$;
+reset role;
+
+select set_config('app.current_user_id', '00320001-0000-0000-0000-000000000001', false);
+set role authenticated;
+select publier_message('0032 P3 soutiens only', null, 'soutiens', 'tous');
+select publier_message('0032 P4 no repost allowed', null, 'public', 'personne');
+reset role;
+
+do $$
+declare v_p3 uuid; v_p4 uuid;
+begin
+  select id into v_p3 from publications where contenu = '0032 P3 soutiens only';
+  select id into v_p4 from publications where contenu = '0032 P4 no repost allowed';
+  perform set_config('app.tmp_p3', v_p3::text, false);
+  perform set_config('app.tmp_p4', v_p4::text, false);
+end $$;
+
+select set_config('app.current_user_id', '00320002-0000-0000-0000-000000000002', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform toggler_repost_publication(current_setting('app.tmp_p3')::uuid);
+    raise exception 'TEST FAILED: a soutiens-only publication was reposted';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm not like '%non-public%' then
+      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: toggler_repost_publication() (first repost) rejects a non-public target';
+  end;
+end $$;
+
+do $$
+begin
+  begin
+    perform toggler_repost_publication(current_setting('app.tmp_p4')::uuid);
+    raise exception 'TEST FAILED: a publication with autorise_repost=personne was reposted';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm not like '%not allowed by the author%' then
+      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: toggler_repost_publication() (first repost) rejects autorise_repost=personne';
+  end;
+end $$;
+reset role;
+
+select set_config('app.current_user_id', '00320004-0000-0000-0000-000000000004', false);
+set role authenticated;
+do $$
+begin
+  perform masquer_publication(current_setting('app.tmp_p4')::uuid, true);
+end $$;
+reset role;
+
+select set_config('app.current_user_id', '00320002-0000-0000-0000-000000000002', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform toggler_repost_publication(current_setting('app.tmp_p4')::uuid);
+    raise exception 'TEST FAILED: a masked publication was reposted';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm not like '%hidden%' then
+      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: toggler_repost_publication() (first repost) rejects a masked target';
+  end;
+end $$;
+reset role;
+
+-- The actual toggle: first call creates, second deletes, third recreates.
+select set_config('app.current_user_id', '00320002-0000-0000-0000-000000000002', false);
+set role authenticated;
+do $$
+declare v_reposted boolean; v_new_id uuid; v_repost_id uuid;
+begin
+  select reposted, id into v_reposted, v_new_id from toggler_repost_publication(current_setting('app.tmp_p2')::uuid);
+  if v_reposted is distinct from true or v_new_id is null then
+    raise exception 'TEST FAILED: first toggle should create a repost (reposted=true, id set), got reposted=%, id=%', v_reposted, v_new_id;
+  end if;
+  perform set_config('app.tmp_repost_id', v_new_id::text, false);
+
+  select reposted into v_reposted from toggler_repost_publication(current_setting('app.tmp_p2')::uuid);
+  if v_reposted is distinct from false then
+    raise exception 'TEST FAILED: second toggle should delete the repost (reposted=false), got %', v_reposted;
+  end if;
+
+  select reposted into v_reposted from toggler_repost_publication(current_setting('app.tmp_p2')::uuid);
+  if v_reposted is distinct from true then
+    raise exception 'TEST FAILED: third toggle should recreate the repost (reposted=true), got %', v_reposted;
+  end if;
+  raise notice 'PASS: toggler_repost_publication() toggles both ways (create -> delete -> create), with a genuine DELETE on toggle-off';
+end $$;
+reset role;
+
+-- Independently confirm, as the superuser (not just trusting the RPC's
+-- own return value), that the toggle-off really deleted the row rather
+-- than e.g. just flipping a flag.
+do $$
+begin
+  if exists (select 1 from publications where id = current_setting('app.tmp_repost_id')::uuid) then
+    raise exception 'TEST FAILED: the repost row from the first toggle should have been genuinely deleted, but still exists';
+  end if;
+  raise notice 'PASS: the deleted repost row is confirmed gone at the database level (not just per the RPC''s own return value)';
+end $$;
+
+-- Reposting a repost is still rejected on a first attempt (unrelated
+-- caller tries to repost the repost row B just created above). The
+-- repost's id is looked up as the superuser (this session's default
+-- role, before any SET ROLE) and stashed into a GUC -- reading the raw
+-- publications table directly as authenticated hits "permission denied"
+-- in this stub_auth.sql harness (no table-level grants, only RLS), same
+-- gotcha already documented for Lot 5b's report-id lookups.
+do $$
+declare v_repost_id uuid;
+begin
+  select id into v_repost_id from publications
+    where auteur_id = '00320002-0000-0000-0000-000000000002' and repost_de_id = current_setting('app.tmp_p2')::uuid;
+  perform set_config('app.tmp_repost_of_p2', v_repost_id::text, false);
+end $$;
+
+select set_config('app.current_user_id', '00320001-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform toggler_repost_publication(current_setting('app.tmp_repost_of_p2')::uuid);
+    raise exception 'TEST FAILED: a repost of a repost was accepted';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm not like '%cannot repost a repost%' then
+      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: toggler_repost_publication() still rejects reposting a repost';
+  end;
+end $$;
+reset role;
+
+-- This RPC can never delete a row that isn't a repost: calling it on a
+-- PLAIN post the caller themselves authored (with no repost referencing
+-- it yet) takes the create path, not a delete -- the DELETE's own WHERE
+-- clause (repost_de_id = target) can structurally never match the
+-- target's own row (a plain post always has repost_de_id null).
+-- Contenu is read before/after as the superuser, bracketing the RPC call
+-- itself (which must run as the real caller) -- same permission-denied
+-- gotcha as above.
+do $$
+declare v_contenu_before text;
+begin
+  select contenu into v_contenu_before from publications where id = current_setting('app.tmp_p2')::uuid;
+  perform set_config('app.tmp_p2_contenu_before', v_contenu_before, false);
+end $$;
+
+select set_config('app.current_user_id', '00320001-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+declare v_reposted boolean;
+begin
+  select reposted into v_reposted from toggler_repost_publication(current_setting('app.tmp_p2')::uuid);
+  if v_reposted is distinct from true then
+    raise exception 'TEST FAILED: reposting one''s own plain post for the first time should still create a repost (reposted=true), got %', v_reposted;
+  end if;
+end $$;
+reset role;
+
+do $$
+declare v_contenu_after text;
+begin
+  select contenu into v_contenu_after from publications where id = current_setting('app.tmp_p2')::uuid;
+  if v_contenu_after is distinct from current_setting('app.tmp_p2_contenu_before') then
+    raise exception 'TEST FAILED: the target plain post was altered/deleted by this RPC (before=%, after=%)',
+      current_setting('app.tmp_p2_contenu_before'), v_contenu_after;
+  end if;
+  raise notice 'PASS: toggler_repost_publication() never deletes a non-repost row -- the target publication survives untouched';
+end $$;
+
+-- Quota release: B already has a repost of P2 from the toggle sequence
+-- above. Fill the rest of the rate limit, confirm an 11th action is
+-- rejected, toggle off the repost of P2, confirm a slot is freed, then
+-- confirm B can repost again. B's current row count is read as the
+-- superuser first (same permission-denied gotcha as above) and stashed
+-- into a GUC for the loop bound.
+do $$
+declare v_count int;
+begin
+  select count(*) into v_count from publications where auteur_id = '00320002-0000-0000-0000-000000000002';
+  perform set_config('app.tmp_b_count', v_count::text, false);
+end $$;
+
+select set_config('app.current_user_id', '00320002-0000-0000-0000-000000000002', false);
+set role authenticated;
+do $$
+declare i int;
+begin
+  for i in 1..(10 - current_setting('app.tmp_b_count')::int) loop
+    perform publier_message('0032 B filler ' || i, null, 'public', 'tous');
+  end loop;
+end $$;
+reset role;
+
+do $$
+declare v_count int;
+begin
+  select count(*) into v_count from publications where auteur_id = '00320002-0000-0000-0000-000000000002';
+  if v_count != 10 then
+    raise exception 'TEST FAILED: expected B to be at exactly 10 rows, got %', v_count;
+  end if;
+end $$;
+
+select set_config('app.current_user_id', '00320001-0000-0000-0000-000000000001', false);
+set role authenticated;
+select publier_message('0032 P5 quota target', null, 'public', 'tous');
+reset role;
+
+do $$
+declare v_id uuid;
+begin
+  select id into v_id from publications where contenu = '0032 P5 quota target';
+  perform set_config('app.tmp_p5', v_id::text, false);
+end $$;
+
+select set_config('app.current_user_id', '00320002-0000-0000-0000-000000000002', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform toggler_repost_publication(current_setting('app.tmp_p5')::uuid);
+    raise exception 'TEST FAILED: a new repost succeeded at 10/10 rate limit';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm not like '%rate limit%' then
+      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: at 10/10, a new repost is rejected by the rate limit';
+  end;
+end $$;
+
+-- Toggle off the existing repost of P2 -- frees a slot.
+select reposted from toggler_repost_publication(current_setting('app.tmp_p2')::uuid);
+reset role;
+
+do $$
+declare v_count int;
+begin
+  select count(*) into v_count from publications where auteur_id = '00320002-0000-0000-0000-000000000002';
+  if v_count != 9 then
+    raise exception 'TEST FAILED: expected 9 rows after toggling off, got %', v_count;
+  end if;
+  raise notice 'PASS: toggling a repost off releases a quota slot';
+end $$;
+
+select set_config('app.current_user_id', '00320002-0000-0000-0000-000000000002', false);
+set role authenticated;
+do $$
+declare v_reposted boolean;
+begin
+  select reposted into v_reposted from toggler_repost_publication(current_setting('app.tmp_p5')::uuid);
+  if v_reposted is distinct from true then
+    raise exception 'TEST FAILED: B should be able to repost again after the quota was freed, got reposted=%', v_reposted;
+  end if;
+  raise notice 'PASS: B can repost again once the quota is freed';
+end $$;
+reset role;
+
+-- Grants: anon none, NULL auth.uid() rejected, authenticated holds
+-- EXECUTE, on the renamed function.
+select set_config('app.current_user_id', '', false);
+set role anon;
+do $$
+begin
+  begin
+    perform toggler_repost_publication('00000000-0000-0000-0000-000000000000');
+    raise exception 'TEST FAILED: anon could call toggler_repost_publication()';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE on toggler_repost_publication()';
+  end;
+end $$;
+reset role;
+
+select set_config('app.current_user_id', '', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform toggler_repost_publication('00000000-0000-0000-0000-000000000000');
+    raise exception 'TEST FAILED: authenticated with a NULL auth.uid() could call toggler_repost_publication()';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm != 'not authenticated' then
+      raise exception 'TEST FAILED: unexpected error: %', sqlerrm;
+    end if;
+    raise notice 'PASS: toggler_repost_publication() rejects a NULL auth.uid()';
+  end;
+end $$;
+reset role;
+
+do $$
+begin
+  if not has_function_privilege('authenticated', 'toggler_repost_publication(uuid)', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lost EXECUTE on toggler_repost_publication()';
+  end if;
+  raise notice 'PASS: authenticated holds EXECUTE on toggler_repost_publication()';
 end $$;
 
 do $$

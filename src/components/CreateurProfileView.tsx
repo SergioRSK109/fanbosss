@@ -79,6 +79,7 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
     badgesFidelite,
     publications,
     viewerCanRepost,
+    viewerId,
   } = profile;
   const hasSocialLinks = Object.values(socialLinks).some(Boolean);
   const hasRanks =
@@ -326,7 +327,7 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
           }
           publicationsContent={
             <div className="px-5">
-              <PublicationsList publications={publications} canRepost={viewerCanRepost} />
+              <PublicationsList publications={publications} canRepost={viewerCanRepost} viewerId={viewerId} />
             </div>
           }
         />
