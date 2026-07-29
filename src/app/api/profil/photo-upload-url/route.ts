@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { getSignedUploadUrl } from "@/lib/r2";
+import { checkUploadSize, getSignedUploadUrl } from "@/lib/r2";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 // Profile photo upload only happens post-signup, authenticated (brief
@@ -21,9 +21,20 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json().catch(() => ({}));
   const contentType = String(body.contentType ?? "image/jpeg");
+  const size = Number(body.size);
+
+  const sizeCheck = checkUploadSize(size, contentType);
+  if (!sizeCheck.ok) {
+    return NextResponse.json(
+      {
+        error: `fichier trop volumineux (taille maximale : ${Math.round(sizeCheck.maxBytes / (1024 * 1024))} Mo)`,
+      },
+      { status: 400 },
+    );
+  }
 
   const r2Key = `profils/${user.id}/${randomUUID()}`;
-  const uploadUrl = await getSignedUploadUrl(r2Key, contentType);
+  const uploadUrl = await getSignedUploadUrl(r2Key, contentType, size);
 
   return NextResponse.json({ uploadUrl, r2Key });
 }

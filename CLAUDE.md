@@ -1970,6 +1970,166 @@ section above renders correctly inside its new Contenu & confiance
 home, permalink included; and all of the above holds in both `fr`
 (light) and `/en/` (dark).
 
+## Security audit fixes: video duration cap, R2 upload size limits, `/home` login requirement (migration `0033`)
+
+Three independent fixes from an explicit security audit request.
+
+### 1. Video duration cap (video/shoutout delivery), + a real gap it exposed
+
+A créateur delivering an accepted video/shoutout transaction must not be
+able to upload an arbitrarily long video. The check happens at file
+*selection* time, before any upload starts: `src/lib/videoDuration.ts`
+exports `MAX_VIDEO_DURATION_SECONDS = 90`, a pure `isVideoDurationAllowed()`
+(unit-tested, same DOM-free-vs-DOM-touching split as
+`src/lib/imageCrop.ts`), and `readVideoDurationSeconds(file)` — a
+throwaway `<video preload="metadata">` element, not unit-tested directly
+(no jsdom in this project), that resolves near-instantly since the
+browser only needs to parse the container header, never decode the whole
+file. This is what "traite la vraie cause" means here: an overly long
+video is *why* the file is large in the first place, so rejecting it at
+selection time (with a clear message) is the real fix; migration point 2
+below is the safety net behind it, not a substitute.
+
+**A real, surprising gap was found while wiring this in and confirmed
+before building anything**: grepping the entire `src/` tree turned up
+*zero* créateur-facing UI for delivering an accepted video/shoutout
+transaction at all. `/api/transactions/[id]/upload-url` and the
+`deliver_video()` RPC (migration `0002`) both already existed and both
+still work exactly as documented elsewhere in this file — nothing was
+ever wired to call them. `DemandesEnAttente.tsx` only lists `en_attente`
+transactions (accept/refuse); the instant one is accepted it moves to
+`validee` and simply vanished from the créateur's view, with no page
+anywhere querying `statut = 'validee'` transactions for their own
+`createur_id`. Confirmed with the user before proceeding (this expands
+"add a duration check" into "also build the missing delivery flow the
+check needs to attach to") rather than silently either skipping the
+duration check's own visual test or building an unrequested feature.
+
+**`LivraisonsEnAttente.tsx`** (new) is the built delivery UI — same
+repeatable-row pattern as `DemandesEnAttente.tsx`: file select → duration
+check (reject inline, clear the file, before any network call) → POST
+`/api/transactions/[id]/upload-url` (now with `size`, see point 2) → PUT
+to R2 → POST `/api/transactions/[id]/deliver`. Wired into `/offres`
+(`(app)/offres/page.tsx`) via a new query — `transactions` where
+`createur_id = auth.uid() and statut = 'validee'` — with no explicit
+offer-type filter needed: per this app's own transaction lifecycle
+(documented above), only `video`/`shoutout` transactions ever sit at
+`validee` waiting on the créateur at all (every other type either
+cascades straight through to `livree` or skips `validee` entirely), same
+reasoning `DemandesEnAttente`'s own `en_attente` query already relies on.
+New section "Livraisons en attente", right after "Demandes en attente"
+(accept, then deliver is the natural reading order). `Dashboard.livraisons.*`
+i18n keys, reusing the `Dashboard` namespace like every other `/offres`
+section per Lot 3's own "don't rename what isn't user-visible" rule.
+
+### 2. R2 upload size limit — the safety net behind point 1, and the only real guarantee for images
+
+`getSignedUploadUrl()` (`src/lib/r2.ts`) used to sign no size limit at
+all — any caller could request a URL for a small declared `ContentType`
+and then PUT an arbitrarily large file. This matters even more for
+uploads with no duration concept at all (profile photos, publication
+images) — point 1's client-side check has nothing to attach to there,
+so this is their *only* real limit.
+
+`MAX_UPLOAD_SIZE_BYTES = { image: 10 MB, video: 200 MB }`,
+`maxUploadSizeBytes(contentType)` (prefix-based: `image/*` → the image
+cap, everything else — including `contenu_debloque`'s arbitrary
+créateur-supplied content type — falls back to the more permissive video
+cap, since a legitimate unlockable file might be neither an image nor a
+video), and `checkUploadSize(size, contentType)` (pure, unit-tested) are
+called by **every** upload-url route
+(`profil/photo-upload-url`, `publications/upload-url`,
+`offres/[id]/content-upload-url`, `transactions/[id]/upload-url`)
+*before* ever minting a signed URL — a request whose declared `size`
+exceeds the cap gets a clean 400, `getSignedUploadUrl()` never called at
+all (asserted directly in each route's own test via a `getSignedUploadUrl`
+spy).
+
+**Why this is a real server-side guarantee, not just an early
+client-reported check**: `getSignedUploadUrl(key, contentType, contentLength)`
+now signs `ContentLength` into the `PutObjectCommand`, the same way this
+codebase already established `ContentType` gets signed and enforced (see
+"Mobile upload bug" above — a `ContentType` mismatch between what was
+signed and what's actually PUT is already confirmed, empirically, to
+make R2 reject the request outright). A caller can declare a small,
+passing `size` in the initial request to get past `checkUploadSize()`,
+but the actual PUT's `Content-Length` header is computed automatically
+by the browser from the real file being sent — it isn't something `fetch`
+lets a caller override — so uploading anything larger than what was
+signed fails R2's own signature verification, independent of any
+application code. This wasn't re-verified against a real R2 account (none
+exists in this sandbox, same limitation flagged for the CinetPay refund
+stub and the GoTrue wrapper-text guess elsewhere in this file) — it's a
+direct extension of a mechanism this codebase has already empirically
+confirmed for the sibling `ContentType` field on the exact same signed
+URL, not a fresh, unverified assumption.
+
+Every client call site that requests an upload URL now sends
+`size: file.size` alongside `contentType` (`ParametresForm.tsx`,
+`PublicationComposer.tsx`, `OffresManager.tsx`'s `contenu_debloque`
+upload, and the new `LivraisonsEnAttente.tsx`).
+
+### 3. `/home` now requires a session; `publications_accueil` loses its `anon` grant
+
+Reverses Lot 5a's own original design decision (`/home` was built to be
+"publicly browsable while logged out," per that section's own comment,
+so an anonymous visitor could see public posts and a locked teaser for
+`soutiens`-only ones). Per this audit, `/home` now redirects a logged-out
+visitor to `/login` — the same `auth.getUser()` + `redirect()` guard
+every other `(app)` page (`/dashboard`, `/finance`, `/offres`,
+`/parametres`) already uses.
+
+**`publications_visibles` is deliberately untouched, still granted to
+both `authenticated` and `anon`** — it backs `/[handle]` (a créateur's
+public profile) and `/[handle]/p/[id]` (the Lot 5c permalink page), both
+of which must stay reachable by a logged-out visitor; that's the entire
+point of a shareable public profile/permalink, and revoking `anon` there
+would break external sharing outright. Only `publications_accueil` (the
+`/home` feed, confirmed via grep to have no other reader anywhere in
+`src/`) loses its `anon` grant: `revoke select on public.publications_accueil
+from anon;` (migration `0033`). The `/home` redirect is what makes this
+revoke safe — `getPublicationsAccueil()` is now only ever called for an
+authenticated caller.
+
+**Three pre-existing SQL checklist tests from Lot 5a/5c had to be updated
+in place, not just described** — they queried `publications_accueil` as
+`anon`, which is now a real permission error instead of an empty/filtered
+result. Each was switched to `authenticated` (with a real fixture user
+id) for the `publications_accueil` half of the assertion specifically,
+while any co-located `publications_visibles` check in the same test stays
+on `anon` (still correct, still the point being proven). This is the same
+"a later migration invalidates an earlier test's assumption, so the old
+test itself gets updated, never just left describing stale behavior"
+discipline already established for the Lot 5c repost-toggle test rewrite
+in migration `0032`.
+
+Tested end-to-end in `checklist_2_3.sql`, not just described: `anon` gets
+a real `insufficient_privilege` error attempting to `SELECT` from
+`publications_accueil` at all (both via a direct attempted query and via
+`has_table_privilege`), while the identical check against
+`publications_visibles` still succeeds for `anon`; `authenticated` still
+holds `SELECT` on `publications_accueil` (logged-in users must keep
+working). Also covers `checkUploadSize()`/`maxUploadSizeBytes()` directly
+(`r2.test.ts`) and `isVideoDurationAllowed()` (`videoDuration.test.ts`),
+both at their exact boundary (90s/the byte cap passes, one over either
+fails); route-level tests for `transactions/[id]/upload-url` and
+`publications/upload-url` proving an oversized declared `size` is
+rejected with 400 *before* `getSignedUploadUrl()` is ever called — the
+real server-side rejection this fix is about, not merely a client-side
+check a direct API caller could skip; and a `/home` page test proving a
+logged-out visitor is redirected to `/login` without `getPublicationsAccueil()`
+ever being called, while a logged-in visitor renders normally.
+
+Verified visually end-to-end (same throwaway mock-Supabase/Playwright
+technique used throughout this file): selecting a video longer than 90s
+in the new "Livraisons en attente" form shows the French error message
+immediately, with no network request ever fired; visiting `/home` while
+logged out redirects straight to `/login`; and the `/[handle]/p/[id]`
+permalink page, opened in a fresh logged-out context, still renders the
+real publication (or a real teaser, per its own visibility rules)
+exactly as before, confirming the `anon` grant revoke was correctly
+scoped to `publications_accueil` alone.
+
 ## `accept_transaction`/`refuse_transaction`/`deliver_video` anonymous bypass — found and fixed (migration `0020`)
 
 A real, currently-exploitable vulnerability, flagged during unrelated

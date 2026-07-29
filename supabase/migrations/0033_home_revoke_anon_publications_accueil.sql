@@ -1,0 +1,13 @@
+-- Security audit fix: /home now requires an authenticated session (see
+-- src/app/[locale]/(app)/home/page.tsx's own redirect guard, added in
+-- the same change), so publications_accueil no longer needs to be
+-- readable by anon at all -- it backs that page and nothing else
+-- (confirmed by grepping the whole src/ tree before writing this).
+--
+-- publications_visibles is DELIBERATELY left untouched, still granted to
+-- both authenticated and anon: it backs /[handle] (a créateur's public
+-- profile) and /[handle]/p/[id] (the Lot 5c permalink page), both of
+-- which must stay reachable by a logged-out visitor -- that's the entire
+-- point of a shareable public profile/permalink. Revoking anon here
+-- would break external sharing outright.
+revoke select on public.publications_accueil from anon;

@@ -3347,9 +3347,15 @@ reset role;
 
 -- publications_accueil: scoped to currently-verified créateurs + every
 -- FanBoss announcement, regardless of the admin's own createur_verifie
--- (false for admin D in this fixture).
-select set_config('app.current_user_id', '', false);
-set role anon;
+-- (false for admin D in this fixture). Queried as `authenticated`, not
+-- `anon` -- migration 0033 (security audit fix, see its own test
+-- section further down) revokes anon's SELECT on this view entirely,
+-- since /home now requires a session. The row count itself doesn't
+-- depend on which authenticated viewer is asking (admission is scoped by
+-- createur_verifie/type, never by viewer), so this only needed a role
+-- swap, not a rewritten assertion.
+select set_config('app.current_user_id', '5a000003-0000-0000-0000-000000000003', false);
+set role authenticated;
 do $$
 declare
   v_count int;
@@ -3655,8 +3661,11 @@ begin
 end $$;
 reset role;
 
-select set_config('app.current_user_id', '', false);
-set role anon;
+-- Queried as `authenticated`, not `anon` -- migration 0033 (security
+-- audit fix, see its own test section further down) revokes anon's
+-- SELECT on this view entirely, since /home now requires a session.
+select set_config('app.current_user_id', 'a1000000-0000-0000-0000-000000000001', false);
+set role authenticated;
 do $$
 declare
   v_count int;
@@ -4233,15 +4242,32 @@ begin
 end $$;
 reset role;
 
+-- publications_visibles is checked as `anon` (must stay anon-readable,
+-- see migration 0033); publications_accueil is checked as
+-- `authenticated` instead -- migration 0033 (security audit fix, see its
+-- own test section further down) revokes anon's SELECT on that view
+-- entirely, since /home now requires a session. Row presence here
+-- doesn't depend on which authenticated viewer is asking.
 select set_config('app.current_user_id', '', false);
 set role anon;
 do $$
-declare v_visibles int; v_accueil int;
+declare v_visibles int;
 begin
   select count(*) into v_visibles from publications_visibles where id = current_setting('app.tmp_r2')::uuid;
+  if v_visibles != 1 then
+    raise exception 'TEST FAILED: the repost should be visible in publications_visibles before its original is masked, got % rows', v_visibles;
+  end if;
+end $$;
+reset role;
+
+select set_config('app.current_user_id', '5c000001-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+declare v_accueil int;
+begin
   select count(*) into v_accueil from publications_accueil where id = current_setting('app.tmp_r2')::uuid;
-  if v_visibles != 1 or v_accueil != 1 then
-    raise exception 'TEST FAILED: the repost should be visible in both views before its original is masked (visibles=%, accueil=%)', v_visibles, v_accueil;
+  if v_accueil != 1 then
+    raise exception 'TEST FAILED: the repost should be visible in publications_accueil before its original is masked, got % rows', v_accueil;
   end if;
 end $$;
 reset role;
@@ -4257,13 +4283,21 @@ reset role;
 select set_config('app.current_user_id', '', false);
 set role anon;
 do $$
-declare v_visibles int; v_accueil int;
+declare v_visibles int;
 begin
   select count(*) into v_visibles from publications_visibles where id = current_setting('app.tmp_r2')::uuid;
-  select count(*) into v_accueil from publications_accueil where id = current_setting('app.tmp_r2')::uuid;
   if v_visibles != 0 then
     raise exception 'TEST FAILED: the repost should disappear from publications_visibles once its original is masked, got % rows', v_visibles;
   end if;
+end $$;
+reset role;
+
+select set_config('app.current_user_id', '5c000001-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+declare v_accueil int;
+begin
+  select count(*) into v_accueil from publications_accueil where id = current_setting('app.tmp_r2')::uuid;
   if v_accueil != 0 then
     raise exception 'TEST FAILED: the repost should disappear from publications_accueil once its original is masked, got % rows', v_accueil;
   end if;
@@ -4983,6 +5017,64 @@ begin
     raise exception 'TEST FAILED: authenticated lost EXECUTE on toggler_repost_publication()';
   end if;
   raise notice 'PASS: authenticated holds EXECUTE on toggler_repost_publication()';
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Security audit fix (migration 0033): anon must have no SELECT on
+-- publications_accueil at all -- /home now requires a session (see
+-- src/app/[locale]/(app)/home/page.tsx's own redirect guard), so the
+-- view backing it no longer needs anon access. publications_visibles
+-- must be completely unaffected -- it backs /[handle] and the Lot 5c
+-- permalink page (/[handle]/p/[id]), both of which must stay reachable
+-- by a logged-out visitor for external sharing to work at all.
+-- ---------------------------------------------------------------------
+select set_config('app.current_user_id', '', false);
+set role anon;
+
+do $$
+begin
+  begin
+    perform 1 from public.publications_accueil limit 1;
+    raise exception 'TEST FAILED: anon was able to SELECT from publications_accueil at all';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no SELECT privilege on publications_accueil (migration 0033)';
+  end;
+end $$;
+
+do $$
+begin
+  -- No exception handler on purpose -- this must simply succeed (real
+  -- Postgres permission check, not just "did the query not error out of
+  -- an unrelated reason"); a zero-row result is still a pass, since the
+  -- point here is the grant itself, not any specific fixture data.
+  perform 1 from public.publications_visibles limit 1;
+  raise notice 'PASS: anon still has SELECT on publications_visibles (unaffected by migration 0033)';
+end $$;
+
+reset role;
+
+do $$
+begin
+  if has_table_privilege('anon', 'public.publications_accueil', 'SELECT') then
+    raise exception 'TEST FAILED: has_table_privilege still reports anon holding SELECT on publications_accueil';
+  end if;
+  raise notice 'PASS: has_table_privilege confirms anon lost SELECT on publications_accueil';
+end $$;
+
+do $$
+begin
+  if not has_table_privilege('anon', 'public.publications_visibles', 'SELECT') then
+    raise exception 'TEST FAILED: anon lost SELECT on publications_visibles -- external sharing would break';
+  end if;
+  raise notice 'PASS: has_table_privilege confirms anon still holds SELECT on publications_visibles';
+end $$;
+
+do $$
+begin
+  if not has_table_privilege('authenticated', 'public.publications_accueil', 'SELECT') then
+    raise exception 'TEST FAILED: authenticated lost SELECT on publications_accueil -- /home would break for logged-in users too';
+  end if;
+  raise notice 'PASS: authenticated still holds SELECT on publications_accueil';
 end $$;
 
 do $$

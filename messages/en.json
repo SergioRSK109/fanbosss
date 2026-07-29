@@ -243,6 +243,7 @@
     "choosePseudo": "choose one",
     "demandesHeading": "Requests awaiting your response",
     "nouvellesDemandes": "{count, plural, one {# new} other {# new}}",
+    "livraisonsHeading": "Pending deliveries",
     "offresHeading": "Your offers",
     "statutShort": {
       "en_attente": "Pending",
@@ -283,6 +284,17 @@
       "row": "{type} · ${montant} · respond by {date}",
       "accept": "Accept",
       "refuse": "Refuse"
+    },
+    "livraisons": {
+      "intro": "Accepted videos/shoutouts awaiting your delivery -- maximum duration: 90 seconds.",
+      "empty": "No pending deliveries.",
+      "row": "{type} · ${montant} · deliver by {date}",
+      "dureeTropLongue": "Video too long ({duree}s) -- the maximum duration is {max} seconds.",
+      "lectureImpossible": "Couldn't read this video's duration. Try a different file.",
+      "uploadImpossible": "Failed to upload the video.",
+      "livraisonImpossible": "Delivery failed.",
+      "envoiEnCours": "Uploading...",
+      "livrer": "Deliver"
     },
     "transactionActions": {
       "reveal": {
