@@ -32,7 +32,7 @@ npm run dev
 
 ### Base de données
 
-Les migrations `supabase/migrations/*.sql` (27 à ce jour) — toujours
+Les migrations `supabase/migrations/*.sql` (34 à ce jour) — toujours
 incrémentales, jamais un `DROP`/recréation depuis zéro — sont appliquées
 **automatiquement** sur le projet Supabase de production par
 `.github/workflows/deploy-migrations.yml` à chaque push sur `main` qui
@@ -148,7 +148,7 @@ npm run test:sql  # tests SQL de bout en bout, contre un vrai Postgres :
 ```
 
 `npm run test:sql` (`supabase/tests/checklist_2_3.sql`) crée une base
-jetable, applique les 27 migrations dans l'ordre, et prouve concrètement
+jetable, applique les 34 migrations dans l'ordre, et prouve concrètement
 (pas juste "en théorie"), entre autres :
 - qu'une offre WhatsApp ne peut jamais descendre sous 20$, même par
   UPDATE direct sur la colonne `prix`, et qu'un champ JSON `config` ne peut
@@ -206,6 +206,32 @@ et son miroir JS (`calculerRepartitionPaiement()` dans
 
 Au-delà du parcours de paiement de base, la plateforme inclut :
 
+- **Navigation en 5 onglets** (bas d'écran, mobile-first) : Accueil,
+  Offres, Paiements, Performance, Réglages — partagés via le layout
+  commun `src/app/[locale]/(app)/layout.tsx`, qui affiche aussi le lien
+  de profil public et la cloche de notifications sur les 5 pages.
+  `/admin` reste un outil business séparé, volontairement différent
+  (onglets en haut, desktop-first).
+- **Fil de publications** (`/home` + onglet "Publications" du profil
+  créateur) : un créateur vérifié (ou un admin) peut poster ("Quoi de
+  neuf ?"), visibilité publique ou réservée à ses soutiens ; likes,
+  reposts, partage de lien permanent (`/@pseudo/p/id`), signalement et
+  masquage (modération admin), un fan peut mute un créateur dans son
+  propre fil. `/home` exige désormais une connexion (revu suite à un
+  audit sécurité) ; le profil public d'un créateur et le permalien d'une
+  publication restent, eux, accessibles sans compte — c'est ce qui rend
+  le partage externe possible.
+- **Notifications** (cloche avec badge de non-lus, dans le layout
+  partagé) : chaque événement pertinent (demande reçue/acceptée/
+  refusée, vidéo livrée, confirmation/contestation, litige tranché,
+  retrait traité, publication aimée) crée une vraie notification en
+  base pour le bon destinataire. Ouvrir le panneau marque tout comme lu ;
+  cliquer une notification navigue vers l'écran concerné.
+- **Livraison vidéo/shoutout** (`/offres`, section "Livraisons en
+  attente") : durée maximale de 90 secondes vérifiée côté client dès la
+  sélection du fichier, avant même de lancer l'upload ; limite de taille
+  (10 Mo image / 200 Mo vidéo) imposée réellement côté serveur, signée
+  dans l'URL R2 elle-même, pas seulement vérifiée côté client.
 - **`/explorer`** : annuaire public des créateurs (recherche, filtre par
   type d'offre), visibles par défaut dès leur première offre active
   (opt-out via `/parametres`).
@@ -231,10 +257,12 @@ Au-delà du parcours de paiement de base, la plateforme inclut :
   confiance à un montant envoyé par le client), traitée manuellement par
   un admin.
 - **`/admin`** : tableau de bord business (gate `users.est_admin`, 404 —
-  jamais une redirection — pour tout visiteur non admin) : vue
-  d'ensemble du mois, remboursements manuels en attente, litiges,
-  demandes de retrait, vérifications créateur, top créateurs, gestion des
-  admins.
+  jamais une redirection — pour tout visiteur non admin), organisé en 4
+  onglets desktop : **Vue d'ensemble** (chiffres du mois, top créateurs),
+  **Financier** (remboursements manuels, litiges, demandes de retrait),
+  **Contenu & confiance** (vérifications créateur, publications
+  signalées), **Administration** (gestion des admins) — un badge affiche
+  le nombre d'éléments en attente par onglet.
 - **Mot de passe oublié / changement**, **déconnexion réelle**
   (invalidation serveur, pas seulement locale), **recadrage de photo de
   profil** (carré, style Instagram, entièrement côté client avant upload).
@@ -273,6 +301,23 @@ Au-delà du parcours de paiement de base, la plateforme inclut :
   des vues dédiées (`profils_publics`, `offres_publiques`,
   `classement_*`...) qui n'exposent jamais une colonne sensible, quel que
   soit l'appelant.
+- **Limite de taille sur les uploads R2** (`src/lib/r2.ts`) : chaque
+  route qui génère une URL signée impose désormais une taille maximale
+  réelle (10 Mo image / 200 Mo vidéo), signée dans la requête S3/R2
+  elle-même (`ContentLength`) — un dépassement échoue à la vérification
+  de signature côté R2, pas seulement à une validation côté client.
+- **`creer_notification()`** (notifications, migration 0034) est la
+  seule fonction `SECURITY DEFINER` du projet sans vérification
+  d'autorisation interne — accordée uniquement à `service_role`, jamais
+  à `authenticated` ; chaque appel passe soit par une autre fonction du
+  même propriétaire (propagation de privilège par ownership Postgres,
+  vérifiée empiriquement avant d'être exploitée), soit par le webhook
+  CinetPay.
+- `/home` (fil de publications) exige désormais une connexion —
+  `publications_accueil` a perdu son accès `anon` en base ;
+  `/@pseudo` (profil public) et le permalien d'une publication
+  (`/@pseudo/p/id`) restent, eux, volontairement accessibles sans
+  compte.
 
 ## Internationalisation (next-intl)
 
