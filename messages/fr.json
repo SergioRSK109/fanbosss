@@ -16,6 +16,26 @@
     "offres": "Offres",
     "reglages": "Réglages"
   },
+  "Notifications": {
+    "ariaLabel": "Notifications",
+    "heading": "Notifications",
+    "empty": "Aucune notification.",
+    "anonymousActeur": "Quelqu'un",
+    "types": {
+      "demande_recue": "{acteur} t'a envoyé une nouvelle demande.",
+      "don_recu": "{acteur} t'a fait un don.",
+      "demande_acceptee": "Ta demande a été acceptée.",
+      "demande_refusee": "Ta demande a été refusée.",
+      "video_livree": "Ta vidéo a été livrée !",
+      "confirmation_recue": "{acteur} a confirmé la réception de sa vidéo.",
+      "contestation_recue": "{acteur} a signalé un problème avec sa vidéo.",
+      "litige_tranche_createur": "Un litige a été tranché en ta faveur.",
+      "litige_tranche_fan": "Un litige a été tranché en ta faveur.",
+      "retrait_traite": "Ta demande de retrait a été traitée.",
+      "retrait_refuse": "Ta demande de retrait a été refusée.",
+      "publication_aimee": "{acteur} a aimé ta publication."
+    }
+  },
   "HomePage": {
     "heading": "Accueil",
     "previous": "Précédent",

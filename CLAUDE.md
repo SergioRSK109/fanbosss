@@ -2130,6 +2130,182 @@ real publication (or a real teaser, per its own visibility rules)
 exactly as before, confirming the `anon` grant revoke was correctly
 scoped to `publications_accueil` alone.
 
+## In-app notifications — schema + wiring (Lot 6a, migration `0034`) + the bell (Lot 6b)
+
+A créateur or fan gets a real, persisted notification (bell badge +
+dropdown) for every event that has an actual recipient worth telling:
+their request was accepted/refused, their video was delivered, a fan
+confirmed/disputed a delivery, a litige was resolved, a withdrawal was
+processed, a publication was liked. Given exactly as specified —
+`notifications` (`destinataire_id, type, transaction_id, publication_id,
+acteur_id, lu, created_at`), the `type` CHECK constraint enumerating all
+12 event types, and one shared insertion helper.
+
+**`creer_notification()` is the single insertion path, called from
+every wired-in function below and the webhook — never a raw `INSERT`
+anywhere else.** It's deliberately the one `SECURITY DEFINER` RPC in this
+entire project with **no internal authorization check of its own**: it
+takes an arbitrary `p_destinataire_id`/`p_acteur_id` and just inserts.
+This is safe specifically because of the grant: `revoke all ... from
+public; grant execute ... to service_role;` — **not** `authenticated`.
+Every real call site is either (a) a call from *inside* another
+`SECURITY DEFINER` function owned by the same role — which, per
+Postgres's own security-definer semantics, executes with that owner's
+privileges once inside, so it needs no separate grant to call a
+same-owner function at all — or (b) the CinetPay webhook, via the
+service-role client, for transaction creation (the one event with no
+wrapping RPC to attach to). **Verified empirically before trusting this,
+not assumed**: a throwaway database confirmed `authenticated` gets a real
+`insufficient_privilege` calling `creer_notification()` directly, while
+`accept_transaction()` (called by that same `authenticated` role)
+successfully creates a real notification row via its own internal call —
+proving the ownership-based privilege propagation actually works, not
+just in theory. If `creer_notification()` were ever mistakenly granted to
+`authenticated` directly, any logged-in user could insert a fake
+notification impersonating any acteur, for any recipient — this grant
+shape is what a `0020`/`0021`-style audit would flag.
+
+**Wiring — one `creer_notification()` call added to each existing
+function, right before (or as part of) its own final state change,
+`create or replace` with an identical signature so no existing `EXECUTE`
+grant needs restating** (same precedent as migration `0025`'s own
+`deliver_video()` redefinition):
+- `accept_transaction()` → `demande_acceptee` to the fan, créateur as
+  acteur. Fires once regardless of whether this cascades straight to
+  `livree` for whatsapp (acceptance IS delivery there) — there's no
+  separate "whatsapp delivered" type; `demande_acceptee` already covers
+  it. Only `deliver_video()`'s own `video_livree` is video/shoutout-
+  specific.
+- `refuse_transaction()` → `demande_refusee` to the fan.
+- `deliver_video()` → `video_livree` to the fan.
+- `confirmer_livraison_fan()` → `confirmation_recue` to the créateur,
+  fan as acteur.
+- `contester_livraison_fan()` → `contestation_recue` to the créateur,
+  fan as acteur.
+- `resoudre_litige()` → `litige_tranche_createur` (destinataire =
+  créateur) or `litige_tranche_fan` (destinataire = fan), whichever the
+  decision favored — the type name literally names the recipient, so the
+  branch is a direct `case` on `p_decision`, admin as acteur. Needed a
+  `select * into v_tx` added first (the original had none, going
+  straight to `UPDATE`) to have `fan_id`/`createur_id` available.
+- `traiter_retrait()` → `retrait_traite`/`retrait_refuse` to the
+  créateur who requested it, admin as acteur, `transaction_id`/
+  `publication_id` both left null — this event is about a
+  `demandes_retrait` row, neither of those tables.
+- `toggler_like_publication()` → `publication_aimee` to the publication's
+  auteur, liking fan as acteur — **only on the like branch, never
+  unlike** (undoing a like isn't an event worth surfacing), and **never
+  when `auteur_id = v_user_id`** (a self-like notifies nobody; there's
+  no one to tell).
+- **CinetPay webhook** (`src/app/api/webhooks/cinetpay/route.ts`), right
+  after the transaction `INSERT` succeeds: `demande_recue` to the
+  créateur for any type with an acceptation step (video/shoutout/
+  whatsapp — i.e. not in `TYPES_A_VALIDATION_IMMEDIATE`), `don_recu` for
+  `don`/`campagne` (a contribution, no action needed). **Deliberately
+  silent for `contenu_debloque`/`evenement_live`** — neither "a request"
+  nor "a don" describes a pre-configured purchase, and the `type` CHECK
+  constraint has no third label for it; flagged as a deliberate scope
+  limit rather than forcing one of the two existing types onto an event
+  they don't describe. The RPC call is never allowed to fail the webhook
+  itself (`console.error` and move on) — the transaction is already
+  safely recorded by that point, and a missed bell notification isn't
+  worth turning a successful payment into a 500 CinetPay might retry.
+
+**`marquer_notifications_lues()`** marks every one of the caller's own
+unread notifications read in a single call — there is deliberately no
+per-notification "mark as read" RPC. This shapes the whole bell UI (Lot
+6b, below): opening the dropdown marks the entire batch read immediately;
+clicking an individual row only ever navigates, since by the time it's
+clickable the mark-all-read call has already fired.
+
+Tested end-to-end in `checklist_2_3.sql` with a real fixture (créateur A,
+fan B, admin D — not itself `createur_verifie`): every one of the 8 wired
+functions produces exactly the right notification row (correct
+`destinataire_id`/`type`/`transaction_id`/`acteur_id`) for a real state
+transition; a self-like and an unlike both leave the `publication_aimee`
+count unchanged at 1 (proven by driving all three actions — B's like, A's
+self-like, B's unlike — against the same publication and asserting the
+final count, not just that no error was raised); `marquer_notifications_lues()`
+marks only the caller's own notifications read, leaving another user's
+untouched; and the full grant-audit pattern holds (`authenticated`/`anon`
+both rejected on a direct `creer_notification()` call, `service_role`
+confirmed to still hold `EXECUTE` on it, `anon` rejected and a `NULL
+auth.uid()` rejected on `marquer_notifications_lues()`). Also covered at
+the route level (`src/app/api/webhooks/cinetpay/__tests__/route.test.ts`):
+a video-type transaction fires exactly one `creer_notification` RPC call
+with `type: "demande_recue"`; a don fires one with `type: "don_recu"`;
+`contenu_debloque`/`evenement_live` fire zero; and a `creer_notification`
+RPC failure is confirmed to leave the webhook's own 200 response and
+`status: "ok"` body completely unaffected.
+
+### The bell (Lot 6b)
+
+`NotificationBell.tsx` lives in the shared `(app)` layout, next to
+`CopyProfileLinkButton` — same "identity-level, not tied to one tab"
+reasoning that already placed the profile-link card there (Lot 3).
+Notifications and the unread count are pre-fetched server-side by the
+layout and handed in as props, same "pre-built content, client only
+toggles visibility" pattern as `ProfileTabs.tsx`/`AdminTabs.tsx` — the
+bell itself never fetches anything on mount.
+
+**Opening the panel immediately calls `/api/notifications/mark-read`**
+(a thin wrapper around `marquer_notifications_lues()`), optimistically
+zeroing the local badge count and reverting it only if the request
+actually fails — there is no visual unread/read distinction *within* the
+list itself (every row shown is either already read or about to become
+read within the same click), only the bell's own badge distinguishes
+"there's something new." This is what resolves an apparent tension in
+the brief: it asks for "clic = marque comme lu + navigue," but Lot 6a
+only specifies one RPC that marks *everything* read at once — the
+answer is that the *panel opening itself* is the "clic" that marks
+everything read; clicking an individual row inside the already-open panel
+only ever navigates.
+
+**`notificationHref()`** (`src/lib/notifications.ts`, pure, unit-tested)
+maps each of the 12 types to where clicking it should go: `demande_recue`
+→ `/offres` (the créateur has something to act on there); every other
+transaction-related type → `/finance` (money/status context, whether
+you're the fan or the créateur); `publication_aimee` → the permalink
+`/@{pseudo}/p/{id}`. There is no per-transaction detail page in this
+app, so "navigate to the transaction concerned" means the *page* where
+that transaction is visible/actionable, not a literal `/transaction/[id]`
+route that doesn't exist.
+
+**`publication_aimee`'s permalink needs the *viewer's own* pseudo, not
+the acteur's** — its `destinataire_id` is always the publication's own
+auteur (migration 0034's own wiring guarantees this: a self-like never
+notifies, so every `publication_aimee` row's destinataire really is
+"whoever is reading their own notifications right now"). `(app)/layout.tsx`
+already fetches the viewer's `pseudo` for the profile-link card, so
+`getNotifications()` is called with it directly. Returns `href: null`
+when the destinataire has no pseudo set at all — the permalink page
+(`/[handle]/p/[id]`) 404s on a missing pseudo by design, and there's no
+`/createur/[id]/p/[id]` fallback route, so a `null` href renders the row
+as plain, non-clickable text rather than linking to something guaranteed
+to 404.
+
+**`getNotifications()` hydrates each row's `acteur` display name via
+`profils_publics`** (batched, one query for every distinct `acteur_id`
+across the page — same pattern `hydratePublications()` already
+established), never a montant or any other transaction detail — this is
+a lightweight recent-activity panel (`NOTIFICATIONS_PANEL_LIMIT = 20`),
+not a full history page, per the brief's own "liste déroulante" framing
+over "page dédiée."
+
+Reserved-pseudo list is untouched by this lot — `/notifications` isn't a
+route this app has (no dedicated page, only the dropdown), so nothing
+needed adding there.
+
+Verified visually end-to-end (same throwaway mock-Supabase/Playwright
+technique used throughout this file, extended with `notifications`
+table support and a couple of fixture rows): the badge shows the real
+unread count and disappears once the panel is opened; each notification
+type renders its correct message with the acteur's real display name
+substituted in; clicking a `publication_aimee` row navigates to the
+permalink and closes the panel; clicking a `/finance`-routed row
+navigates there; and all of the above holds in both `fr` (light) and
+`/en/` (dark).
+
 ## `accept_transaction`/`refuse_transaction`/`deliver_video` anonymous bypass — found and fixed (migration `0020`)
 
 A real, currently-exploitable vulnerability, flagged during unrelated

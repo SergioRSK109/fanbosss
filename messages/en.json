@@ -16,6 +16,26 @@
     "offres": "Offers",
     "reglages": "Settings"
   },
+  "Notifications": {
+    "ariaLabel": "Notifications",
+    "heading": "Notifications",
+    "empty": "No notifications.",
+    "anonymousActeur": "Someone",
+    "types": {
+      "demande_recue": "{acteur} sent you a new request.",
+      "don_recu": "{acteur} sent you a tip.",
+      "demande_acceptee": "Your request was accepted.",
+      "demande_refusee": "Your request was declined.",
+      "video_livree": "Your video was delivered!",
+      "confirmation_recue": "{acteur} confirmed receiving their video.",
+      "contestation_recue": "{acteur} flagged a problem with their video.",
+      "litige_tranche_createur": "A dispute was resolved in your favor.",
+      "litige_tranche_fan": "A dispute was resolved in your favor.",
+      "retrait_traite": "Your withdrawal request was processed.",
+      "retrait_refuse": "Your withdrawal request was declined.",
+      "publication_aimee": "{acteur} liked your publication."
+    }
+  },
   "HomePage": {
     "heading": "Home",
     "previous": "Previous",
