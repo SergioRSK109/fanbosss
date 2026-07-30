@@ -2,6 +2,8 @@ import { getTranslations } from "next-intl/server";
 import { Link } from "@/i18n/navigation";
 import { AppTabBar } from "@/components/AppTabBar";
 import { CopyProfileLinkButton } from "@/components/CopyProfileLinkButton";
+import { NotificationBell } from "@/components/NotificationBell";
+import { getNotifications, getUnreadNotificationCount } from "@/lib/notifications";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 // Lot 3: shared layout for the 4 tab-bar destinations (/dashboard=Performance,
@@ -42,6 +44,16 @@ export default async function AppLayout({
     ? await supabase.from("users").select("pseudo").eq("id", user.id).single()
     : { data: null as { pseudo: string | null } | null };
 
+  // publication_aimee's permalink needs the VIEWER's own pseudo (see
+  // notificationHref()'s own comment), so notifications are only fetched
+  // once profil is known.
+  const [notifications, unreadCount] = user
+    ? await Promise.all([
+        getNotifications(supabase, profil?.pseudo ?? null),
+        getUnreadNotificationCount(supabase),
+      ])
+    : [[], 0];
+
   return (
     <div className="flex flex-1 flex-col">
       {user && (
@@ -65,7 +77,10 @@ export default async function AppLayout({
                 </>
               )}
             </div>
-            {profil?.pseudo && <CopyProfileLinkButton pseudo={profil.pseudo} />}
+            <div className="flex items-center gap-2">
+              {profil?.pseudo && <CopyProfileLinkButton pseudo={profil.pseudo} />}
+              <NotificationBell notifications={notifications} unreadCount={unreadCount} />
+            </div>
           </div>
         </div>
       )}

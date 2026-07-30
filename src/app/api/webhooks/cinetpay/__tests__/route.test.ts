@@ -6,9 +6,14 @@ process.env.CINETPAY_SECRET_KEY = SECRET;
 
 type FakeRow = Record<string, unknown>;
 
-function buildSupabaseMock(offre: FakeRow, existingTransaction: FakeRow | null) {
+function buildSupabaseMock(
+  offre: FakeRow,
+  existingTransaction: FakeRow | null,
+  rpcError: { message: string } | null = null,
+) {
   const updates: { table: string; patch: FakeRow }[] = [];
   const inserts: { table: string; row: FakeRow }[] = [];
+  const rpcCalls: { fn: string; args: FakeRow }[] = [];
 
   const client = {
     from(table: string) {
@@ -41,9 +46,13 @@ function buildSupabaseMock(offre: FakeRow, existingTransaction: FakeRow | null) 
         },
       };
     },
+    rpc(fn: string, args: FakeRow) {
+      rpcCalls.push({ fn, args });
+      return Promise.resolve({ error: rpcError, data: null });
+    },
   };
 
-  return { client, updates, inserts };
+  return { client, updates, inserts, rpcCalls };
 }
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -228,5 +237,112 @@ describe("POST /api/webhooks/cinetpay (brief checklist items 1 & 4)", () => {
     const request = buildRequest(notification, token);
 
     await expect(POST(request)).rejects.toThrow(/offer type could not be determined/);
+  });
+
+  it("Lot 6a: a video (has-acceptation) transaction creates a demande_recue notification for the créateur", async () => {
+    const { client, rpcCalls } = buildSupabaseMock(
+      { id: "offre-video-1", type: "video", createur_id: "createur-1", prix: 3 },
+      null,
+    );
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(
+      client as unknown as ReturnType<typeof createSupabaseServiceRoleClient>,
+    );
+
+    const { POST } = await import("@/app/api/webhooks/cinetpay/route");
+    const notification = buildNotification({ cpm_amount: "3" });
+    const token = computeCinetPayToken(notification, SECRET);
+    const request = buildRequest(notification, token);
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+
+    expect(rpcCalls).toEqual([
+      {
+        fn: "creer_notification",
+        args: {
+          p_destinataire_id: "createur-1",
+          p_type: "demande_recue",
+          p_transaction_id: "tx-don-1",
+          p_acteur_id: "fan-1",
+        },
+      },
+    ]);
+  });
+
+  it("Lot 6a: a don creates a don_recu notification for the créateur", async () => {
+    const { client, rpcCalls } = buildSupabaseMock(
+      { id: "offre-don-1", type: "don", createur_id: "createur-1", prix: 3 },
+      null,
+    );
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(
+      client as unknown as ReturnType<typeof createSupabaseServiceRoleClient>,
+    );
+
+    const { POST } = await import("@/app/api/webhooks/cinetpay/route");
+    const notification = buildNotification();
+    const token = computeCinetPayToken(notification, SECRET);
+    const request = buildRequest(notification, token);
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+
+    expect(rpcCalls).toEqual([
+      {
+        fn: "creer_notification",
+        args: {
+          p_destinataire_id: "createur-1",
+          p_type: "don_recu",
+          p_transaction_id: "tx-don-1",
+          p_acteur_id: "fan-1",
+        },
+      },
+    ]);
+  });
+
+  it.each(["contenu_debloque", "evenement_live"] as const)(
+    "Lot 6a: a %s purchase creates no notification at all (deliberate scope limit, neither demande_recue nor don_recu fits)",
+    async (type) => {
+      const { client, rpcCalls } = buildSupabaseMock(
+        { id: "offre-1", type, createur_id: "createur-1", prix: 3 },
+        null,
+      );
+      vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(
+        client as unknown as ReturnType<typeof createSupabaseServiceRoleClient>,
+      );
+
+      const { POST } = await import("@/app/api/webhooks/cinetpay/route");
+      const notification = buildNotification();
+      const token = computeCinetPayToken(notification, SECRET);
+      const request = buildRequest(notification, token);
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+      expect(rpcCalls).toHaveLength(0);
+    },
+  );
+
+  it("Lot 6a: a notification RPC failure never fails the webhook itself -- the transaction is already safely recorded", async () => {
+    const { client } = buildSupabaseMock(
+      { id: "offre-don-1", type: "don", createur_id: "createur-1", prix: 3 },
+      null,
+      { message: "notifications table is temporarily unavailable" },
+    );
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(
+      client as unknown as ReturnType<typeof createSupabaseServiceRoleClient>,
+    );
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const { POST } = await import("@/app/api/webhooks/cinetpay/route");
+    const notification = buildNotification();
+    const token = computeCinetPayToken(notification, SECRET);
+    const request = buildRequest(notification, token);
+
+    const response = await POST(request);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.status).toBe("ok");
+    expect(consoleErrorSpy).toHaveBeenCalled();
+    consoleErrorSpy.mockRestore();
   });
 });

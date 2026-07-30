@@ -139,6 +139,35 @@ export async function POST(request: NextRequest) {
     throw new Error(`failed to record transaction: ${insertError.message}`);
   }
 
+  // Lot 6a: tells the créateur a new transaction landed. video/shoutout/
+  // whatsapp (has an acceptation step -- not in TYPES_A_VALIDATION_IMMEDIATE)
+  // gets 'demande_recue' (there's something for them to do); don/campagne
+  // get 'don_recu' (a contribution, no action needed). contenu_debloque/
+  // evenement_live are deliberately silent here -- neither "a request" nor
+  // "a don" describes a pre-configured purchase, and the notifications
+  // `type` CHECK constraint has no third label for it; flagged rather than
+  // forcing one of the two existing types onto an event they don't
+  // describe. Never allowed to fail the webhook itself -- the transaction
+  // is already safely recorded, a missed bell notification is not worth
+  // turning a successful payment into a 500 CinetPay might retry.
+  const notificationType = !TYPES_A_VALIDATION_IMMEDIATE.includes(offerType)
+    ? "demande_recue"
+    : offerType === "don" || offerType === "campagne"
+      ? "don_recu"
+      : null;
+
+  if (notificationType) {
+    const { error: notificationError } = await supabase.rpc("creer_notification", {
+      p_destinataire_id: offre.createur_id,
+      p_type: notificationType,
+      p_transaction_id: transactionId,
+      p_acteur_id: custom.fanId,
+    });
+    if (notificationError) {
+      console.error("failed to create notification:", notificationError.message);
+    }
+  }
+
   // Confirmed via the explicit join above, never via an undefined fallback:
   // these types have no acceptation/livraison step, so payment success IS
   // delivery.

@@ -5077,6 +5077,376 @@ begin
   raise notice 'PASS: authenticated still holds SELECT on publications_accueil';
 end $$;
 
+-- =======================================================================
+-- Lot 6a: in-app notifications (migration 0034). Fixture: créateur A
+-- (verified, so A can post), fan B, admin D (deliberately not itself
+-- createur_verifie, same "an admin's own verification status is
+-- irrelevant" convention as earlier lots).
+-- =======================================================================
+insert into users (id, createur_verifie, est_admin) values
+  ('60000001-0000-0000-0000-000000000001', true, false),
+  ('60000002-0000-0000-0000-000000000002', false, false),
+  ('60000004-0000-0000-0000-000000000004', false, true);
+
+insert into offres (id, createur_id, type, prix) values
+  ('60000010-0000-0000-0000-000000000010', '60000001-0000-0000-0000-000000000001', 'video', 10);
+
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('60000020-0000-0000-0000-000000000020', '60000002-0000-0000-0000-000000000002', '60000001-0000-0000-0000-000000000001', '60000010-0000-0000-0000-000000000010', 10, 'en_attente'),
+  ('60000021-0000-0000-0000-000000000021', '60000002-0000-0000-0000-000000000002', '60000001-0000-0000-0000-000000000001', '60000010-0000-0000-0000-000000000010', 10, 'en_attente'),
+  ('60000022-0000-0000-0000-000000000022', '60000002-0000-0000-0000-000000000002', '60000001-0000-0000-0000-000000000001', '60000010-0000-0000-0000-000000000010', 10, 'en_attente'),
+  ('60000023-0000-0000-0000-000000000023', '60000002-0000-0000-0000-000000000002', '60000001-0000-0000-0000-000000000001', '60000010-0000-0000-0000-000000000010', 10, 'en_attente');
+
+-- creer_notification() has no direct EXECUTE for anyone but service_role
+-- -- it takes an arbitrary destinataire/acteur with no ownership check
+-- of its own, so a direct authenticated (or anon) call would let anyone
+-- fake a notification impersonating any acteur, for any recipient.
+select set_config('app.current_user_id', '60000001-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform creer_notification('60000002-0000-0000-0000-000000000002', 'demande_recue');
+    raise exception 'TEST FAILED: authenticated was able to call creer_notification() directly';
+  exception when insufficient_privilege then
+    raise notice 'PASS: authenticated has no direct EXECUTE on creer_notification()';
+  end;
+end $$;
+reset role;
+
+select set_config('app.current_user_id', '', false);
+set role anon;
+do $$
+begin
+  begin
+    perform creer_notification('60000002-0000-0000-0000-000000000002', 'demande_recue');
+    raise exception 'TEST FAILED: anon was able to call creer_notification() directly';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE on creer_notification()';
+  end;
+end $$;
+reset role;
+
+do $$
+begin
+  if has_function_privilege('service_role', 'creer_notification(uuid,text,uuid,uuid,uuid)', 'EXECUTE') = false then
+    raise exception 'TEST FAILED: service_role lost EXECUTE on creer_notification() -- the webhook''s direct call would break';
+  end if;
+  raise notice 'PASS: service_role holds EXECUTE on creer_notification() (needed for the CinetPay webhook''s direct call)';
+end $$;
+
+-- accept_transaction() internally calling creer_notification() despite
+-- no direct authenticated grant on it -- the real point of this whole
+-- design, verified here rather than just assumed (see CLAUDE.md).
+select set_config('app.current_user_id', '60000001-0000-0000-0000-000000000001', false);
+set role authenticated;
+select accept_transaction('60000020-0000-0000-0000-000000000020');
+reset role;
+
+do $$
+declare v_count int;
+begin
+  select count(*) into v_count from notifications
+    where destinataire_id = '60000002-0000-0000-0000-000000000002'
+      and type = 'demande_acceptee'
+      and transaction_id = '60000020-0000-0000-0000-000000000020'
+      and acteur_id = '60000001-0000-0000-0000-000000000001';
+  if v_count != 1 then
+    raise exception 'TEST FAILED: expected exactly 1 demande_acceptee notification for B, got %', v_count;
+  end if;
+  raise notice 'PASS: accept_transaction() notifies the fan (demande_acceptee) with the créateur as acteur';
+end $$;
+
+-- refuse_transaction() -> demande_refusee to B.
+select set_config('app.current_user_id', '60000001-0000-0000-0000-000000000001', false);
+set role authenticated;
+select refuse_transaction('60000021-0000-0000-0000-000000000021');
+reset role;
+
+do $$
+declare v_count int;
+begin
+  select count(*) into v_count from notifications
+    where destinataire_id = '60000002-0000-0000-0000-000000000002'
+      and type = 'demande_refusee'
+      and transaction_id = '60000021-0000-0000-0000-000000000021';
+  if v_count != 1 then
+    raise exception 'TEST FAILED: expected exactly 1 demande_refusee notification for B, got %', v_count;
+  end if;
+  raise notice 'PASS: refuse_transaction() notifies the fan (demande_refusee)';
+end $$;
+
+-- deliver_video() -> video_livree to B (TX 20 is already validee from
+-- the accept_transaction() call above).
+select set_config('app.current_user_id', '60000001-0000-0000-0000-000000000001', false);
+set role authenticated;
+select deliver_video('60000020-0000-0000-0000-000000000020', 'videos/test-6a.mp4');
+reset role;
+
+do $$
+declare v_count int;
+begin
+  select count(*) into v_count from notifications
+    where destinataire_id = '60000002-0000-0000-0000-000000000002'
+      and type = 'video_livree'
+      and transaction_id = '60000020-0000-0000-0000-000000000020';
+  if v_count != 1 then
+    raise exception 'TEST FAILED: expected exactly 1 video_livree notification for B, got %', v_count;
+  end if;
+  raise notice 'PASS: deliver_video() notifies the fan (video_livree)';
+end $$;
+
+-- confirmer_livraison_fan() -> confirmation_recue to A, acteur = B.
+select set_config('app.current_user_id', '60000002-0000-0000-0000-000000000002', false);
+set role authenticated;
+select confirmer_livraison_fan('60000020-0000-0000-0000-000000000020');
+reset role;
+
+do $$
+declare v_count int;
+begin
+  select count(*) into v_count from notifications
+    where destinataire_id = '60000001-0000-0000-0000-000000000001'
+      and type = 'confirmation_recue'
+      and transaction_id = '60000020-0000-0000-0000-000000000020'
+      and acteur_id = '60000002-0000-0000-0000-000000000002';
+  if v_count != 1 then
+    raise exception 'TEST FAILED: expected exactly 1 confirmation_recue notification for A, got %', v_count;
+  end if;
+  raise notice 'PASS: confirmer_livraison_fan() notifies the créateur (confirmation_recue) with the fan as acteur';
+end $$;
+
+-- contester_livraison_fan() + resoudre_litige() -- two transactions, one
+-- resolved faveur_createur, one faveur_fan, to prove the notification
+-- recipient tracks the decision, not a fixed party.
+select set_config('app.current_user_id', '60000001-0000-0000-0000-000000000001', false);
+set role authenticated;
+select accept_transaction('60000022-0000-0000-0000-000000000022');
+select deliver_video('60000022-0000-0000-0000-000000000022', 'videos/test-6a-contest1.mp4');
+select accept_transaction('60000023-0000-0000-0000-000000000023');
+select deliver_video('60000023-0000-0000-0000-000000000023', 'videos/test-6a-contest2.mp4');
+reset role;
+
+select set_config('app.current_user_id', '60000002-0000-0000-0000-000000000002', false);
+set role authenticated;
+select contester_livraison_fan('60000022-0000-0000-0000-000000000022');
+select contester_livraison_fan('60000023-0000-0000-0000-000000000023');
+reset role;
+
+do $$
+declare v_count int;
+begin
+  select count(*) into v_count from notifications
+    where destinataire_id = '60000001-0000-0000-0000-000000000001'
+      and type = 'contestation_recue'
+      and acteur_id = '60000002-0000-0000-0000-000000000002'
+      and transaction_id in ('60000022-0000-0000-0000-000000000022', '60000023-0000-0000-0000-000000000023');
+  if v_count != 2 then
+    raise exception 'TEST FAILED: expected exactly 2 contestation_recue notifications for A, got %', v_count;
+  end if;
+  raise notice 'PASS: contester_livraison_fan() notifies the créateur (contestation_recue) with the fan as acteur';
+end $$;
+
+select set_config('app.current_user_id', '60000004-0000-0000-0000-000000000004', false);
+set role authenticated;
+select resoudre_litige('60000022-0000-0000-0000-000000000022', 'faveur_createur');
+select resoudre_litige('60000023-0000-0000-0000-000000000023', 'faveur_fan');
+reset role;
+
+do $$
+declare v_count int;
+begin
+  select count(*) into v_count from notifications
+    where destinataire_id = '60000001-0000-0000-0000-000000000001'
+      and type = 'litige_tranche_createur'
+      and transaction_id = '60000022-0000-0000-0000-000000000022'
+      and acteur_id = '60000004-0000-0000-0000-000000000004';
+  if v_count != 1 then
+    raise exception 'TEST FAILED: expected exactly 1 litige_tranche_createur notification for A, got %', v_count;
+  end if;
+
+  select count(*) into v_count from notifications
+    where destinataire_id = '60000002-0000-0000-0000-000000000002'
+      and type = 'litige_tranche_fan'
+      and transaction_id = '60000023-0000-0000-0000-000000000023'
+      and acteur_id = '60000004-0000-0000-0000-000000000004';
+  if v_count != 1 then
+    raise exception 'TEST FAILED: expected exactly 1 litige_tranche_fan notification for B, got %', v_count;
+  end if;
+  raise notice 'PASS: resoudre_litige() notifies whichever party the decision favored (litige_tranche_createur/litige_tranche_fan), with the admin as acteur';
+end $$;
+
+-- traiter_retrait() -> retrait_traite/retrait_refuse to the créateur who
+-- requested it, with no transaction_id/publication_id (this event is
+-- about a demandes_retrait row, not either of those).
+insert into demandes_retrait (id, createur_id, montant, statut) values
+  ('60000030-0000-0000-0000-000000000030', '60000001-0000-0000-0000-000000000001', 25, 'en_attente'),
+  ('60000031-0000-0000-0000-000000000031', '60000001-0000-0000-0000-000000000001', 25, 'en_attente');
+
+select set_config('app.current_user_id', '60000004-0000-0000-0000-000000000004', false);
+set role authenticated;
+select traiter_retrait('60000030-0000-0000-0000-000000000030', 'traite');
+select traiter_retrait('60000031-0000-0000-0000-000000000031', 'refuse');
+reset role;
+
+do $$
+declare v_count int;
+begin
+  select count(*) into v_count from notifications
+    where destinataire_id = '60000001-0000-0000-0000-000000000001'
+      and type = 'retrait_traite'
+      and acteur_id = '60000004-0000-0000-0000-000000000004'
+      and transaction_id is null and publication_id is null;
+  if v_count != 1 then
+    raise exception 'TEST FAILED: expected exactly 1 retrait_traite notification for A, got %', v_count;
+  end if;
+
+  select count(*) into v_count from notifications
+    where destinataire_id = '60000001-0000-0000-0000-000000000001'
+      and type = 'retrait_refuse'
+      and acteur_id = '60000004-0000-0000-0000-000000000004';
+  if v_count != 1 then
+    raise exception 'TEST FAILED: expected exactly 1 retrait_refuse notification for A, got %', v_count;
+  end if;
+  raise notice 'PASS: traiter_retrait() notifies the créateur (retrait_traite/retrait_refuse), with no transaction_id/publication_id set';
+end $$;
+
+-- toggler_like_publication(): notifies ONLY on the like branch, and
+-- NEVER on a self-like -- both checked explicitly, not just assumed from
+-- "no error was raised".
+select set_config('app.current_user_id', '60000001-0000-0000-0000-000000000001', false);
+set role authenticated;
+select publier_message('Lot 6a test post', null, 'public', 'tous');
+reset role;
+
+do $$
+declare v_pub uuid;
+begin
+  select id into v_pub from publications where contenu = 'Lot 6a test post';
+  perform set_config('app.tmp_6a_pub', v_pub::text, false);
+end $$;
+
+-- B likes A's post -> exactly 1 publication_aimee notification for A.
+select set_config('app.current_user_id', '60000002-0000-0000-0000-000000000002', false);
+set role authenticated;
+select toggler_like_publication(current_setting('app.tmp_6a_pub')::uuid);
+reset role;
+
+do $$
+declare v_count int;
+begin
+  select count(*) into v_count from notifications
+    where destinataire_id = '60000001-0000-0000-0000-000000000001'
+      and type = 'publication_aimee'
+      and publication_id = current_setting('app.tmp_6a_pub')::uuid
+      and acteur_id = '60000002-0000-0000-0000-000000000002';
+  if v_count != 1 then
+    raise exception 'TEST FAILED: expected exactly 1 publication_aimee notification after B''s like, got %', v_count;
+  end if;
+  raise notice 'PASS: toggler_like_publication() notifies the auteur (publication_aimee) on the like branch';
+end $$;
+
+-- A likes their OWN post -> succeeds (liked=true) but must create NO
+-- notification at all -- nobody needs to be told they liked their own
+-- post.
+select set_config('app.current_user_id', '60000001-0000-0000-0000-000000000001', false);
+set role authenticated;
+select toggler_like_publication(current_setting('app.tmp_6a_pub')::uuid);
+reset role;
+
+-- B un-likes (the toggle-off branch) -> must not create a second
+-- notification either.
+select set_config('app.current_user_id', '60000002-0000-0000-0000-000000000002', false);
+set role authenticated;
+select toggler_like_publication(current_setting('app.tmp_6a_pub')::uuid);
+reset role;
+
+do $$
+declare v_count int;
+begin
+  select count(*) into v_count from notifications
+    where publication_id = current_setting('app.tmp_6a_pub')::uuid
+      and type = 'publication_aimee';
+  if v_count != 1 then
+    raise exception 'TEST FAILED: expected the publication_aimee count to stay at 1 (no self-like, no unlike notification), got %', v_count;
+  end if;
+  raise notice 'PASS: neither a self-like nor an unlike creates any (additional) publication_aimee notification';
+end $$;
+
+-- marquer_notifications_lues() -- marks every one of the caller's own
+-- unread notifications read, and nobody else's.
+do $$
+declare v_unread_b int;
+begin
+  select count(*) into v_unread_b from notifications
+    where destinataire_id = '60000002-0000-0000-0000-000000000002' and lu = false;
+  if v_unread_b = 0 then
+    raise exception 'TEST FAILED: précondition -- B should have unread notifications before calling marquer_notifications_lues()';
+  end if;
+end $$;
+
+select set_config('app.current_user_id', '60000002-0000-0000-0000-000000000002', false);
+set role authenticated;
+select marquer_notifications_lues();
+reset role;
+
+do $$
+declare v_unread_b int; v_unread_a int;
+begin
+  select count(*) into v_unread_b from notifications
+    where destinataire_id = '60000002-0000-0000-0000-000000000002' and lu = false;
+  if v_unread_b != 0 then
+    raise exception 'TEST FAILED: B still has % unread notifications after calling marquer_notifications_lues()', v_unread_b;
+  end if;
+
+  select count(*) into v_unread_a from notifications
+    where destinataire_id = '60000001-0000-0000-0000-000000000001' and lu = false;
+  if v_unread_a = 0 then
+    raise exception 'TEST FAILED: A''s own notifications were marked read by B''s call -- marquer_notifications_lues() is not scoped to the caller';
+  end if;
+  raise notice 'PASS: marquer_notifications_lues() marks only the caller''s own notifications read, leaving everyone else''s untouched';
+end $$;
+
+-- marquer_notifications_lues(): anon has no EXECUTE, authenticated with
+-- a NULL auth.uid() is rejected.
+select set_config('app.current_user_id', '', false);
+set role anon;
+do $$
+begin
+  begin
+    perform marquer_notifications_lues();
+    raise exception 'TEST FAILED: anon was able to call marquer_notifications_lues()';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE on marquer_notifications_lues()';
+  end;
+end $$;
+reset role;
+
+select set_config('app.current_user_id', '', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform marquer_notifications_lues();
+    raise exception 'TEST FAILED: authenticated with a NULL auth.uid() was able to call marquer_notifications_lues()';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm != 'not authenticated' then
+      raise exception 'TEST FAILED: unexpected error: %', sqlerrm;
+    end if;
+    raise notice 'PASS: marquer_notifications_lues() rejects a NULL auth.uid()';
+  end;
+end $$;
+reset role;
+
+do $$
+begin
+  if not has_function_privilege('authenticated', 'marquer_notifications_lues()', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lost EXECUTE on marquer_notifications_lues()';
+  end if;
+  raise notice 'PASS: authenticated holds EXECUTE on marquer_notifications_lues()';
+end $$;
+
 do $$
 begin
   raise notice 'ALL SQL CHECKLIST TESTS PASSED';
