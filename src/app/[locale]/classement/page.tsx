@@ -80,7 +80,7 @@ export default async function ClassementPage({
   const rankLabel = (rank: number) => t("rank", { rank });
 
   return (
-    <main className="mx-auto flex max-w-4xl flex-col gap-8 px-5 pb-16 pt-4">
+    <main className="mx-auto flex max-w-4xl flex-col gap-8 px-5 pt-4">
       <div>
         <h1 className="text-2xl font-bold">{t("heading")}</h1>
         <p className="mt-1 text-sm text-foreground-muted">{t("subheading")}</p>

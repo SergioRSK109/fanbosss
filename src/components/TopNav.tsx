@@ -17,12 +17,21 @@ import { Logo } from "@/components/Logo";
 // link, language switcher, and the explorer link once authenticated)
 // stays exactly as before.
 //
+// /classement joined this hidden list in a follow-up: reached from
+// /home's own leaderboard icon, it used to show this entire bar
+// (including its own "🏆 Classement" link, duplicating the page's own
+// "Classement" heading) while having no bottom tab bar at all -- the
+// exact same mismatch /explorer had before it got its own minimal
+// layout (src/app/[locale]/classement/layout.tsx now does the same for
+// this page, so hiding TopNav here doesn't strand anyone without
+// navigation).
+//
 // This needed a client component (usePathname, same locale-stripped
 // pathname AppTabBar already relies on) because the root layout wraps
-// every page in this app, including the 5 connected routes -- a plain
-// Server Component layout has no reliable way to know which route it's
+// every page in this app, including these routes -- a plain Server
+// Component layout has no reliable way to know which route it's
 // currently rendering for.
-const TOP_NAV_HIDDEN_ROUTES = ["/home", "/offres", "/finance", "/explorer", "/parametres"];
+const TOP_NAV_HIDDEN_ROUTES = ["/home", "/offres", "/finance", "/explorer", "/parametres", "/classement"];
 
 export function TopNav({ isAuthenticated }: { isAuthenticated: boolean }) {
   const t = useTranslations("Nav");
