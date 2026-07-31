@@ -14,8 +14,10 @@ import { AppTabBar } from "@/components/AppTabBar";
 // card (public-profile-link text, then just NotificationBell once the
 // link itself was removed) above `{children}`. Both are gone now -- the
 // profile link lives only in /parametres (ParametresForm's own
-// instance), and the notification bell isn't rendered anywhere in the
-// app at the moment (removed from here and from /home's own header).
+// instance), and the notification bell is deliberately not shown on any
+// of the 4 pages still wrapped by this layout -- /home is the one
+// exception, keeping its own NotificationBell instance in its own
+// 3-zone header (see home/page.tsx's own comment), not this shared one.
 // With nothing left to fetch data for, this layout no longer needs its
 // own auth.getUser() call either -- it's back to the same minimal shape
 // as home/layout.tsx and explorer/layout.tsx: just the tab bar around
