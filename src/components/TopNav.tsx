@@ -26,6 +26,15 @@ import { Logo } from "@/components/Logo";
 // this page, so hiding TopNav here doesn't strand anyone without
 // navigation).
 //
+// The public profile page (fanboss.app/@pseudo) had the exact same
+// mismatch, but it can't just be added to this list: /[handle] is a
+// dynamic segment, so the actual pathname is "/@sergio", "/@marie", etc
+// -- never the literal string "/[handle]". A plain .includes() check
+// can never match it no matter what gets added to the array, so it
+// needs its own startsWith("/@") test alongside the fixed-route list
+// (src/app/[locale]/[handle]/layout.tsx supplies the tab bar the same
+// way classement/explorer's own layouts do).
+//
 // This needed a client component (usePathname, same locale-stripped
 // pathname AppTabBar already relies on) because the root layout wraps
 // every page in this app, including these routes -- a plain Server
@@ -37,7 +46,7 @@ export function TopNav({ isAuthenticated }: { isAuthenticated: boolean }) {
   const t = useTranslations("Nav");
   const pathname = usePathname();
 
-  if (TOP_NAV_HIDDEN_ROUTES.includes(pathname)) {
+  if (TOP_NAV_HIDDEN_ROUTES.includes(pathname) || pathname.startsWith("/@")) {
     return null;
   }
 
