@@ -18,7 +18,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 // built so an anonymous visitor could see public posts and a locked
 // teaser for soutiens-only ones). That decision is reversed here: /home
 // now requires a session, same guard every other (app) page
-// (/dashboard, /finance, /offres, /parametres) already uses. The
+// (/finance, /offres, /parametres) already uses. The
 // publications_visibles-backed permalink page (/[handle]/p/[id]) and a
 // créateur's own public profile (/[handle]) are UNAFFECTED and still
 // deliberately stay reachable logged out -- only this one feed page's

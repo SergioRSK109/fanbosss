@@ -8,7 +8,7 @@ import { ReinitialiserMotDePasseForm } from "./ReinitialiserMotDePasseForm";
 // exchanged the emailed code for a session (see
 // mot-de-passe-oublie/MotDePasseOublieForm.tsx). Someone hitting this URL
 // directly without a valid/unexpired session gets sent to /login, same as
-// /dashboard or /parametres would.
+// /home or /parametres would.
 export default async function ReinitialiserMotDePassePage({
   params,
 }: {

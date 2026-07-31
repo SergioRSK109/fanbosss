@@ -9,7 +9,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 // external site right after their session was established.
 export function safeRedirectPath(value: string | null): string {
   if (!value || !value.startsWith("/") || value.startsWith("//")) {
-    return "/dashboard";
+    return "/home";
   }
   return value;
 }
@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
     // confirmation link was opened in a different browser/device than the
     // one that signed up, or a mail client pre-fetched/"scanned" the link
     // before the user clicked it, consuming the one-time code. Redirecting
-    // to /dashboard here regardless would leave whatever session cookie
+    // to /home here regardless would leave whatever session cookie
     // (if any) already in the browser unchanged, silently showing that
     // stale account instead of surfacing the failure.
     return NextResponse.redirect(

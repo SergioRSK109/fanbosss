@@ -9,14 +9,15 @@ import { CompassIcon, GiftIcon, HomeIcon, UserIcon, WalletIcon } from "@/compone
 // hoc from /dashboard's own header.
 //
 // Nav reorg lot: back to 5 tabs, but a different 5 than Lot 5a's. /home
-// stays first; /dashboard ("Performance") is dropped from the bar
-// entirely -- the route itself still works via a direct URL, its content
-// is just slated to be merged into Profile in a future lot, not linked
-// from here anymore. /explorer (the public créateur directory, already
-// existing) is wired in as a new destination. /parametres keeps its URL
-// but is now labelled "Profile"/"Profil" -- same "route name vs. displayed
-// label" split already established for /finance ("Paiements"). Icons are
-// now hand-made SVG (src/components/ui/navIcons.tsx), not emoji, matching
+// stays first; /dashboard ("Performance") was dropped from the bar first
+// (route still worked via a direct URL, just unlinked from here) and was
+// later deleted outright once its content actually merged into Profile
+// (Lot 3 merge follow-up) -- see /parametres/page.tsx. /explorer (the
+// public créateur directory, already existing) is wired in as a new
+// destination. /parametres keeps its URL but is now labelled
+// "Profile"/"Profil" -- same "route name vs. displayed label" split
+// already established for /finance ("Paiements"). Icons are now
+// hand-made SVG (src/components/ui/navIcons.tsx), not emoji, matching
 // the discipline already used for the publication action bar (Lot 5c).
 const TABS = [
   { href: "/home", Icon: HomeIcon, labelKey: "accueil" },

@@ -50,7 +50,7 @@ export function PaiementRetourContent() {
       <p className="text-foreground-muted">
         {t.rich("message", {
           link: (chunks) => (
-            <Link href="/dashboard" className="font-semibold text-brand-600 dark:text-brand-300">
+            <Link href="/home" className="font-semibold text-brand-600 dark:text-brand-300">
               {chunks}
             </Link>
           ),

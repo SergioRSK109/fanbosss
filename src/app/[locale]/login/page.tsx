@@ -10,7 +10,8 @@ import { LoginForm } from "./LoginForm";
 // unconditionally, even for an already-authenticated visitor -- so
 // clicking through from a page that doesn't reflect auth state (Home)
 // landed them right back on a real password prompt. Redirecting an
-// already-authenticated visitor straight to /dashboard closes that.
+// already-authenticated visitor straight to /home closes that (was
+// /dashboard, before that route was merged into /parametres).
 export default async function LoginPage({
   params,
 }: {
@@ -23,7 +24,7 @@ export default async function LoginPage({
   } = await supabase.auth.getUser();
 
   if (user) {
-    redirect({ href: "/dashboard", locale });
+    redirect({ href: "/home", locale });
     return;
   }
 

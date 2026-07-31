@@ -1,21 +1,25 @@
 import { AppTabBar } from "@/components/AppTabBar";
 
 // Lot 3: shared layout for the (app)-group tab-bar destinations still
-// living here (/dashboard, /finance=Paiements, /offres, /parametres=Profile).
-// /home and /explorer now have their own dedicated, minimal layouts
-// instead (src/app/[locale]/home/layout.tsx, src/app/[locale]/explorer/layout.tsx)
+// living here (/finance=Paiements, /offres, /parametres=Profile).
+// /dashboard used to be a fourth here too, until its remaining
+// "Performance" content was merged into /parametres and the route itself
+// deleted outright (Lot 3 merge follow-up) -- see /parametres/page.tsx.
+// /home, /explorer, and /classement now have their own dedicated, minimal
+// layouts instead (src/app/[locale]/home/layout.tsx,
+// src/app/[locale]/explorer/layout.tsx, src/app/[locale]/classement/layout.tsx)
 // -- see the nav reorg lot below for why. A route group ((app), parens =
-// no URL segment) is what lets the remaining 4 keep their existing URLs
+// no URL segment) is what lets the remaining 3 keep their existing URLs
 // -- already used elsewhere as post-login/signup redirect targets --
-// while sharing this nav shell. /admin, /createur/[id], /[handle],
-// /classement etc. stay siblings outside this group, untouched.
+// while sharing this nav shell. /admin, /createur/[id], /[handle] etc.
+// stay siblings outside this group, untouched.
 //
 // Nav reorg lot follow-up: this layout used to also carry an identity
 // card (public-profile-link text, then just NotificationBell once the
 // link itself was removed) above `{children}`. Both are gone now -- the
 // profile link lives only in /parametres (ParametresForm's own
 // instance), and the notification bell is deliberately not shown on any
-// of the 4 pages still wrapped by this layout -- /home is the one
+// of the pages still wrapped by this layout -- /home is the one
 // exception, keeping its own NotificationBell instance in its own
 // 3-zone header (see home/page.tsx's own comment), not this shared one.
 // With nothing left to fetch data for, this layout no longer needs its

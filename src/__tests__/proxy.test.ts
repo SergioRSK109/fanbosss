@@ -33,7 +33,7 @@ describe("proxy matcher", () => {
 
   it("still includes real [locale] pages", () => {
     expect(matcher.test("/login")).toBe(true);
-    expect(matcher.test("/dashboard")).toBe(true);
+    expect(matcher.test("/home")).toBe(true);
     expect(matcher.test("/reinitialiser-mot-de-passe")).toBe(true);
   });
 });
