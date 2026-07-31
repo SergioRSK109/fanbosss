@@ -27,6 +27,15 @@ vi.mock("@/lib/publications", () => ({
   PUBLICATIONS_ACCUEIL_PAGE_SIZE: 10,
 }));
 
+// /home is the one deliberate exception keeping its own NotificationBell
+// (see page.tsx's own comment) -- mocked out the same way
+// getPublicationsAccueil already is, so this test never depends on the
+// fake Supabase client implementing the real notifications query shape.
+vi.mock("@/lib/notifications", () => ({
+  getNotifications: vi.fn(async () => []),
+  getUnreadNotificationCount: vi.fn(async () => 0),
+}));
+
 vi.mock("@/components/PublicationComposer", () => ({
   PublicationComposer: () => null,
 }));
@@ -42,6 +51,11 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 function buildSupabase(user: { id: string } | null) {
   return {
     auth: { getUser: async () => ({ data: { user } }) },
+    from: () => ({
+      select: () => ({
+        eq: () => ({ single: async () => ({ data: null }) }),
+      }),
+    }),
   };
 }
 

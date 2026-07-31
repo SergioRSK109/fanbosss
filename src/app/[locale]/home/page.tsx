@@ -1,9 +1,11 @@
 import { getTranslations } from "next-intl/server";
 import { Link, redirect } from "@/i18n/navigation";
 import { Logo } from "@/components/Logo";
+import { NotificationBell } from "@/components/NotificationBell";
 import { PublicationComposer } from "@/components/PublicationComposer";
 import { PublicationsList } from "@/components/PublicationsList";
 import { LeaderboardIcon } from "@/components/ui/navIcons";
+import { getNotifications, getUnreadNotificationCount } from "@/lib/notifications";
 import {
   getPublicationsAccueil,
   getViewerContext,
@@ -25,12 +27,15 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 // safe: getPublicationsAccueil() below is now only ever called for an
 // authenticated caller.
 //
-// Nav reorg lot: this page now builds its own header (leaderboard icon
-// -> /classement, the FanBoss logo) in place of the plain "Home"/"Accueil"
-// title it used to show. NotificationBell used to sit here too (right
-// slot), but it's no longer rendered anywhere in the app -- the right
-// slot is kept as an invisible same-sized spacer purely so the logo
-// stays centered, not because anything renders there.
+// Nav reorg lot: this page builds its own 3-zone header (leaderboard icon
+// -> /classement, the FanBoss logo, NotificationBell) in place of the
+// plain "Home"/"Accueil" title it used to show. /home is the one
+// deliberate exception to the bell's removal everywhere else in the app
+// (the shared (app) layout's own identity card, which used to also carry
+// it, no longer renders it at all) -- this page keeps its own instance,
+// in its original right-hand corner, fetching its own pseudo (needed for
+// publication_aimee's permalink href, see notificationHref()'s own
+// comment) and notifications.
 export default async function HomePage({
   params,
   searchParams,
@@ -51,6 +56,14 @@ export default async function HomePage({
     redirect({ href: "/login", locale });
     return;
   }
+
+  // publication_aimee's permalink needs the VIEWER's own pseudo (see
+  // notificationHref()'s own comment).
+  const { data: profil } = await supabase.from("users").select("pseudo").eq("id", user.id).single();
+  const [notifications, unreadCount] = await Promise.all([
+    getNotifications(supabase, profil?.pseudo ?? null),
+    getUnreadNotificationCount(supabase),
+  ]);
 
   // The composer is shown only for an admin or a créateur_verifie (the
   // brief's own rule) -- but publier_message() re-checks this exact same
@@ -82,7 +95,7 @@ export default async function HomePage({
           <LeaderboardIcon className="h-6 w-6" />
         </Link>
         <Logo className="h-7 w-auto" />
-        <div className="h-9 w-9" aria-hidden />
+        <NotificationBell notifications={notifications} unreadCount={unreadCount} />
       </header>
 
       {canManage && <PublicationComposer />}
