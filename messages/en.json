@@ -11,10 +11,10 @@
   "AppTabBar": {
     "navLabel": "Main navigation",
     "accueil": "Home",
-    "performance": "Performance",
-    "paiements": "Payments",
     "offres": "Offers",
-    "reglages": "Settings"
+    "paiements": "Payments",
+    "explorer": "Explore",
+    "profile": "Profile"
   },
   "Notifications": {
     "ariaLabel": "Notifications",
@@ -37,7 +37,6 @@
     }
   },
   "HomePage": {
-    "heading": "Home",
     "previous": "Previous",
     "next": "Next",
     "pageIndicator": "Page {page} / {total}"
@@ -387,7 +386,8 @@
     "newPasswordPlaceholder": "New password",
     "confirmPasswordPlaceholder": "Confirm new password",
     "passwordMismatch": "Passwords don't match.",
-    "passwordSavedNotice": "Password changed."
+    "passwordSavedNotice": "Password changed.",
+    "languageLabel": "Language"
   },
   "PhotoCropper": {
     "tooLarge": "This image is too large. Choose a lighter photo.",

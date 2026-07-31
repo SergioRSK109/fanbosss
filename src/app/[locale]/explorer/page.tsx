@@ -107,7 +107,7 @@ export default async function ExplorerPage({
   }
 
   return (
-    <main className="mx-auto max-w-2xl px-5 pb-16 pt-4">
+    <main className="mx-auto max-w-2xl px-5 pt-4">
       <h1 className="text-2xl font-bold">{t("heading")}</h1>
       <p className="mt-1 text-sm text-foreground-muted">{t("subheading")}</p>
 

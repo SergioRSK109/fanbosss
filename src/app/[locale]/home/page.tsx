@@ -1,7 +1,11 @@
 import { getTranslations } from "next-intl/server";
 import { Link, redirect } from "@/i18n/navigation";
+import { Logo } from "@/components/Logo";
+import { NotificationBell } from "@/components/NotificationBell";
 import { PublicationComposer } from "@/components/PublicationComposer";
 import { PublicationsList } from "@/components/PublicationsList";
+import { LeaderboardIcon } from "@/components/ui/navIcons";
+import { getNotifications, getUnreadNotificationCount } from "@/lib/notifications";
 import {
   getPublicationsAccueil,
   getViewerContext,
@@ -22,6 +26,15 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 // to match (migration 0033) -- this redirect is what makes that revoke
 // safe: getPublicationsAccueil() below is now only ever called for an
 // authenticated caller.
+//
+// Nav reorg lot: this page now builds its own 3-zone header (leaderboard
+// icon -> /classement, the FanBoss logo, NotificationBell) in place of
+// the plain "Home"/"Accueil" title it used to show. NotificationBell used
+// to be fetched/rendered by the shared (app) layout's generic identity
+// card -- /home moved out of that route group (see home/layout.tsx) so
+// it fetches its own pseudo (needed for publication_aimee's permalink
+// href, same reasoning as the old shared layout) and notifications here
+// instead.
 export default async function HomePage({
   params,
   searchParams,
@@ -32,6 +45,7 @@ export default async function HomePage({
   const { locale } = await params;
   const sp = await searchParams;
   const t = await getTranslations({ locale, namespace: "HomePage" });
+  const tNav = await getTranslations({ locale, namespace: "Nav" });
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
@@ -41,6 +55,15 @@ export default async function HomePage({
     redirect({ href: "/login", locale });
     return;
   }
+
+  // publication_aimee's permalink needs the VIEWER's own pseudo (see
+  // notificationHref()'s own comment) -- same reasoning the old shared
+  // (app) layout used before this page fetched it itself.
+  const { data: profil } = await supabase.from("users").select("pseudo").eq("id", user.id).single();
+  const [notifications, unreadCount] = await Promise.all([
+    getNotifications(supabase, profil?.pseudo ?? null),
+    getUnreadNotificationCount(supabase),
+  ]);
 
   // The composer is shown only for an admin or a créateur_verifie (the
   // brief's own rule) -- but publier_message() re-checks this exact same
@@ -63,7 +86,17 @@ export default async function HomePage({
 
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-6 p-5 sm:p-6">
-      <h1 className="text-2xl font-bold">{t("heading")}</h1>
+      <header className="flex items-center justify-between">
+        <Link
+          href="/classement"
+          aria-label={tNav("classement")}
+          className="flex h-9 w-9 items-center justify-center rounded-full text-brand-600 hover:bg-surface-muted dark:text-brand-300"
+        >
+          <LeaderboardIcon className="h-6 w-6" />
+        </Link>
+        <Logo className="h-7 w-auto" />
+        <NotificationBell notifications={notifications} unreadCount={unreadCount} />
+      </header>
 
       {canManage && <PublicationComposer />}
 
