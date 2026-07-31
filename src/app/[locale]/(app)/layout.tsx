@@ -1,5 +1,3 @@
-import { getTranslations } from "next-intl/server";
-import { Link } from "@/i18n/navigation";
 import { AppTabBar } from "@/components/AppTabBar";
 import { NotificationBell } from "@/components/NotificationBell";
 import { getNotifications, getUnreadNotificationCount } from "@/lib/notifications";
@@ -15,44 +13,37 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 // while sharing this nav shell. /admin, /createur/[id], /[handle],
 // /classement etc. stay siblings outside this group, untouched.
 //
-// Nav reorg lot: CopyProfileLinkButton no longer renders here at all --
-// it was showing "everywhere via this shared layout" (including on
-// /home, where it didn't belong), so it's been consolidated to live only
-// in /parametres, where ParametresForm already renders its own instance
-// next to the pseudo field. The rest of the identity card (public profile
-// link text + NotificationBell) stays exactly as before for the pages
-// still wrapped by this layout -- /home builds its own bespoke header
-// (leaderboard/logo/bell) instead, which is why it moved out of this
-// group rather than needing a route-conditional here.
+// Nav reorg lot follow-up: the public-profile-link text/link ("Ton profil
+// public : fanboss.app/@pseudo") no longer renders here either, same
+// reasoning as CopyProfileLinkButton's own earlier removal from this file
+// -- it's redundant now that it only ever needs to live in /parametres
+// (via ParametresForm's own instance), and showing it here duplicated
+// that on every one of these 4 pages for no reason. Only NotificationBell
+// remains from the old identity card; /home builds its own bespoke bell
+// placement instead (leaderboard/logo/bell), which is why it moved out of
+// this route group rather than needing a route-conditional here.
 //
-// This does mean a third auth.getUser() call per request (root layout.tsx
-// already does one for the Explorer nav link, each of the 4 pages does its
-// own for its redirect-if-logged-out guard) -- same pattern already
-// established by the root layout, not a new one. If there's no user (a
-// direct hit on one of these URLs while logged out), this layout just
-// renders nothing for the profile card and lets the page itself perform
-// the actual redirect() to /login, exactly as before this lot.
-export default async function AppLayout({
-  children,
-  params,
-}: {
-  children: React.ReactNode;
-  params: Promise<{ locale: string }>;
-}) {
-  const { locale } = await params;
-  const t = await getTranslations({ locale, namespace: "Dashboard" });
+// This does mean a second auth.getUser() call per request (root
+// layout.tsx already does one for the Explorer nav link, each of the 4
+// pages does its own for its redirect-if-logged-out guard) -- same
+// pattern already established by the root layout, not a new one. If
+// there's no user (a direct hit on one of these URLs while logged out),
+// this layout just renders nothing for the bell and lets the page itself
+// perform the actual redirect() to /login, exactly as before this lot.
+export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
+  // publication_aimee's permalink needs the VIEWER's own pseudo (see
+  // notificationHref()'s own comment) -- still needed purely to resolve
+  // that href, even though the pseudo is no longer displayed anywhere in
+  // this layout itself.
   const { data: profil } = user
     ? await supabase.from("users").select("pseudo").eq("id", user.id).single()
     : { data: null as { pseudo: string | null } | null };
 
-  // publication_aimee's permalink needs the VIEWER's own pseudo (see
-  // notificationHref()'s own comment), so notifications are only fetched
-  // once profil is known.
   const [notifications, unreadCount] = user
     ? await Promise.all([
         getNotifications(supabase, profil?.pseudo ?? null),
@@ -64,28 +55,8 @@ export default async function AppLayout({
     <div className="flex flex-1 flex-col">
       {user && (
         <div className="mx-auto w-full max-w-2xl px-5 pt-5 sm:px-6">
-          <div className="card flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm">
-            <div>
-              <span className="text-foreground-muted">{t("publicProfileLabel")}</span>
-              {profil?.pseudo ? (
-                <Link
-                  href={`/@${profil.pseudo}`}
-                  className="font-semibold text-brand-600 dark:text-brand-300"
-                >
-                  fanboss.app/@{profil.pseudo}
-                </Link>
-              ) : (
-                <>
-                  <span className="text-foreground-muted">{t("noPseudoYet")}</span>
-                  <Link href="/parametres" className="font-semibold text-brand-600 dark:text-brand-300">
-                    {t("choosePseudo")}
-                  </Link>
-                </>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <NotificationBell notifications={notifications} unreadCount={unreadCount} />
-            </div>
+          <div className="card flex items-center justify-end gap-3 px-4 py-3 text-sm">
+            <NotificationBell notifications={notifications} unreadCount={unreadCount} />
           </div>
         </div>
       )}

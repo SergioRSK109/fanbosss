@@ -5,26 +5,32 @@ import { Link, usePathname } from "@/i18n/navigation";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { Logo } from "@/components/Logo";
 
-// Nav reorg lot: LanguageSwitcher used to render unconditionally in the
-// root layout, "everywhere" -- including on the 5 AppTabBar destinations,
-// which is exactly the kind of clutter this lot's brief calls out. It's
-// now hidden on those 5 (an instance lives in /parametres's own content
-// instead, alongside CopyProfileLinkButton) and stays visible everywhere
-// else -- /login, /signup, public profile pages, etc. -- so a
-// non-French-speaking visitor can still change language before ever
-// creating an account.
+// Nav reorg lot: this whole bar (logo, classement link, explorer link,
+// LanguageSwitcher) used to render unconditionally from the root layout,
+// "everywhere" -- including on the 5 AppTabBar destinations, which
+// already have their own navigation (Home's own dedicated header, the
+// bottom tab bar for all 5) and don't need a second one duplicating it.
+// TopNav renders nothing at all on those 5 routes now, not just hiding
+// the language switcher -- LanguageSwitcher itself still gets its own
+// dedicated instance in /parametres's own content. Everywhere else --
+// /login, /signup, public profile pages, etc. -- this bar (classement
+// link, language switcher, and the explorer link once authenticated)
+// stays exactly as before.
 //
 // This needed a client component (usePathname, same locale-stripped
 // pathname AppTabBar already relies on) because the root layout wraps
 // every page in this app, including the 5 connected routes -- a plain
 // Server Component layout has no reliable way to know which route it's
 // currently rendering for.
-const LANGUAGE_SWITCHER_HIDDEN_ROUTES = ["/home", "/offres", "/finance", "/explorer", "/parametres"];
+const TOP_NAV_HIDDEN_ROUTES = ["/home", "/offres", "/finance", "/explorer", "/parametres"];
 
 export function TopNav({ isAuthenticated }: { isAuthenticated: boolean }) {
   const t = useTranslations("Nav");
   const pathname = usePathname();
-  const showLanguageSwitcher = !LANGUAGE_SWITCHER_HIDDEN_ROUTES.includes(pathname);
+
+  if (TOP_NAV_HIDDEN_ROUTES.includes(pathname)) {
+    return null;
+  }
 
   return (
     <div className="flex items-center justify-between px-4 py-3">
@@ -45,7 +51,7 @@ export function TopNav({ isAuthenticated }: { isAuthenticated: boolean }) {
             🔎 {t("explorer")}
           </Link>
         )}
-        {showLanguageSwitcher && <LanguageSwitcher />}
+        <LanguageSwitcher />
       </div>
     </div>
   );

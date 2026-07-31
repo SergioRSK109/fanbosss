@@ -257,9 +257,6 @@
   },
   "Dashboard": {
     "heading": "Performance",
-    "publicProfileLabel": "Your public profile: ",
-    "noPseudoYet": "no handle yet — ",
-    "choosePseudo": "choose one",
     "demandesHeading": "Requests awaiting your response",
     "nouvellesDemandes": "{count, plural, one {# new} other {# new}}",
     "livraisonsHeading": "Pending deliveries",

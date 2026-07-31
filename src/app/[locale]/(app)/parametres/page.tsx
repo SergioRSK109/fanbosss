@@ -62,7 +62,7 @@ export default async function ParametresPage({
       : null;
 
   return (
-    <main className="mx-auto max-w-sm p-6">
+    <main className="mx-auto max-w-2xl p-6">
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-bold">{t("heading")}</h1>
         <LogoutButton />
