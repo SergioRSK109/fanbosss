@@ -43,7 +43,7 @@ export function ReinitialiserMotDePasseForm() {
     }
 
     setStatus("done");
-    router.push("/dashboard");
+    router.push("/home");
     router.refresh();
   }
 

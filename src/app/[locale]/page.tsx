@@ -43,7 +43,7 @@ export default async function Home({
 
       <div className="relative flex w-full max-w-xs flex-col gap-3">
         {user ? (
-          <Link href="/dashboard" className={buttonClass("primary", "lg")}>
+          <Link href="/home" className={buttonClass("primary", "lg")}>
             {t("dashboard")}
           </Link>
         ) : (

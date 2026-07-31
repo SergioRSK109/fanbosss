@@ -17,7 +17,7 @@ export default async function SignupPage({
   } = await supabase.auth.getUser();
 
   if (user) {
-    redirect({ href: "/dashboard", locale });
+    redirect({ href: "/home", locale });
     return;
   }
 

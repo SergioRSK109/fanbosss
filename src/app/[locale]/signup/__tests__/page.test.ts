@@ -31,7 +31,7 @@ describe("GET /[locale]/signup", () => {
     vi.clearAllMocks();
   });
 
-  it("redirects an already-authenticated visitor to /dashboard instead of showing the form", async () => {
+  it("redirects an already-authenticated visitor to /home instead of showing the form", async () => {
     vi.mocked(createSupabaseServerClient).mockResolvedValue(
       buildSupabaseMock({ id: "user-1" }) as unknown as Awaited<
         ReturnType<typeof createSupabaseServerClient>
@@ -44,7 +44,7 @@ describe("GET /[locale]/signup", () => {
       SignupPage({ params: Promise.resolve({ locale: "fr" }) }),
     ).rejects.toThrow("NEXT_REDIRECT");
 
-    expect(redirect).toHaveBeenCalledWith({ href: "/dashboard", locale: "fr" });
+    expect(redirect).toHaveBeenCalledWith({ href: "/home", locale: "fr" });
   });
 
   it("renders the signup form for a logged-out visitor, without redirecting", async () => {

@@ -70,7 +70,7 @@ describe("GET /[locale] (Home)", () => {
     vi.clearAllMocks();
   });
 
-  it("shows a dashboard CTA (not signup/login) for an already-authenticated visitor", async () => {
+  it("shows a /home CTA (not signup/login) for an already-authenticated visitor", async () => {
     vi.mocked(createSupabaseServerClient).mockResolvedValue(
       buildSupabaseMock({ id: "user-1" }) as unknown as Awaited<
         ReturnType<typeof createSupabaseServerClient>
@@ -81,12 +81,12 @@ describe("GET /[locale] (Home)", () => {
     const element = await Home({ params: Promise.resolve({ locale: "fr" }) });
     const hrefs = collectHrefs(element);
 
-    expect(hrefs).toContain("/dashboard");
+    expect(hrefs).toContain("/home");
     expect(hrefs).not.toContain("/signup");
     expect(hrefs).not.toContain("/login");
   });
 
-  it("shows signup/login CTAs (not dashboard) for a logged-out visitor", async () => {
+  it("shows signup/login CTAs (not /home) for a logged-out visitor", async () => {
     vi.mocked(createSupabaseServerClient).mockResolvedValue(
       buildSupabaseMock(null) as unknown as Awaited<
         ReturnType<typeof createSupabaseServerClient>
@@ -99,6 +99,6 @@ describe("GET /[locale] (Home)", () => {
 
     expect(hrefs).toContain("/signup");
     expect(hrefs).toContain("/login");
-    expect(hrefs).not.toContain("/dashboard");
+    expect(hrefs).not.toContain("/home");
   });
 });

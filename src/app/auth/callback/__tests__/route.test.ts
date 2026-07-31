@@ -12,19 +12,19 @@ describe("safeRedirectPath", () => {
     );
   });
 
-  it("defaults to /dashboard when missing", () => {
-    expect(safeRedirectPath(null)).toBe("/dashboard");
+  it("defaults to /home when missing", () => {
+    expect(safeRedirectPath(null)).toBe("/home");
   });
 
   it("rejects an absolute URL", () => {
-    expect(safeRedirectPath("https://evil.example/phishing")).toBe("/dashboard");
+    expect(safeRedirectPath("https://evil.example/phishing")).toBe("/home");
   });
 
   it("rejects a protocol-relative URL", () => {
-    expect(safeRedirectPath("//evil.example")).toBe("/dashboard");
+    expect(safeRedirectPath("//evil.example")).toBe("/home");
   });
 
   it("rejects a value that doesn't start with a slash", () => {
-    expect(safeRedirectPath("dashboard")).toBe("/dashboard");
+    expect(safeRedirectPath("home")).toBe("/home");
   });
 });

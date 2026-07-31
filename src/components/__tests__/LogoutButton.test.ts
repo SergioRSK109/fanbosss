@@ -13,13 +13,13 @@ const { signOutAndRedirect } = await import("@/components/LogoutButton");
 
 // Regression test for "there is no logout anywhere in the app". Confirms
 // the button doesn't just navigate away (which would leave the session
-// cookie intact and let a direct revisit to /dashboard skip past auth) --
-// supabase.auth.signOut() must actually resolve *before* the redirect
-// fires. The real, live-browser proof that this invalidates the session
-// server-side (not just clearing local state) is documented in CLAUDE.md
-// under "Logout" -- signOut()'s default "global" scope revokes the
-// session via the Supabase Auth API, and a direct revisit to /dashboard
-// afterward was verified to bounce back to /login.
+// cookie intact and let a direct revisit to a protected page skip past
+// auth) -- supabase.auth.signOut() must actually resolve *before* the
+// redirect fires. The real, live-browser proof that this invalidates the
+// session server-side (not just clearing local state) is documented in
+// CLAUDE.md under "Logout" -- signOut()'s default "global" scope revokes
+// the session via the Supabase Auth API, and a direct revisit to a
+// protected page afterward was verified to bounce back to /login.
 describe("signOutAndRedirect", () => {
   it("calls supabase.auth.signOut() before navigating home", async () => {
     const order: string[] = [];
