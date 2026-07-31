@@ -86,7 +86,7 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
     ranks.volume !== null || ranks.reactivite !== null || ranks.progression !== null;
 
   return (
-    <main className="mx-auto max-w-md flex flex-col pb-12">
+    <main className="mx-auto max-w-2xl flex flex-col pb-12">
       <div className="rounded-b-[2.5rem] bg-gradient-to-br from-brand-500 via-brand-600 to-accent-500 px-5 pt-4 pb-16">
         <div className="flex justify-end">
           <ReportButton createurId={createurId} />
