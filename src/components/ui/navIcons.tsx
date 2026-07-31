@@ -154,12 +154,13 @@ export function UserIcon({ className, active }: TabIconProps) {
   );
 }
 
-// Ascending bars (a podium/bar-chart reading of "leaderboard"), used only
-// in /home's own header linking to /classement -- deliberately distinct
-// from the trophy emoji (🏆) the root nav's own /classement link already
-// uses elsewhere, since this one has to work as a plain SVG glyph. No
-// active/inactive state: it's a static link, not a toggle, same reasoning
-// as icons.tsx's own MenuIcon.
+// Classic champions cup: a flared bowl on a stem/base, with a small
+// looped handle on each side -- used only in /home's own header linking
+// to /classement, echoing the trophy emoji (🏆) the root nav's own
+// /classement link already uses elsewhere, but as a plain hand-made SVG
+// glyph rather than an emoji, same convention as every other icon in this
+// file. No active/inactive state: it's a static link, not a toggle, same
+// reasoning as icons.tsx's own MenuIcon.
 export function LeaderboardIcon({ className }: { className?: string }) {
   return (
     <svg
@@ -172,9 +173,14 @@ export function LeaderboardIcon({ className }: { className?: string }) {
       strokeLinejoin="round"
       aria-hidden
     >
-      <rect x="4" y="13" width="4" height="7" />
-      <rect x="10" y="8.5" width="4" height="11.5" />
-      <rect x="16" y="4.5" width="4" height="15.5" />
+      {/* Bowl: wide flared rim tapering down to a narrow point at the stem */}
+      <path d="M7.5 4h9l-1.2 5c-.4 2.5-1.7 4.5-3.3 4.5s-2.9-2-3.3-4.5Z" />
+      {/* Side handles, one loop each */}
+      <path d="M7.8 5.4a2.6 2.3 0 0 0 0 4.6" />
+      <path d="M16.2 5.4a2.6 2.3 0 0 1 0 4.6" />
+      {/* Stem + base */}
+      <line x1="12" y1="13.5" x2="12" y2="16.5" />
+      <path d="M9 16.5h6M8 19h8" />
     </svg>
   );
 }
