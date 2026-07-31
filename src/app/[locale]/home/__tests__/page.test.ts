@@ -27,16 +27,6 @@ vi.mock("@/lib/publications", () => ({
   PUBLICATIONS_ACCUEIL_PAGE_SIZE: 10,
 }));
 
-// Nav reorg lot: /home now fetches its own notifications (bell moved out
-// of the shared (app) layout into this page's own header) -- mocked out
-// the same way getPublicationsAccueil already is, so this test never
-// depends on the fake Supabase client implementing the real
-// notifications query shape.
-vi.mock("@/lib/notifications", () => ({
-  getNotifications: vi.fn(async () => []),
-  getUnreadNotificationCount: vi.fn(async () => 0),
-}));
-
 vi.mock("@/components/PublicationComposer", () => ({
   PublicationComposer: () => null,
 }));
@@ -52,11 +42,6 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 function buildSupabase(user: { id: string } | null) {
   return {
     auth: { getUser: async () => ({ data: { user } }) },
-    from: () => ({
-      select: () => ({
-        eq: () => ({ single: async () => ({ data: null }) }),
-      }),
-    }),
   };
 }
 
