@@ -2,25 +2,28 @@
 
 import { useTranslations } from "next-intl";
 import { Link, usePathname } from "@/i18n/navigation";
+import { CompassIcon, GiftIcon, HomeIcon, UserIcon, WalletIcon } from "@/components/ui/navIcons";
 
 // Lot 3: the app's fixed bottom tab bar, mobile-app style, confirmed with
 // the founder, rather than the previous mix of separate pages linked ad
-// hoc from /dashboard's own header. The route stays /finance (internal
-// name unchanged since Lot 2b) -- only the displayed label is
-// "Paiements"/"Payments", same "route name vs. label" split the old
-// dashboard header link already established.
+// hoc from /dashboard's own header.
 //
-// Lot 5a: "Accueil" (/home) added as the new 1st tab, 5 total -- unlike
-// the other 4, /home stays reachable while logged out (see its own page
-// for why), so this bar itself renders the same regardless of auth state
-// (as it already did before this lot); only the destination pages
-// themselves decide whether to require a session.
+// Nav reorg lot: back to 5 tabs, but a different 5 than Lot 5a's. /home
+// stays first; /dashboard ("Performance") is dropped from the bar
+// entirely -- the route itself still works via a direct URL, its content
+// is just slated to be merged into Profile in a future lot, not linked
+// from here anymore. /explorer (the public créateur directory, already
+// existing) is wired in as a new destination. /parametres keeps its URL
+// but is now labelled "Profile"/"Profil" -- same "route name vs. displayed
+// label" split already established for /finance ("Paiements"). Icons are
+// now hand-made SVG (src/components/ui/navIcons.tsx), not emoji, matching
+// the discipline already used for the publication action bar (Lot 5c).
 const TABS = [
-  { href: "/home", icon: "🏠", labelKey: "accueil" },
-  { href: "/offres", icon: "🎁", labelKey: "offres" },
-  { href: "/finance", icon: "💰", labelKey: "paiements" },
-  { href: "/dashboard", icon: "📊", labelKey: "performance" },
-  { href: "/parametres", icon: "⚙️", labelKey: "reglages" },
+  { href: "/home", Icon: HomeIcon, labelKey: "accueil" },
+  { href: "/offres", Icon: GiftIcon, labelKey: "offres" },
+  { href: "/finance", Icon: WalletIcon, labelKey: "paiements" },
+  { href: "/explorer", Icon: CompassIcon, labelKey: "explorer" },
+  { href: "/parametres", Icon: UserIcon, labelKey: "profile" },
 ] as const;
 
 export function AppTabBar() {
@@ -46,9 +49,7 @@ export function AppTabBar() {
                   : "text-foreground-muted hover:text-foreground"
               }`}
             >
-              <span aria-hidden className="text-lg leading-none">
-                {tab.icon}
-              </span>
+              <tab.Icon className="h-5 w-5" active={active} />
               {t(tab.labelKey)}
             </Link>
           );

@@ -1,23 +1,29 @@
 import { getTranslations } from "next-intl/server";
 import { Link } from "@/i18n/navigation";
 import { AppTabBar } from "@/components/AppTabBar";
-import { CopyProfileLinkButton } from "@/components/CopyProfileLinkButton";
 import { NotificationBell } from "@/components/NotificationBell";
 import { getNotifications, getUnreadNotificationCount } from "@/lib/notifications";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
-// Lot 3: shared layout for the 4 tab-bar destinations (/dashboard=Performance,
-// /finance=Paiements, /offres, /parametres=Réglages). A route group
-// ((app), parens = no URL segment) is what lets these keep their existing
-// URLs -- already used elsewhere as post-login/signup redirect targets --
+// Lot 3: shared layout for the (app)-group tab-bar destinations still
+// living here (/dashboard, /finance=Paiements, /offres, /parametres=Profile).
+// /home and /explorer now have their own dedicated, minimal layouts
+// instead (src/app/[locale]/home/layout.tsx, src/app/[locale]/explorer/layout.tsx)
+// -- see the nav reorg lot below for why. A route group ((app), parens =
+// no URL segment) is what lets the remaining 4 keep their existing URLs
+// -- already used elsewhere as post-login/signup redirect targets --
 // while sharing this nav shell. /admin, /createur/[id], /[handle],
-// /explorer, /classement etc. stay siblings outside this group, untouched.
+// /classement etc. stay siblings outside this group, untouched.
 //
-// The public profile link (fanboss.app/@pseudo + copy button) doesn't
-// belong to any single tab -- it's identity, not one of the 4 categories
-// (Performance/Paiements/Offres/Réglages) -- so per the brief it's kept
-// visible above the tab bar on all 4 pages, via this shared layout,
-// rather than duplicated into each page or awkwardly forced into one tab.
+// Nav reorg lot: CopyProfileLinkButton no longer renders here at all --
+// it was showing "everywhere via this shared layout" (including on
+// /home, where it didn't belong), so it's been consolidated to live only
+// in /parametres, where ParametresForm already renders its own instance
+// next to the pseudo field. The rest of the identity card (public profile
+// link text + NotificationBell) stays exactly as before for the pages
+// still wrapped by this layout -- /home builds its own bespoke header
+// (leaderboard/logo/bell) instead, which is why it moved out of this
+// group rather than needing a route-conditional here.
 //
 // This does mean a third auth.getUser() call per request (root layout.tsx
 // already does one for the Explorer nav link, each of the 4 pages does its
@@ -78,7 +84,6 @@ export default async function AppLayout({
               )}
             </div>
             <div className="flex items-center gap-2">
-              {profil?.pseudo && <CopyProfileLinkButton pseudo={profil.pseudo} />}
               <NotificationBell notifications={notifications} unreadCount={unreadCount} />
             </div>
           </div>

@@ -27,6 +27,16 @@ vi.mock("@/lib/publications", () => ({
   PUBLICATIONS_ACCUEIL_PAGE_SIZE: 10,
 }));
 
+// Nav reorg lot: /home now fetches its own notifications (bell moved out
+// of the shared (app) layout into this page's own header) -- mocked out
+// the same way getPublicationsAccueil already is, so this test never
+// depends on the fake Supabase client implementing the real
+// notifications query shape.
+vi.mock("@/lib/notifications", () => ({
+  getNotifications: vi.fn(async () => []),
+  getUnreadNotificationCount: vi.fn(async () => 0),
+}));
+
 vi.mock("@/components/PublicationComposer", () => ({
   PublicationComposer: () => null,
 }));
@@ -50,7 +60,7 @@ function buildSupabase(user: { id: string } | null) {
   };
 }
 
-describe("GET /[locale]/(app)/home", () => {
+describe("GET /[locale]/home", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -60,7 +70,7 @@ describe("GET /[locale]/(app)/home", () => {
       buildSupabase(null) as unknown as Awaited<ReturnType<typeof createSupabaseServerClient>>,
     );
 
-    const { default: HomePage } = await import("@/app/[locale]/(app)/home/page");
+    const { default: HomePage } = await import("@/app/[locale]/home/page");
 
     await expect(
       HomePage({
@@ -81,7 +91,7 @@ describe("GET /[locale]/(app)/home", () => {
       buildSupabase({ id: "u1" }) as unknown as Awaited<ReturnType<typeof createSupabaseServerClient>>,
     );
 
-    const { default: HomePage } = await import("@/app/[locale]/(app)/home/page");
+    const { default: HomePage } = await import("@/app/[locale]/home/page");
     const result = await HomePage({
       params: Promise.resolve({ locale: "fr" }),
       searchParams: Promise.resolve({}),

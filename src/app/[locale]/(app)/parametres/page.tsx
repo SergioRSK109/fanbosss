@@ -1,5 +1,6 @@
 import { getTranslations } from "next-intl/server";
 import { redirect } from "@/i18n/navigation";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { LogoutButton } from "@/components/LogoutButton";
 import { ParametresForm } from "@/components/ParametresForm";
 import { VerificationForm } from "@/components/VerificationForm";
@@ -65,6 +66,14 @@ export default async function ParametresPage({
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-bold">{t("heading")}</h1>
         <LogoutButton />
+      </div>
+      {/* Nav reorg lot: LanguageSwitcher is hidden on the 5 AppTabBar
+          routes (see TopNav.tsx) -- this is its dedicated home instead,
+          same "consolidate into Profile" move as CopyProfileLinkButton
+          (already rendered by ParametresForm's own pseudo block). */}
+      <div className="mb-6 flex items-center justify-between">
+        <span className="text-sm font-medium text-foreground-muted">{t("languageLabel")}</span>
+        <LanguageSwitcher />
       </div>
       <ParametresForm
         nomAffichage={profil?.nom_affichage ?? null}
