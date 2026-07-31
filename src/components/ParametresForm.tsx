@@ -8,6 +8,7 @@ import { buttonClass } from "@/components/ui/button-styles";
 import { inputClass, labelClass } from "@/components/ui/field-styles";
 import { ZoomablePhoto } from "@/components/ui/ZoomablePhoto";
 import { PhotoCropper } from "@/components/PhotoCropper";
+import { processCoverPhotoFile } from "@/lib/coverCrop";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { PSEUDO_COOLDOWN_MS, PSEUDO_FORMAT_REGEX, PSEUDO_MOTS_RESERVES } from "@/lib/validation";
 
@@ -100,6 +101,7 @@ export function ParametresForm({
   masqueExploration,
   badgeFidelitePublic,
   photoUrl,
+  couvertureUrl,
 }: {
   nomAffichage: string | null;
   pseudo: string | null;
@@ -116,6 +118,7 @@ export function ParametresForm({
   masqueExploration: boolean;
   badgeFidelitePublic: boolean;
   photoUrl: string | null;
+  couvertureUrl: string | null;
 }) {
   const t = useTranslations("Parametres");
   const tCommon = useTranslations("Common");
@@ -154,8 +157,28 @@ export function ParametresForm({
     };
   }, [previewUrl]);
 
+  // Cover/banner photo -- deliberately simpler than the avatar's
+  // pick-then-crop-modal flow: processCoverPhotoFile (src/lib/coverCrop.ts)
+  // runs immediately on file selection (auto-centered "cover" fit, no
+  // interactive pan/zoom), so there's no cropFile-style intermediate
+  // state here, just a brief "processing" flag while that async work runs.
+  const [coverFile, setCoverFile] = useState<File | null>(null);
+  const [coverPreviewUrl, setCoverPreviewUrl] = useState<string | null>(null);
+  const [coverProcessing, setCoverProcessing] = useState(false);
+  const [coverError, setCoverError] = useState("");
+  const [coverFileInputKey, setCoverFileInputKey] = useState(0);
+  const coverFileInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    return () => {
+      if (coverPreviewUrl) {
+        URL.revokeObjectURL(coverPreviewUrl);
+      }
+    };
+  }, [coverPreviewUrl]);
+
   const mainSave = useSaveStatus();
   const isUploadingPhoto = mainSave.status === "saving" && Boolean(file);
+  const isUploadingCover = mainSave.status === "saving" && Boolean(coverFile);
 
   // Pseudo -------------------------------------------------------------
   const pseudoSave = useSaveStatus();
@@ -346,6 +369,38 @@ export function ParametresForm({
         payload.photo_r2_key = uploadUrlBody.r2Key;
       }
 
+      if (coverFile) {
+        // Same generic upload route as the profile photo above -- it
+        // signs a key under profils/{userId}/{uuid} regardless of which
+        // field the caller eventually writes it to.
+        const uploadUrlResponse = await fetch("/api/profil/photo-upload-url", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contentType: coverFile.type, size: coverFile.size }),
+        });
+        const uploadUrlBody = await uploadUrlResponse.json();
+        if (!uploadUrlResponse.ok) {
+          throw new Error(uploadUrlBody.error ?? t("couvertureUploadError"));
+        }
+
+        const putResponse = await fetch(uploadUrlBody.uploadUrl, {
+          method: "PUT",
+          headers: { "Content-Type": coverFile.type },
+          body: coverFile,
+        });
+        if (!putResponse.ok) {
+          const detail = await putResponse.text().catch(() => "");
+          throw new Error(
+            t("couvertureUploadHttpError", {
+              status: putResponse.status,
+              detail: detail ? ` : ${detail.slice(0, 200)}` : "",
+            }),
+          );
+        }
+
+        payload.photo_couverture_r2_key = uploadUrlBody.r2Key;
+      }
+
       return patchProfil(payload, tCommon("saveError"));
     });
 
@@ -356,6 +411,29 @@ export function ParametresForm({
       // once router.refresh() (inside mainSave.run) re-renders this from
       // the server -- the local preview has done its job.
       setPreviewUrl(null);
+      setCoverFile(null);
+      setCoverFileInputKey((key) => key + 1);
+      setCoverPreviewUrl(null);
+    }
+  }
+
+  async function handleCoverFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const selected = event.target.files?.[0];
+    if (!selected) {
+      return;
+    }
+    setCoverError("");
+    setCoverProcessing(true);
+    mainSave.dismiss();
+    try {
+      const blob = await processCoverPhotoFile(selected);
+      setCoverPreviewUrl(URL.createObjectURL(blob));
+      setCoverFile(new File([blob], "couverture.jpg", { type: "image/jpeg" }));
+    } catch (err) {
+      setCoverError(err instanceof Error ? err.message : t("couvertureUploadError"));
+    } finally {
+      setCoverProcessing(false);
+      setCoverFileInputKey((key) => key + 1);
     }
   }
 
@@ -434,6 +512,60 @@ export function ParametresForm({
                 setCropFile(selected);
               }
             }}
+            className="hidden"
+          />
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-foreground">{t("couverturePhotoLabel")}</span>
+          <div className="relative">
+            {coverPreviewUrl ?? couvertureUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={(coverPreviewUrl ?? couvertureUrl)!}
+                alt=""
+                className={`aspect-[3/1] w-full rounded-lg border border-border object-cover transition-opacity ${
+                  isUploadingCover ? "opacity-40" : ""
+                }`}
+              />
+            ) : (
+              <div className="flex aspect-[3/1] w-full items-center justify-center rounded-lg border border-border bg-gradient-to-br from-brand-500 via-brand-600 to-accent-500 text-sm text-white/80">
+                {t("couverturePhotoPlaceholder")}
+              </div>
+            )}
+            {isUploadingCover && (
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-0 flex items-center justify-center"
+              >
+                <span className="h-6 w-6 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              </div>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => coverFileInputRef.current?.click()}
+            disabled={isUploadingCover || coverProcessing}
+            className={`${buttonClass("outline", "sm")} self-start`}
+          >
+            {t("editCouvertureButton")}
+          </button>
+          {coverProcessing && (
+            <span className="text-sm text-foreground-muted">{tCommon("saving")}</span>
+          )}
+          {coverFile && !isUploadingCover && !coverProcessing && (
+            <span className="text-sm text-foreground-muted">{t("couvertureReady")}</span>
+          )}
+          {isUploadingCover && (
+            <span className="text-sm text-foreground-muted">{t("couvertureUploading")}</span>
+          )}
+          {coverError && <p className="text-sm text-danger-600">{coverError}</p>}
+          <input
+            ref={coverFileInputRef}
+            key={coverFileInputKey}
+            type="file"
+            accept="image/*"
+            onChange={handleCoverFileChange}
             className="hidden"
           />
         </div>

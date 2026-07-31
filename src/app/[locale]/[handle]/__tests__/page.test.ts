@@ -51,6 +51,7 @@ describe("GET /[locale]/[handle] (percent-encoded '@' bug)", () => {
       createurVerifie: false,
       bio: null,
       photoUrl: null,
+      couvertureUrl: null,
       lienReseauSocial: null,
       socialLinks: { tiktok: null, instagram: null, youtube: null, autre: null },
       offres: [],

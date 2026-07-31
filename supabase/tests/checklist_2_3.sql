@@ -5447,6 +5447,38 @@ begin
   raise notice 'PASS: authenticated holds EXECUTE on marquer_notifications_lues()';
 end $$;
 
+-- ---------------------------------------------------------------------
+-- Cover photo (migration 0035): a plain nullable column plus a view
+-- passthrough, no trigger/constraint/RPC involved -- still verified
+-- directly rather than just described, same discipline as every other
+-- migration in this file. Reuses fixture user 1
+-- (11111111-1111-1111-1111-111111111111) and the untouched fixture
+-- user 2 (22222222-2222-2222-2222-222222222222) as the "never set it"
+-- control.
+-- ---------------------------------------------------------------------
+update users set photo_couverture_r2_key = 'profils/11111111-1111-1111-1111-111111111111/cover.jpg'
+  where id = '11111111-1111-1111-1111-111111111111';
+
+do $$
+declare
+  v_set text;
+  v_unset text;
+begin
+  select photo_couverture_r2_key into v_set from profils_publics
+    where id = '11111111-1111-1111-1111-111111111111';
+  if v_set is distinct from 'profils/11111111-1111-1111-1111-111111111111/cover.jpg' then
+    raise exception 'TEST FAILED: profils_publics does not expose photo_couverture_r2_key correctly (got %)', v_set;
+  end if;
+
+  select photo_couverture_r2_key into v_unset from profils_publics
+    where id = '22222222-2222-2222-2222-222222222222';
+  if v_unset is not null then
+    raise exception 'TEST FAILED: photo_couverture_r2_key should default to null for a user who never set it (got %)', v_unset;
+  end if;
+
+  raise notice 'PASS: profils_publics exposes photo_couverture_r2_key, null by default, correct once set';
+end $$;
+
 do $$
 begin
   raise notice 'ALL SQL CHECKLIST TESTS PASSED';
