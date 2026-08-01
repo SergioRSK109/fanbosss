@@ -231,6 +231,12 @@ export const parametresProfilSchema = z
     // without that round-trip, but the schema itself doesn't need to know
     // that; the upload route is what makes the key meaningful.
     photo_r2_key: z.string().nullable().optional(),
+    // Cover/banner photo, same upload pipeline as photo_r2_key above
+    // (the upload route is fully generic, keyed only by user id -- see
+    // migration 0035) -- just a different profile field it gets written
+    // to, and a different (wider, uncropped-by-the-user) processing step
+    // client-side (src/lib/coverCrop.ts).
+    photo_couverture_r2_key: z.string().nullable().optional(),
   })
   .strict();
 

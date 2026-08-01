@@ -22,6 +22,9 @@ export interface CreateurProfileData {
   createurVerifie: boolean;
   bio: string | null;
   photoUrl: string | null;
+  // Cover/banner photo (migration 0035) -- optional, null renders the
+  // existing gradient banner unchanged (see CreateurProfileView).
+  couvertureUrl: string | null;
   // The original signup-time link, kept for manual identity verification
   // only -- deliberately not rendered on the public profile anymore (see
   // socialLinks below, migration 0011).
@@ -140,7 +143,7 @@ export async function getCreateurProfileData(
     supabase
       .from("profils_publics")
       .select(
-        "id, bio, photo_r2_key, lien_reseau_social, pseudo, nom_affichage, lien_tiktok, lien_instagram, lien_youtube, lien_autre, createur_verifie",
+        "id, bio, photo_r2_key, photo_couverture_r2_key, lien_reseau_social, pseudo, nom_affichage, lien_tiktok, lien_instagram, lien_youtube, lien_autre, createur_verifie",
       )
       .eq("id", createurId)
       .single(),
@@ -193,6 +196,9 @@ export async function getCreateurProfileData(
 
   const photoUrl = profil.photo_r2_key
     ? await getSignedDownloadUrl(profil.photo_r2_key, PHOTO_SIGNED_URL_EXPIRY_SECONDS)
+    : null;
+  const couvertureUrl = profil.photo_couverture_r2_key
+    ? await getSignedDownloadUrl(profil.photo_couverture_r2_key, PHOTO_SIGNED_URL_EXPIRY_SECONDS)
     : null;
 
   const campagneIds = (campagnesRows ?? []).map((row) => row.id);
@@ -293,6 +299,7 @@ export async function getCreateurProfileData(
     createurVerifie: profil.createur_verifie,
     bio: profil.bio,
     photoUrl,
+    couvertureUrl,
     lienReseauSocial: profil.lien_reseau_social,
     socialLinks: {
       tiktok: profil.lien_tiktok,

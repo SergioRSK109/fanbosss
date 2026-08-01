@@ -52,7 +52,7 @@ export default async function ParametresPage({
     supabase
       .from("users")
       .select(
-        "nom_affichage, pseudo, pseudo_modifie_at, bio, lien_tiktok, lien_instagram, lien_youtube, lien_autre, classement_public, masque_exploration, badge_fidelite_public, createur_verifie, photo_r2_key",
+        "nom_affichage, pseudo, pseudo_modifie_at, bio, lien_tiktok, lien_instagram, lien_youtube, lien_autre, classement_public, masque_exploration, badge_fidelite_public, createur_verifie, photo_r2_key, photo_couverture_r2_key",
       )
       .eq("id", user.id)
       .single(),
@@ -94,6 +94,9 @@ export default async function ParametresPage({
 
   const photoUrl = profil?.photo_r2_key
     ? await getSignedDownloadUrl(profil.photo_r2_key, 60 * 60 * 24)
+    : null;
+  const couvertureUrl = profil?.photo_couverture_r2_key
+    ? await getSignedDownloadUrl(profil.photo_couverture_r2_key, 60 * 60 * 24)
     : null;
 
   const derniereDemandeRow = demandeRows?.[0];
@@ -198,6 +201,7 @@ export default async function ParametresPage({
         masqueExploration={profil?.masque_exploration ?? false}
         badgeFidelitePublic={profil?.badge_fidelite_public ?? false}
         photoUrl={photoUrl}
+        couvertureUrl={couvertureUrl}
       />
       <div className="mt-4">
         <VerificationForm

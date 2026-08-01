@@ -71,6 +71,7 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
     createurVerifie,
     bio,
     photoUrl,
+    couvertureUrl,
     socialLinks,
     offres,
     campagnes,
@@ -86,13 +87,31 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
     ranks.volume !== null || ranks.reactivite !== null || ranks.progression !== null;
 
   return (
-    <main className="mx-auto max-w-md flex flex-col pb-12">
-      <div className="rounded-b-[2.5rem] bg-gradient-to-br from-brand-500 via-brand-600 to-accent-500 px-5 pt-4 pb-16">
-        <div className="flex justify-end">
+    <main className="mx-auto max-w-2xl flex flex-col pb-12">
+      <div className="relative overflow-hidden rounded-b-[2.5rem] px-5 pt-4 pb-16">
+        {couvertureUrl ? (
+          <>
+            {/* eslint-disable-next-line @next/next/no-img-element -- a
+                signed R2 URL, not a static asset next/image can optimize. */}
+            <img
+              src={couvertureUrl}
+              alt=""
+              className="absolute inset-0 h-full w-full object-cover"
+            />
+            {/* Overlay so the white text/icons below stay legible over an
+                arbitrary uploaded photo, same reasoning the gradient
+                fallback already provided for free. */}
+            <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-black/10 to-black/50" />
+          </>
+        ) : (
+          <div className="absolute inset-0 bg-gradient-to-br from-brand-500 via-brand-600 to-accent-500" />
+        )}
+
+        <div className="relative flex justify-end">
           <ReportButton createurId={createurId} />
         </div>
 
-        <div className="mt-1 flex flex-col items-center gap-3 text-center">
+        <div className="relative mt-1 flex flex-col items-center gap-3 text-center">
           {photoUrl ? (
             <ZoomablePhoto
               src={photoUrl}
