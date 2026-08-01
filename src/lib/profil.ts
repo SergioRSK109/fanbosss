@@ -46,6 +46,18 @@ export interface CreateurProfileData {
   // bar/badge/donate flow, not a plain price card, and (unlike every
   // other type) must stay visible here even once actif=false, so they
   // can't come from the same actif-only offres_publiques query.
+  //
+  // `produit` (Phase 1 of the physical-product offer type, migration
+  // 0039) is excluded from `offres` the same way, for a different reason:
+  // CheckoutButton's plain "type -> POST /api/transactions/initiate"
+  // flow has no quantity selector and never sends reservationId, which
+  // /api/transactions/initiate now requires for a produit offer -- a
+  // fan clicking "Payer" on one today would just hit a clean 400. That
+  // quantity-selector/reservation UI is Phase 3 (fan checkout), out of
+  // scope for this lot; excluding produit here is what keeps this page
+  // from offering a checkout button that can't currently succeed, same
+  // "don't ship a broken affordance" reasoning as campagne's own
+  // exclusion above.
   campagnes: {
     id: string;
     titre: string;
@@ -151,7 +163,8 @@ export async function getCreateurProfileData(
       .from("offres_publiques")
       .select("id, type, prix, libelle")
       .eq("createur_id", createurId)
-      .neq("type", "campagne"),
+      .neq("type", "campagne")
+      .neq("type", "produit"),
     // campagnes_publiques, unlike offres_publiques, is never filtered to
     // actif=true -- see migration 0017 -- so closed campaigns stay in the
     // public history instead of vanishing.

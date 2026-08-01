@@ -32,7 +32,12 @@ const REASSURANCE_KEYS: Partial<Record<OffreType, string>> = {
 };
 
 // One emoji per offer type, purely decorative -- no icon library needed
-// (design brief: no new heavy dependency without flagging it).
+// (design brief: no new heavy dependency without flagging it). "produit"
+// (Phase 1 of the physical-product offer type) is included here only so
+// this Record<OffreType, ...> stays exhaustive and type-checks -- there
+// is no fan-facing UI for browsing/buying a produit offre yet (Phase 3,
+// out of scope for this lot), so this entry is never actually reached in
+// practice today.
 const OFFER_ICONS: Record<OffreType, string> = {
   video: "🎬",
   don: "💛",
@@ -41,6 +46,7 @@ const OFFER_ICONS: Record<OffreType, string> = {
   contenu_debloque: "🔓",
   evenement_live: "🎥",
   campagne: "🎯",
+  produit: "📦",
 };
 
 // Simple links (no OAuth/account linking, migration 0011) -- one emoji

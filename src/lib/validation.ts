@@ -57,6 +57,14 @@ export function isAtLeast18(dateNaissance: string, referenceDate: Date = new Dat
   return dateNaissance <= minBirthDateForSignup(referenceDate);
 }
 
+// "produit" (Phase 1 of the physical-product offer type) is included here
+// -- and only here, deliberately -- so OffreType stays the one union the
+// CinetPay webhook can type-check its own `offerType === "produit"`
+// branching against, matching the DB's offres_type_check constraint
+// (migration 0039). creerOffreSchema below is NOT extended with
+// stock_total/image_r2_key validation for it -- offer *creation* for this
+// type is Phase 2 (créateur UI on /offres), out of scope for this lot;
+// see CLAUDE.md's own section on this lot.
 export const OFFRE_TYPES = [
   "video",
   "don",
@@ -65,6 +73,7 @@ export const OFFRE_TYPES = [
   "contenu_debloque",
   "evenement_live",
   "campagne",
+  "produit",
 ] as const;
 
 export type OffreType = (typeof OFFRE_TYPES)[number];
@@ -149,6 +158,11 @@ export const modifierOffreSchema = z
     prix: z.number().positive().optional(),
     actif: z.boolean().optional(),
     config: z.record(z.string(), z.unknown()).optional(),
+    // Same "upload-url route -> PATCH with the resulting key" pattern as
+    // contenu_debloque's r2_key (stored in config -- see
+    // content-upload-url's own doc comment), except image_r2_key is a
+    // real top-level column (migration 0039), not a config key.
+    image_r2_key: z.string().optional(),
   })
   .strict();
 

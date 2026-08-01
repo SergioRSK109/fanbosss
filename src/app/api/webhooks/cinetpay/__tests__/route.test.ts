@@ -6,14 +6,43 @@ process.env.CINETPAY_SECRET_KEY = SECRET;
 
 type FakeRow = Record<string, unknown>;
 
+interface ProduitMockOptions {
+  disponibiliteDefinitif?: number;
+  reservationUpdateError?: { message: string } | null;
+  disponibiliteError?: { message: string } | null;
+}
+
 function buildSupabaseMock(
   offre: FakeRow,
   existingTransaction: FakeRow | null,
   rpcError: { message: string } | null = null,
+  produitOptions: ProduitMockOptions = {},
 ) {
-  const updates: { table: string; patch: FakeRow }[] = [];
+  const updates: { table: string; patch: FakeRow; filters: [string, unknown[]][] }[] = [];
   const inserts: { table: string; row: FakeRow }[] = [];
   const rpcCalls: { fn: string; args: FakeRow }[] = [];
+
+  // A chainable stand-in for supabase-js's real query builder: .eq()/.is()
+  // can be called any number of times in any order (the webhook's
+  // reservation-confirm update chains three .eq() then one .is()) before
+  // the whole thing is awaited -- `then` is what makes that final `await`
+  // resolve, exactly like the real builder being a thenable.
+  function chainableUpdate(entry: (typeof updates)[number], result: { error: unknown }) {
+    const obj = {
+      eq(...args: unknown[]) {
+        entry.filters.push(["eq", args]);
+        return obj;
+      },
+      is(...args: unknown[]) {
+        entry.filters.push(["is", args]);
+        return obj;
+      },
+      then(resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) {
+        return Promise.resolve(result).then(resolve, reject);
+      },
+    };
+    return obj;
+  }
 
   const client = {
     from(table: string) {
@@ -26,10 +55,18 @@ function buildSupabaseMock(
                   data: table === "transactions" ? existingTransaction : null,
                   error: null,
                 }),
-                single: async () => ({
-                  data: table === "offres" ? offre : null,
-                  error: table === "offres" ? null : { message: "not found" },
-                }),
+                single: async () => {
+                  if (table === "offres") {
+                    return { data: offre, error: null };
+                  }
+                  if (table === "offres_disponibilite_produit") {
+                    return {
+                      data: { disponible_definitif: produitOptions.disponibiliteDefinitif ?? 1 },
+                      error: produitOptions.disponibiliteError ?? null,
+                    };
+                  }
+                  return { data: null, error: { message: "not found" } };
+                },
               };
             },
           };
@@ -39,10 +76,11 @@ function buildSupabaseMock(
           return { error: null };
         },
         update(patch: FakeRow) {
-          updates.push({ table, patch });
-          return {
-            eq: async () => ({ error: null }),
-          };
+          const entry = { table, patch, filters: [] as [string, unknown[]][] };
+          updates.push(entry);
+          const error =
+            table === "reservations_stock" ? (produitOptions.reservationUpdateError ?? null) : null;
+          return chainableUpdate(entry, { error });
         },
       };
     },
@@ -344,5 +382,186 @@ describe("POST /api/webhooks/cinetpay (brief checklist items 1 & 4)", () => {
     expect(body.status).toBe("ok");
     expect(consoleErrorSpy).toHaveBeenCalled();
     consoleErrorSpy.mockRestore();
+  });
+});
+
+describe("POST /api/webhooks/cinetpay (produit physique, Phase 1)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const produitOffre = {
+    id: "offre-produit-1",
+    type: "produit",
+    createur_id: "createur-1",
+    prix: 15,
+  };
+
+  it("rejects a produit notification missing quantite/reservationId in cpm_custom", async () => {
+    const { client, inserts } = buildSupabaseMock(produitOffre, null);
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(
+      client as unknown as ReturnType<typeof createSupabaseServiceRoleClient>,
+    );
+
+    const { POST } = await import("@/app/api/webhooks/cinetpay/route");
+    const notification = buildNotification({
+      cpm_amount: "15",
+      cpm_custom: JSON.stringify({ fanId: "fan-1", offreId: "offre-produit-1" }),
+    });
+    const token = computeCinetPayToken(notification, SECRET);
+    const request = buildRequest(notification, token);
+
+    const response = await POST(request);
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error).toMatch(/quantite|reservationId/);
+    expect(inserts).toHaveLength(0);
+  });
+
+  it("rejects a montant that doesn't match prix × quantite", async () => {
+    const { client, inserts } = buildSupabaseMock(produitOffre, null);
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(
+      client as unknown as ReturnType<typeof createSupabaseServiceRoleClient>,
+    );
+
+    const { POST } = await import("@/app/api/webhooks/cinetpay/route");
+    // prix=15, quantite=2 -> expected 30, but only 15 was actually paid.
+    const notification = buildNotification({
+      cpm_amount: "15",
+      cpm_custom: JSON.stringify({
+        fanId: "fan-1",
+        offreId: "offre-produit-1",
+        quantite: 2,
+        reservationId: "res-1",
+      }),
+    });
+    const token = computeCinetPayToken(notification, SECRET);
+    const request = buildRequest(notification, token);
+
+    const response = await POST(request);
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error).toMatch(/montant/);
+    expect(inserts).toHaveLength(0);
+  });
+
+  it("accepts montant = prix × quantite, records the transaction with the real quantite, confirms the reservation, and leaves statut at en_attente", async () => {
+    const { client, inserts, updates, rpcCalls } = buildSupabaseMock(produitOffre, null, null, {
+      disponibiliteDefinitif: 4, // still stock left after this sale -- offre must stay actif
+    });
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(
+      client as unknown as ReturnType<typeof createSupabaseServiceRoleClient>,
+    );
+
+    const { POST } = await import("@/app/api/webhooks/cinetpay/route");
+    const notification = buildNotification({
+      cpm_amount: "45",
+      cpm_custom: JSON.stringify({
+        fanId: "fan-1",
+        offreId: "offre-produit-1",
+        quantite: 3,
+        reservationId: "res-1",
+      }),
+    });
+    const token = computeCinetPayToken(notification, SECRET);
+    const request = buildRequest(notification, token);
+
+    const response = await POST(request);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.status).toBe("ok");
+
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0].table).toBe("transactions");
+    expect(inserts[0].row.quantite).toBe(3);
+    expect(inserts[0].row.montant).toBe(45);
+    // produit has no forced validee/livree cascade -- delivery is a
+    // physical shipment, not something payment success alone completes.
+    expect(inserts[0].row).not.toHaveProperty("statut");
+
+    const reservationUpdate = updates.find((u) => u.table === "reservations_stock");
+    expect(reservationUpdate).toBeDefined();
+    expect(reservationUpdate?.patch).toEqual({ transaction_id: "tx-don-1" });
+    expect(reservationUpdate?.filters).toEqual([
+      ["eq", ["id", "res-1"]],
+      ["eq", ["offre_id", "offre-produit-1"]],
+      ["eq", ["fan_id", "fan-1"]],
+      ["is", ["transaction_id", null]],
+    ]);
+
+    // Still stock left (disponibiliteDefinitif=4) -- offres.actif is never
+    // touched.
+    expect(updates.some((u) => u.table === "offres")).toBe(false);
+
+    // Not in TYPES_A_VALIDATION_IMMEDIATE -- same "has something to act
+    // on" notification as video/whatsapp/shoutout.
+    expect(rpcCalls).toEqual([
+      {
+        fn: "creer_notification",
+        args: {
+          p_destinataire_id: "createur-1",
+          p_type: "demande_recue",
+          p_transaction_id: "tx-don-1",
+          p_acteur_id: "fan-1",
+        },
+      },
+    ]);
+
+    expect(updates.filter((u) => u.table === "transactions")).toHaveLength(0);
+  });
+
+  it("closes the offre (actif=false) the instant disponible_definitif reaches 0 after the confirmed sale", async () => {
+    const { client, updates } = buildSupabaseMock(produitOffre, null, null, {
+      disponibiliteDefinitif: 0, // this sale used the last unit
+    });
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(
+      client as unknown as ReturnType<typeof createSupabaseServiceRoleClient>,
+    );
+
+    const { POST } = await import("@/app/api/webhooks/cinetpay/route");
+    const notification = buildNotification({
+      cpm_amount: "15",
+      cpm_custom: JSON.stringify({
+        fanId: "fan-1",
+        offreId: "offre-produit-1",
+        quantite: 1,
+        reservationId: "res-1",
+      }),
+    });
+    const token = computeCinetPayToken(notification, SECRET);
+    const request = buildRequest(notification, token);
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+
+    const offreUpdate = updates.find((u) => u.table === "offres");
+    expect(offreUpdate?.patch).toEqual({ actif: false });
+  });
+
+  it("throws (never silently swallows) when confirming the reservation fails -- this is essential bookkeeping, not an optional side effect", async () => {
+    const { client } = buildSupabaseMock(produitOffre, null, null, {
+      reservationUpdateError: { message: "reservation row vanished" },
+    });
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(
+      client as unknown as ReturnType<typeof createSupabaseServiceRoleClient>,
+    );
+
+    const { POST } = await import("@/app/api/webhooks/cinetpay/route");
+    const notification = buildNotification({
+      cpm_amount: "15",
+      cpm_custom: JSON.stringify({
+        fanId: "fan-1",
+        offreId: "offre-produit-1",
+        quantite: 1,
+        reservationId: "res-1",
+      }),
+    });
+    const token = computeCinetPayToken(notification, SECRET);
+    const request = buildRequest(notification, token);
+
+    await expect(POST(request)).rejects.toThrow(/failed to confirm stock reservation/);
   });
 });

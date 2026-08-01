@@ -30,3 +30,7 @@ done
 
 echo "Running checklist SQL tests..."
 "${PSQL[@]}" -f supabase/tests/checklist_2_3.sql
+
+echo ""
+echo "Running produit stock-reservation concurrency tests (real multi-connection race, see concurrency_test_produit.sh)..."
+bash supabase/tests/concurrency_test_produit.sh

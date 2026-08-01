@@ -65,7 +65,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ status: "ignored", reason: transStatus });
   }
 
-  let custom: { fanId?: string; offreId?: string } = {};
+  let custom: {
+    fanId?: string;
+    offreId?: string;
+    quantite?: number;
+    reservationId?: string;
+  } = {};
   try {
     custom = JSON.parse(String(notification.cpm_custom ?? "{}"));
   } catch {
@@ -116,10 +121,31 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // don/campagne have no fixed price -- the fan chooses the amount -- so
-  // they're the only types exempt from this check.
+  // Phase 1 of the "produit physique" offer type: a unit price times a
+  // quantity, not a fixed prix alone -- read/validated before the
+  // montant check below, which needs it. reservationId was already
+  // verified against the calling fan's own row at /api/transactions/
+  // initiate (section 4); re-parsed here from the same HMAC-verified
+  // cpm_custom payload every other field in this webhook is already
+  // trusted from.
+  let quantite = 1;
+  if (offerType === "produit") {
+    quantite = Number(custom.quantite);
+    if (!Number.isInteger(quantite) || quantite <= 0 || !custom.reservationId) {
+      return NextResponse.json(
+        { error: "cpm_custom missing/invalid quantite or reservationId for a produit offer" },
+        { status: 400 },
+      );
+    }
+  }
+
+  // don/campagne have no fixed price -- the fan chooses the amount.
+  // produit has a fixed per-unit price, but the total owed is prix ×
+  // quantite, not prix alone -- both are checked against the real amount
+  // CinetPay actually confirmed, never trusted from the client.
   const hasFreeAmount = offerType === "don" || offerType === "campagne";
-  if (!hasFreeAmount && Math.abs(amount - Number(offre.prix)) > 0.01) {
+  const expectedAmount = offerType === "produit" ? Number(offre.prix) * quantite : Number(offre.prix);
+  if (!hasFreeAmount && Math.abs(amount - expectedAmount) > 0.01) {
     return NextResponse.json(
       { error: "montant payé ne correspond pas au prix de l'offre" },
       { status: 400 },
@@ -132,11 +158,71 @@ export async function POST(request: NextRequest) {
     createur_id: offre.createur_id,
     offre_id: offre.id,
     montant: amount,
+    quantite,
     reference_cinetpay: transactionId,
   });
 
   if (insertError) {
     throw new Error(`failed to record transaction: ${insertError.message}`);
+  }
+
+  // Phase 1 of the "produit physique" offer type: mark the reservation
+  // permanent (this is what makes it count in disponible_definitif
+  // rather than disponible_maintenant only -- see
+  // offres_disponibilite_produit, migration 0039), then close the offer
+  // the instant it's genuinely sold out. Both are essential bookkeeping,
+  // not an optional side effect like the notification below -- unlike
+  // that call, a failure here throws, matching this file's own existing
+  // precedent for insertError/validateError/deliverError just above and
+  // below.
+  //
+  // Scoped to the exact reservation this fan/offre pair already
+  // established at /api/transactions/initiate -- .is("transaction_id",
+  // null) guards against ever double-confirming the same reservation on
+  // a resent webhook (though the idempotency check at the top of this
+  // route already short-circuits a genuine resend before reaching here).
+  //
+  // A rare, accepted risk, not a bug to fix here (per the brief's own
+  // explicit instruction, section 0): if this reservation's 10-minute
+  // hold had already expired before payment confirmed, another fan may
+  // have concurrently reserved and confirmed the same unit in the
+  // meantime -- an oversell. There is no new automatic-refund mechanism
+  // in this lot; the oversold fan lands in the existing manual-refund
+  // queue the same way any other manual case does, once a créateur or
+  // admin notices the offer can't actually be fulfilled.
+  if (offerType === "produit" && custom.reservationId) {
+    const { error: reservationError } = await supabase
+      .from("reservations_stock")
+      .update({ transaction_id: transactionId })
+      .eq("id", custom.reservationId)
+      .eq("offre_id", offre.id)
+      .eq("fan_id", custom.fanId)
+      .is("transaction_id", null);
+
+    if (reservationError) {
+      throw new Error(`failed to confirm stock reservation: ${reservationError.message}`);
+    }
+
+    const { data: disponibilite, error: disponibiliteError } = await supabase
+      .from("offres_disponibilite_produit")
+      .select("disponible_definitif")
+      .eq("offre_id", offre.id)
+      .single();
+
+    if (disponibiliteError) {
+      throw new Error(`failed to recompute stock availability: ${disponibiliteError.message}`);
+    }
+
+    if ((disponibilite?.disponible_definitif ?? 0) <= 0) {
+      const { error: closeError } = await supabase
+        .from("offres")
+        .update({ actif: false })
+        .eq("id", offre.id);
+
+      if (closeError) {
+        throw new Error(`failed to close sold-out offre: ${closeError.message}`);
+      }
+    }
   }
 
   // Lot 6a: tells the créateur a new transaction landed. video/shoutout/
