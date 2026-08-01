@@ -58,7 +58,10 @@
       "autoriseRepost": "Autoriser le repost par d'autres créateurs",
       "submit": "Publier",
       "sending": "Publication...",
-      "uploadError": "envoi de l'image impossible",
+      "checking": "Vérification...",
+      "uploadError": "envoi du fichier impossible",
+      "dureeTropLongue": "Vidéo trop longue ({duree}s) -- la durée maximale est de {max} secondes.",
+      "lectureImpossible": "Impossible de lire la durée de cette vidéo. Réessaie avec un autre fichier.",
       "unknownError": "une erreur est survenue"
     },
     "actions": {

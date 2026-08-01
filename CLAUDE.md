@@ -1928,6 +1928,147 @@ reposted card (embedded original included) in a new tab, while a
 plain-post signalement in the same list shows no repost indicator — in
 both `fr` (light) and `/en/` (dark).
 
+## Publications: video support (Phase A, migration `0037`)
+
+A créateur/admin can attach a short video to a publication instead of an
+image — never both on the same row. Deliberately scoped tight, per
+explicit instruction: this is *only* the upload/store/display pipeline
+(composer, teaser, feed playback, repost embedding). No grid
+auto-preview, no dedicated fullscreen viewer, and no Explorer
+integration — those are Phase B/C, once this one is verified in
+production use.
+
+**Schema**: `publications` gained `video_r2_key text` (additive, next to
+the existing `image_r2_key` — nothing about that column or its display
+logic changed) plus `publications_media_exclusif check (image_r2_key is
+null or video_r2_key is null)` — the real guarantee that a publication
+never carries both at once. `publications_contenu_coherent` (migration
+`0031`) needed no change: a repost row still just requires `contenu is
+null`, and `toggler_repost_publication()`'s own `INSERT` never sets
+either media column on the row it creates, so a repost structurally
+never has a `video_r2_key` either, the same way it's never had an
+`image_r2_key`.
+
+**`publier_message()` gains a 5th parameter, `p_video_r2_key`**, mirroring
+`p_image_r2_key` exactly — same insert, same "the CHECK constraint is
+the real guarantee, this function doesn't duplicate it" reasoning already
+applied to `unique_offre_type_par_createur`/`idx_repost_unique`
+elsewhere. The 4-arg signature is dropped outright, not kept as a second
+overload — same no-backwards-compatibility-shim discipline as every
+earlier `publier_message()` signature change (`0029` → `0031` → `0037`).
+`publierMessageSchema` (`src/lib/validation.ts`) gained a matching
+`video_r2_key` field plus a `.refine()` rejecting a request that sets
+both `image_r2_key` and `video_r2_key` — the DB constraint is the real
+guarantee, this is the usual "clean 400 instead of a raw Postgres error"
+every other schema in this file already gives its own mirrored CHECK.
+
+**`publications_visibles`/`publications_accueil`**: `video_r2_key` gets
+exactly the same teaser treatment as `image_r2_key` — `case when
+peut_voir_publication_complete(...) then p.video_r2_key else null end`,
+appended as a **trailing** column (CREATE OR REPLACE VIEW can add new
+trailing columns but cannot reorder/insert among existing ones, see the
+schema section above) rather than placed next to `image_r2_key` in the
+select list. `publications_accueil`'s own SQL text is unchanged (still
+`select v.*`) but still had to be recreated in this same migration —
+a view's `*` is expanded into an explicit column list at `CREATE` time,
+not re-resolved automatically when the underlying view gains a column
+later, the same reason migration `0031` recreated this view even though
+its own text didn't change either.
+
+**A real regression caught by the SQL checklist before it shipped**:
+recreating `publications_accueil` verbatim from the `0031`-era migration
+text would have re-granted `select` to `anon` — migration `0033`
+deliberately revoked exactly that grant (`/home` now requires a session).
+Copying the view definition forward without re-checking its grants
+re-opened that hole; caught immediately by the pre-existing
+`checklist_2_3.sql` assertion that `anon` gets `insufficient_privilege`
+on `publications_accueil`, which failed the very first time this
+migration's SQL ran against a throwaway database. Fixed by granting
+`select` to `authenticated` only when recreating this view — flagged
+explicitly here as a trap for any future migration that touches this
+same view: **recreating a view does not itself reset its grants, but
+copying an older migration's grant statement forward can absolutely
+re-widen one that a later migration deliberately narrowed.**
+
+**`/api/publications/upload-url`** now accepts `video/*` alongside
+`image/*` (was previously a hard `image/`-prefix-only check, rejecting
+everything else with "seules les images sont acceptées"). No change
+needed to `checkUploadSize()`/`maxUploadSizeBytes()` (`src/lib/r2.ts`) —
+the image/video size-cap split already existed from the earlier security
+audit (see "Security audit fixes" below) and already applied correctly
+to any non-image content type, including video, before this feature
+ever touched it.
+
+**Client-side duration cap, same 90s limit and same real-root-cause
+reasoning as offer video delivery** (`LivraisonsEnAttente.tsx`) —
+`PublicationComposer.tsx` reuses `readVideoDurationSeconds`/
+`isVideoDurationAllowed`/`MAX_VIDEO_DURATION_SECONDS` from
+`src/lib/videoDuration.ts` verbatim, no new duration-checking code. A
+selected video is checked at file-selection time, before any upload
+starts; an image needs no such check and skips straight to being staged
+for upload. **A real bug caught during visual verification, not assumed
+fixed from reading the code**: the composer's error message was
+originally gated on `status === "error"`, but a rejected video duration
+resets `status` back to `"idle"` (there's nothing to retry, the field is
+just cleared) — so the error text never actually rendered, even though
+`errorMessage` itself was set correctly. Fixed by rendering
+`errorMessage` unconditionally whenever it's non-empty, the same shape
+`LivraisonsEnAttente.tsx` already used for its own error paragraph;
+re-verified visually afterward that "Vidéo trop longue (95s) -- la durée
+maximale est de 90 secondes." actually appears in both `fr` and `/en/`.
+
+**`src/lib/publications.ts`**: `PUBLICATIONS_SELECT` and the
+`PublicationVisibleRow`/`Publication` shapes gained `video_r2_key`/
+`videoUrl`, hydrated by `hydratePublications()` via the exact same
+`getSignedDownloadUrl(..., MEDIA_SIGNED_URL_EXPIRY_SECONDS)` call
+`imageUrl` already used (the constant itself renamed from
+`IMAGE_SIGNED_URL_EXPIRY_SECONDS`, since the same 1h expiry/sensitivity
+reasoning now applies to either media kind). No special-casing needed
+for the repost-embedding path — `hydratePublications()`'s recursive
+fetch of a repost's original already goes through this same function, so
+a reposted video publication's embedded original carries `videoUrl`
+automatically, verified directly rather than assumed (see the SQL
+checklist coverage below).
+
+**`PublicationCard.tsx`** renders a plain `<video controls muted
+playsInline>` when `videoUrl` is set, in place of the `<img>` (the two
+are mutually exclusive per `publications_media_exclusif`, so both blocks
+can safely stay in the component — only one ever has something to
+render). Muted by default and no autoplay, per explicit Phase-A scope —
+a viewer opts into sound/fullscreen themselves via the native controls;
+this is deliberately not the phases-B/C "grid auto-preview" behavior.
+
+Tested end-to-end in `checklist_2_3.sql` with a real fixture (créateur A
+— verified, posts a soutiens-only video and a public repostable video;
+fan B — a real supporter of A via a `livree` transaction; fan C — a
+stranger; créateur D — verified, reposts A's public video):
+`publications_media_exclusif` rejects a raw row with both
+`image_r2_key` and `video_r2_key` set; `publier_message()` persists
+`video_r2_key` exactly as passed; a stranger gets `video_r2_key = null`
+and a clean `contenu_complet = false` on the soutiens-only video (never
+leaked, the identical guarantee already proven for `image_r2_key`); a
+real supporter sees the real `video_r2_key` in full; and reposting the
+public video produces a repost row with no `video_r2_key` of its own
+while the embedded original (resolved via `repost_de_id`) still exposes
+its real video. Also covers the exclusivity refine
+(`validation.test.ts`) and the upload-url route accepting `video/*` at
+both size boundaries while still rejecting a non-image/video content
+type (`route.test.ts`).
+
+Verified visually end-to-end (same throwaway mock-Supabase/Playwright
+technique used throughout this file, extended with a generated short
+silent test video via Chromium's own `MediaRecorder` API — no `ffmpeg`
+or video fixture existed in this sandbox, so one was produced on the fly
+rather than skipping this verification): `/home`'s feed shows a real
+`<video>` player (controls visible, muted, no autoplay) for a public
+video post directly alongside a fully locked teaser card for a
+soutiens-only post; selecting a 95s video in the composer shows the
+French/English "too long" error inline with no network request ever
+fired; selecting a ~3s video is accepted and staged; and submitting
+completes the full upload-url → R2 PUT → `/api/publications` round trip
+(mocked) without error — all confirmed in both `fr` (light) and `/en/`
+(dark).
+
 ## Admin dashboard reorganized into 4 top tabs (no migration)
 
 `/admin` had grown into 8 stacked sections with no grouping, all always
@@ -4696,7 +4837,23 @@ into chat).
   `profils_recherchables`; and the same two conditions still find nobody
   via `profils_explorables` (the default, no-search view) — proving
   `masque_exploration` only opts out of passive discovery, never of an
-  active search.
+  active search. Also covers publications video support (0037) with a
+  dedicated fixture (créateur A — verified, posts a soutiens-only video
+  and a public repostable video; fan B — a real supporter via a `livree`
+  transaction; fan C — a stranger; créateur D — verified, reposts A's
+  public video): `publications_media_exclusif` rejects a raw row with
+  both `image_r2_key` and `video_r2_key` set; `publier_message()`
+  persists `video_r2_key` exactly as passed; a stranger gets
+  `video_r2_key = null` and `contenu_complet = false` on the
+  soutiens-only video (the same leak-proof guarantee already proven for
+  `image_r2_key`); a real supporter sees the real `video_r2_key`; and
+  reposting the public video produces a repost row with no
+  `video_r2_key` of its own while the embedded original still exposes
+  its real video via `repost_de_id`. This same run is also what caught
+  migration `0037`'s own `publications_accueil` anon-grant regression
+  (see that migration's own section) before it ever shipped — the
+  pre-existing `anon`-rejection assertion for that view failed the first
+  time this migration's SQL ran, exactly as intended.
 - `supabase/tests/stub_auth.sql` fakes just enough of Supabase's `auth`
   schema (an `auth.uid()` reading `app.current_user_id`, plus the
   `authenticated`/`anon`/`service_role` roles) for the real migrations to

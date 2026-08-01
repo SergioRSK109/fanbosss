@@ -36,8 +36,11 @@ export async function POST(request: NextRequest) {
   const contentType = String(body.contentType ?? "");
   const size = Number(body.size);
 
-  if (!contentType.startsWith("image/")) {
-    return NextResponse.json({ error: "seules les images sont acceptées" }, { status: 400 });
+  if (!contentType.startsWith("image/") && !contentType.startsWith("video/")) {
+    return NextResponse.json(
+      { error: "seules les images et vidéos sont acceptées" },
+      { status: 400 },
+    );
   }
 
   const sizeCheck = checkUploadSize(size, contentType);

@@ -261,6 +261,12 @@ export const publierMessageSchema = z
   .object({
     contenu: z.string().trim().min(1).max(PUBLICATION_CONTENU_MAX_LENGTH),
     image_r2_key: z.string().nullable().optional(),
+    // Video support, additive alongside image_r2_key (migration 0037) --
+    // never both on the same publication. publications_media_exclusif is
+    // the real DB-level guarantee; the .refine() below is just the usual
+    // "clean 400 instead of a raw Postgres error" this file already gives
+    // every other DB CHECK constraint.
+    video_r2_key: z.string().nullable().optional(),
     visibilite: z.enum(["public", "soutiens"]).optional(),
     // Lot 5c (migration 0031) -- "Autoriser le repost par d'autres
     // créateurs", only meaningful when visibilite is 'public' (a
@@ -270,4 +276,8 @@ export const publierMessageSchema = z
     // way, same as visibilite itself -- see publier_message().
     autorise_repost: z.enum(["personne", "tous"]).optional(),
   })
-  .strict();
+  .strict()
+  .refine((body) => !(body.image_r2_key && body.video_r2_key), {
+    message: "une publication ne peut avoir à la fois une image et une vidéo",
+    path: ["video_r2_key"],
+  });

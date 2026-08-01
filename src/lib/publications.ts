@@ -31,6 +31,11 @@ export interface Publication {
   contenuComplet: boolean;
   contenu: string | null;
   imageUrl: string | null;
+  // Video support, additive alongside imageUrl (migration 0037) -- never
+  // both set on the same publication (publications_media_exclusif).
+  // Same teaser guarantee as imageUrl: null both when there's genuinely
+  // no video AND whenever the current viewer can't see the full content.
+  videoUrl: string | null;
   auteur: PublicationAuteur;
   // Lot 5c (migration 0031).
   autoriseRepost: AutoriseRepost;
@@ -66,6 +71,7 @@ type PublicationVisibleRow = {
   type: PublicationType;
   contenu: string | null;
   image_r2_key: string | null;
+  video_r2_key: string | null;
   visibilite: PublicationVisibilite;
   created_at: string;
   contenu_complet: boolean;
@@ -79,10 +85,12 @@ type PublicationVisibleRow = {
   viewer_a_reposte: boolean;
 };
 
-const IMAGE_SIGNED_URL_EXPIRY_SECONDS = 60 * 60; // 1h -- a soutiens-only image is
-// genuinely sensitive (unlike a profile photo), so this deliberately does NOT
-// get the longer 24h expiry profile photos use; a fresh URL is minted on
-// every render regardless, so staleness isn't a concern either way.
+const MEDIA_SIGNED_URL_EXPIRY_SECONDS = 60 * 60; // 1h -- a soutiens-only
+// image or video is genuinely sensitive (unlike a profile photo), so this
+// deliberately does NOT get the longer 24h expiry profile photos use; a
+// fresh URL is minted on every render regardless, so staleness isn't a
+// concern either way. Shared by both media kinds -- same sensitivity
+// reasoning applies identically to either.
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 
@@ -197,7 +205,10 @@ async function hydratePublications(
         contenuComplet: row.contenu_complet,
         contenu: row.contenu,
         imageUrl: row.image_r2_key
-          ? await getSignedDownloadUrl(row.image_r2_key, IMAGE_SIGNED_URL_EXPIRY_SECONDS)
+          ? await getSignedDownloadUrl(row.image_r2_key, MEDIA_SIGNED_URL_EXPIRY_SECONDS)
+          : null,
+        videoUrl: row.video_r2_key
+          ? await getSignedDownloadUrl(row.video_r2_key, MEDIA_SIGNED_URL_EXPIRY_SECONDS)
           : null,
         auteur: {
           id: row.auteur_id,
@@ -219,7 +230,7 @@ async function hydratePublications(
 }
 
 const PUBLICATIONS_SELECT =
-  "id, auteur_id, type, contenu, image_r2_key, visibilite, created_at, contenu_complet, repost_de_id, autorise_repost, likes_count, partages_count, reposts_count, viewer_a_aime, viewer_a_partage, viewer_a_reposte";
+  "id, auteur_id, type, contenu, image_r2_key, video_r2_key, visibilite, created_at, contenu_complet, repost_de_id, autorise_repost, likes_count, partages_count, reposts_count, viewer_a_aime, viewer_a_partage, viewer_a_reposte";
 
 // Backs the /[handle] and /createur/[id] profile pages' "Publications"
 // tab -- every one of this créateur's own publications, teaser-shaped per

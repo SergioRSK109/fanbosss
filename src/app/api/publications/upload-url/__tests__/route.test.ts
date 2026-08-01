@@ -81,4 +81,58 @@ describe("POST /api/publications/upload-url", () => {
       1024,
     );
   });
+
+  it("mints a signed URL for a valid, in-bounds video size", async () => {
+    vi.mocked(createSupabaseServerClient).mockResolvedValue(
+      buildSupabase({ id: "u1" }, { createur_verifie: true }) as unknown as Awaited<
+        ReturnType<typeof createSupabaseServerClient>
+      >,
+    );
+
+    const { POST } = await import("@/app/api/publications/upload-url/route");
+    const response = await POST(buildRequest({ contentType: "video/mp4", size: 1024 }) as never);
+
+    expect(response.status).toBe(200);
+    expect(getSignedUploadUrl).toHaveBeenCalledWith(
+      expect.stringMatching(/^publications\/u1\//),
+      "video/mp4",
+      1024,
+    );
+  });
+
+  it("rejects a video over the real server-side size cap, before minting any URL", async () => {
+    vi.mocked(createSupabaseServerClient).mockResolvedValue(
+      buildSupabase({ id: "u1" }, { createur_verifie: true }) as unknown as Awaited<
+        ReturnType<typeof createSupabaseServerClient>
+      >,
+    );
+
+    const { POST } = await import("@/app/api/publications/upload-url/route");
+    const response = await POST(
+      buildRequest({ contentType: "video/mp4", size: MAX_UPLOAD_SIZE_BYTES.video + 1 }) as never,
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error).toMatch(/volumineux/i);
+    expect(getSignedUploadUrl).not.toHaveBeenCalled();
+  });
+
+  it("rejects a content type that's neither an image nor a video", async () => {
+    vi.mocked(createSupabaseServerClient).mockResolvedValue(
+      buildSupabase({ id: "u1" }, { createur_verifie: true }) as unknown as Awaited<
+        ReturnType<typeof createSupabaseServerClient>
+      >,
+    );
+
+    const { POST } = await import("@/app/api/publications/upload-url/route");
+    const response = await POST(
+      buildRequest({ contentType: "application/pdf", size: 1024 }) as never,
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error).toMatch(/images et vidéos/i);
+    expect(getSignedUploadUrl).not.toHaveBeenCalled();
+  });
 });

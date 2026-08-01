@@ -3558,17 +3558,18 @@ begin
   if not has_function_privilege('authenticated', 'peut_voir_publication_complete(uuid,text)', 'EXECUTE') then
     raise exception 'TEST FAILED: authenticated lost EXECUTE on peut_voir_publication_complete()';
   end if;
-  -- Signature updated to 4 args by migration 0031 (Lot 5c adds
-  -- p_autorise_repost) -- the 3-arg signature this check originally
-  -- referenced no longer exists at all (dropped outright, not kept as a
-  -- second overload, see that migration's own comment), so
-  -- has_function_privilege() must be asked about the real current
-  -- signature or it would just report "no such function" instead of
-  -- meaningfully testing the grant.
-  if has_function_privilege('anon', 'publier_message(text,text,text,text)', 'EXECUTE') then
+  -- Signature updated to 5 args by migration 0037 (video support adds
+  -- p_video_r2_key) -- neither the original 3-arg nor the 0031-era 4-arg
+  -- signature this check used to reference exists anymore (each dropped
+  -- outright, never kept as a second overload, see each migration's own
+  -- comment), so has_function_privilege() must be asked about the real
+  -- current signature or it would just report "no such function" (a
+  -- silent, always-false-condition no-op in plpgsql's IF, never an
+  -- error) instead of meaningfully testing the grant.
+  if has_function_privilege('anon', 'publier_message(text,text,text,text,text)', 'EXECUTE') then
     raise exception 'TEST FAILED: anon should NOT have EXECUTE on publier_message()';
   end if;
-  if not has_function_privilege('authenticated', 'publier_message(text,text,text,text)', 'EXECUTE') then
+  if not has_function_privilege('authenticated', 'publier_message(text,text,text,text,text)', 'EXECUTE') then
     raise exception 'TEST FAILED: authenticated lost EXECUTE on publier_message()';
   end if;
   raise notice 'PASS: EXECUTE grants on peut_voir_publication_complete()/publier_message() are exactly as intended';
@@ -4582,10 +4583,14 @@ begin
   if not has_function_privilege('authenticated', 'toggler_mute_createur(uuid)', 'EXECUTE') then
     raise exception 'TEST FAILED: authenticated lost EXECUTE on toggler_mute_createur()';
   end if;
-  if not has_function_privilege('authenticated', 'publier_message(text,text,text,text)', 'EXECUTE') then
-    raise exception 'TEST FAILED: authenticated lost EXECUTE on the updated 4-arg publier_message()';
+  -- Signature updated again to 5 args by migration 0037 (see the earlier
+  -- comment on this same rename pattern, above) -- checked against the
+  -- real current signature, not the 4-arg one this block originally
+  -- referenced.
+  if not has_function_privilege('authenticated', 'publier_message(text,text,text,text,text)', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lost EXECUTE on the updated 5-arg publier_message()';
   end if;
-  if has_function_privilege('anon', 'publier_message(text,text,text,text)', 'EXECUTE') then
+  if has_function_privilege('anon', 'publier_message(text,text,text,text,text)', 'EXECUTE') then
     raise exception 'TEST FAILED: anon should NOT have EXECUTE on publier_message()';
   end if;
   raise notice 'PASS: authenticated holds EXECUTE on all 4 new functions and the updated publier_message(); anon holds none';
@@ -5546,6 +5551,164 @@ begin
   end if;
 
   raise notice 'PASS: profils_publics exposes photo_couverture_r2_key, null by default, correct once set';
+end $$;
+
+-- =======================================================================
+-- Publications: video support (migration 0037). Fixture: créateur A
+-- (verified, posts a soutiens-only video and a public, repostable
+-- video), fan B (a real supporter of A via a livree transaction, same
+-- soutient_createur mechanism as Lot 5a), fan C (a stranger), créateur D
+-- (verified, reposts A's public video post).
+-- =======================================================================
+insert into users (id, createur_verifie, est_admin) values
+  ('7d000001-0000-0000-0000-000000000001', true, false),
+  ('7d000002-0000-0000-0000-000000000002', false, false),
+  ('7d000003-0000-0000-0000-000000000003', false, false),
+  ('7d000004-0000-0000-0000-000000000004', true, false);
+
+insert into offres (id, createur_id, type, prix) values
+  ('7d000010-0000-0000-0000-000000000010', '7d000001-0000-0000-0000-000000000001', 'don', null);
+
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('7d000011-0000-0000-0000-000000000011',
+   '7d000002-0000-0000-0000-000000000002',
+   '7d000001-0000-0000-0000-000000000001',
+   '7d000010-0000-0000-0000-000000000010', 10, 'livree');
+
+-- publications_media_exclusif is the real DB-level guarantee against a
+-- publication ever carrying both an image and a video at once -- checked
+-- directly against the raw table (superuser, bypassing publier_message()
+-- entirely), same "prove the constraint itself, not just an RPC's
+-- refusal to attempt it" discipline as check_whatsapp_minimum_price/
+-- users_pseudo_not_reserved elsewhere in this file.
+do $$
+begin
+  begin
+    insert into publications (auteur_id, type, contenu, image_r2_key, video_r2_key, visibilite)
+      values ('7d000001-0000-0000-0000-000000000001', 'createur', 'both at once',
+              'publications/7d000001/img.jpg', 'publications/7d000001/vid.mp4', 'public');
+    raise exception 'TEST FAILED: a publication with both image_r2_key and video_r2_key was accepted';
+  exception when check_violation then
+    raise notice 'PASS: publications_media_exclusif rejects a publication with both an image and a video';
+  end;
+end $$;
+
+-- A posts a soutiens-only video (teaser test, below) and a public,
+-- repostable video (repost test, below) -- named-parameter notation used
+-- specifically to set p_video_r2_key without also having to spell out
+-- the unused p_image_r2_key/p_autorise_repost positionally.
+select set_config('app.current_user_id', '7d000001-0000-0000-0000-000000000001', false);
+set role authenticated;
+select publier_message(
+  p_contenu := 'video soutiens only',
+  p_visibilite := 'soutiens',
+  p_video_r2_key := 'publications/7d000001/soutiens.mp4'
+);
+select publier_message(
+  p_contenu := 'video public repostable',
+  p_visibilite := 'public',
+  p_autorise_repost := 'tous',
+  p_video_r2_key := 'publications/7d000001/public.mp4'
+);
+reset role;
+
+do $$
+declare
+  v_pub_soutiens uuid;
+  v_pub_public uuid;
+  v_key text;
+begin
+  select id into v_pub_soutiens from publications where contenu = 'video soutiens only';
+  select id into v_pub_public from publications where contenu = 'video public repostable';
+  perform set_config('app.tmp_video_soutiens', v_pub_soutiens::text, false);
+  perform set_config('app.tmp_video_public', v_pub_public::text, false);
+
+  -- Confirms publier_message() actually persisted p_video_r2_key at the
+  -- raw table level, before ever checking the view's own teaser logic.
+  select video_r2_key into v_key from publications where id = v_pub_soutiens;
+  if v_key is distinct from 'publications/7d000001/soutiens.mp4' then
+    raise exception 'TEST FAILED: publier_message() did not persist p_video_r2_key (got %)', v_key;
+  end if;
+  raise notice 'PASS: publier_message() persists video_r2_key exactly as passed';
+end $$;
+
+-- Stranger C cannot fully see the soutiens-only video post -- video_r2_key
+-- must never leak, the exact same guarantee already proven for
+-- image_r2_key in Lot 5a.
+select set_config('app.current_user_id', '7d000003-0000-0000-0000-000000000003', false);
+set role authenticated;
+do $$
+declare
+  v_video text;
+  v_complet boolean;
+begin
+  select video_r2_key, contenu_complet into v_video, v_complet
+    from publications_visibles where id = current_setting('app.tmp_video_soutiens')::uuid;
+  if v_video is not null then
+    raise exception 'TEST FAILED: video_r2_key leaked to a stranger on a soutiens-only publication (got %)', v_video;
+  end if;
+  if v_complet is distinct from false then
+    raise exception 'TEST FAILED: contenu_complet should be a clean false for a stranger, got %', v_complet;
+  end if;
+  raise notice 'PASS: video_r2_key is never leaked to an unauthorized viewer on a soutiens-only publication (same guarantee as image_r2_key)';
+end $$;
+reset role;
+
+-- A real supporter (B) sees the video in full.
+select set_config('app.current_user_id', '7d000002-0000-0000-0000-000000000002', false);
+set role authenticated;
+do $$
+declare
+  v_video text;
+  v_complet boolean;
+begin
+  select video_r2_key, contenu_complet into v_video, v_complet
+    from publications_visibles where id = current_setting('app.tmp_video_soutiens')::uuid;
+  if v_video is distinct from 'publications/7d000001/soutiens.mp4' then
+    raise exception 'TEST FAILED: a real supporter should see the real video_r2_key (got %)', v_video;
+  end if;
+  if v_complet is distinct from true then
+    raise exception 'TEST FAILED: contenu_complet should be true for a real supporter, got %', v_complet;
+  end if;
+  raise notice 'PASS: a real supporter sees the full video_r2_key on a soutiens-only publication';
+end $$;
+reset role;
+
+-- D (a second verified créateur) reposts A's public video post -- the
+-- repost's own row never carries a video_r2_key (toggler_repost_publication()
+-- never sets one on the row it inserts), but the EMBEDDED original --
+-- resolved via repost_de_id, the same way the app's own
+-- hydratePublications() does -- still exposes the real video, since the
+-- original itself is public.
+select set_config('app.current_user_id', '7d000004-0000-0000-0000-000000000004', false);
+set role authenticated;
+select toggler_repost_publication(current_setting('app.tmp_video_public')::uuid);
+reset role;
+
+do $$
+declare
+  v_repost_id uuid;
+  v_repost_video text;
+  v_original_video text;
+begin
+  select id, video_r2_key into v_repost_id, v_repost_video from publications_visibles
+    where repost_de_id = current_setting('app.tmp_video_public')::uuid
+      and auteur_id = '7d000004-0000-0000-0000-000000000004';
+
+  if v_repost_id is null then
+    raise exception 'TEST FAILED: expected repost row not found';
+  end if;
+  if v_repost_video is not null then
+    raise exception 'TEST FAILED: a repost row should never carry its own video_r2_key (got %)', v_repost_video;
+  end if;
+
+  select video_r2_key into v_original_video from publications_visibles
+    where id = current_setting('app.tmp_video_public')::uuid;
+  if v_original_video is distinct from 'publications/7d000001/public.mp4' then
+    raise exception 'TEST FAILED: the reposted original should still expose its real video_r2_key (got %)', v_original_video;
+  end if;
+
+  raise notice 'PASS: reposting a video publication carries the video through via the embedded original, exactly like an image would';
 end $$;
 
 do $$

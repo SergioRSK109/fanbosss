@@ -77,6 +77,22 @@ function PublicationBody({ publication }: { publication: Publication }) {
           className="max-h-96 w-full rounded-2xl object-cover"
         />
       )}
+
+      {/* Phase A scope only, per explicit instruction: a plain in-feed
+          player -- muted by default (no unexpected sound while scrolling),
+          real visible controls so the viewer opts into sound/fullscreen
+          themselves, no autoplay. No grid auto-preview, no dedicated
+          fullscreen viewer, no Explorer integration yet -- those are
+          phases B/C, once this is verified. */}
+      {publication.videoUrl && (
+        <video
+          src={publication.videoUrl}
+          controls
+          muted
+          playsInline
+          className="max-h-96 w-full rounded-2xl bg-black object-contain"
+        />
+      )}
     </>
   );
 }

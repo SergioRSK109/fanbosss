@@ -3,6 +3,7 @@ import {
   creerOffreSchema,
   isAtLeast18,
   minBirthDateForSignup,
+  publierMessageSchema,
   pseudoLockedUntil,
   PSEUDO_COOLDOWN_MS,
   WHATSAPP_PRIX_MINIMUM,
@@ -231,5 +232,39 @@ describe("creerOffreSchema", () => {
         }).success,
       ).toBe(false);
     });
+  });
+});
+
+describe("publierMessageSchema", () => {
+  it("accepts a plain text-only publication", () => {
+    expect(publierMessageSchema.safeParse({ contenu: "Quoi de neuf ?" }).success).toBe(true);
+  });
+
+  it("accepts a publication with only an image", () => {
+    expect(
+      publierMessageSchema.safeParse({ contenu: "photo", image_r2_key: "publications/u1/a.jpg" })
+        .success,
+    ).toBe(true);
+  });
+
+  it("accepts a publication with only a video", () => {
+    expect(
+      publierMessageSchema.safeParse({ contenu: "vidéo", video_r2_key: "publications/u1/a.mp4" })
+        .success,
+    ).toBe(true);
+  });
+
+  // publications_media_exclusif (migration 0037) is the real DB-level
+  // guarantee -- this is just the same "clean 400 instead of a raw
+  // Postgres error" every other schema in this file already gives its
+  // own mirrored DB constraint.
+  it("rejects a publication with both an image and a video", () => {
+    expect(
+      publierMessageSchema.safeParse({
+        contenu: "les deux à la fois",
+        image_r2_key: "publications/u1/a.jpg",
+        video_r2_key: "publications/u1/a.mp4",
+      }).success,
+    ).toBe(false);
   });
 });

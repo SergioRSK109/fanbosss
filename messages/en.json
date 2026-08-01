@@ -58,7 +58,10 @@
       "autoriseRepost": "Allow other créateurs to repost",
       "submit": "Post",
       "sending": "Posting...",
-      "uploadError": "couldn't upload the image",
+      "checking": "Checking...",
+      "uploadError": "couldn't upload the file",
+      "dureeTropLongue": "Video too long ({duree}s) -- the maximum duration is {max} seconds.",
+      "lectureImpossible": "Couldn't read this video's duration. Try a different file.",
       "unknownError": "something went wrong"
     },
     "actions": {
