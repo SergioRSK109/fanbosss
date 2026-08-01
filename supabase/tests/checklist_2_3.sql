@@ -5793,6 +5793,36 @@ begin
   raise notice 'PASS: publications_explorables respects masque_exploration, same opt-out as profils_explorables';
 end $$;
 
+-- Real bug fix (application-code, no new migration): an active Explorer
+-- search must read publications_visibles instead of
+-- publications_explorables, precisely because publications_visibles
+-- carries no masque_exploration filter at all -- this is the DB-level
+-- guarantee getPublicationsExplorables() now relies on for a search to
+-- correctly bypass masque_exploration (see src/lib/publications.ts and
+-- its own unit tests for the application-side proof of the query shape;
+-- this proves the underlying view genuinely has no such restriction to
+-- bypass in the first place, same "verify a view's real shape before
+-- trusting application code to lean on it" discipline as everywhere
+-- else in this file).
+do $$
+declare
+  v_complet boolean;
+begin
+  if not exists (
+    select 1 from publications_visibles where auteur_id = '8c000002-0000-0000-0000-000000000002'
+  ) then
+    raise exception 'TEST FAILED: a masque_exploration=true créateur''s public post is missing from publications_visibles -- search would have nothing to find';
+  end if;
+
+  select contenu_complet into v_complet from publications_visibles
+    where auteur_id = '8c000002-0000-0000-0000-000000000002';
+  if v_complet is distinct from true then
+    raise exception 'TEST FAILED: the masque_exploration=true créateur''s public post should be fully visible (contenu_complet=true) via publications_visibles, got %', v_complet;
+  end if;
+
+  raise notice 'PASS: publications_visibles (unlike publications_explorables) carries no masque_exploration filter -- the real guarantee behind the search-bypass fix';
+end $$;
+
 do $$
 begin
   if exists (

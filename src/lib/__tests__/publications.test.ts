@@ -4,9 +4,19 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 // proves the cursor-pagination query shape (composite created_at/id
 // keyset, correct nextCursor computation) and that a search narrows the
 // grid to créateurs matched via profils_recherchables (migration 0036)
-// without ever querying publications_explorables when nothing matched,
+// without ever querying the search source table when nothing matched,
 // same "an empty .in() is ambiguous, don't even attempt it" discipline
 // the old /explorer page already followed for its own type filter.
+//
+// Real bug fixed here: an active search must read publications_visibles
+// (filtered to visibilite='public' + verified auteurIds), never
+// publications_explorables -- that view bakes in masque_exploration =
+// false (migration 0038), which would silently undo
+// profils_recherchables' own masque_exploration bypass and make an
+// opted-out créateur unfindable even by an exact pseudo search,
+// contradicting the established "opts out of passive discovery only,
+// never of active search" rule. publications_explorables stays the
+// source only for the no-search default grid.
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServerClient: vi.fn(),
 }));
@@ -167,11 +177,14 @@ describe("getPublicationsExplorables", () => {
     expect(orCall?.args[0]).toBe(buildExplorerCursorFilter(cursor));
   });
 
-  it("with a search term, resolves matching créateurs via profils_recherchables first, then filters publications_explorables by auteur_id", async () => {
+  it("with a search term, resolves matching verified créateurs via profils_recherchables, then queries publications_visibles (not publications_explorables) filtered to public + those auteurIds", async () => {
     vi.mocked(createSupabaseServerClient).mockResolvedValue(
       buildClient(calls, {
-        profils_recherchables: [{ id: "a" }, { id: "b" }],
-        publications_explorables: [baseRow({ id: "p1", auteur_id: "a" })],
+        profils_recherchables: [
+          { id: "a", createur_verifie: true },
+          { id: "b", createur_verifie: true },
+        ],
+        publications_visibles: [baseRow({ id: "p1", auteur_id: "a" })],
         profils_publics: [profil("a")],
       }) as unknown as Awaited<ReturnType<typeof createSupabaseServerClient>>,
     );
@@ -179,20 +192,43 @@ describe("getPublicationsExplorables", () => {
     const { publications } = await getPublicationsExplorables("sergio", null);
 
     const searchCalls = tablesQueried("profils_recherchables");
-    expect(searchCalls.find((c) => c.method === "select")?.args[0]).toBe("id");
+    expect(searchCalls.find((c) => c.method === "select")?.args[0]).toBe("id, createur_verifie");
     const searchOr = searchCalls.find((c) => c.method === "or")?.args[0] as string;
     expect(searchOr).toContain("pseudo.ilike.%sergio%");
     expect(searchOr).toContain("lien_tiktok.ilike.%sergio%");
 
-    const inCall = tablesQueried("publications_explorables").find((c) => c.method === "in");
+    expect(tablesQueried("publications_explorables")).toHaveLength(0);
+    const visiblesCalls = tablesQueried("publications_visibles");
+    expect(visiblesCalls.find((c) => c.method === "select")?.args[0]).toBe(PUBLICATIONS_SELECT);
+    expect(visiblesCalls.find((c) => c.method === "eq")?.args).toEqual(["visibilite", "public"]);
+    const inCall = visiblesCalls.find((c) => c.method === "in");
     expect(inCall?.args).toEqual(["auteur_id", ["a", "b"]]);
     expect(publications).toHaveLength(1);
   });
 
-  it("never queries publications_explorables at all when the search matches no créateur", async () => {
+  it("excludes a matched but non-verified créateur from the search's auteurIds, never widening who's searchable", async () => {
     vi.mocked(createSupabaseServerClient).mockResolvedValue(
       buildClient(calls, {
-        profils_recherchables: [],
+        profils_recherchables: [
+          { id: "a", createur_verifie: true },
+          { id: "unverified", createur_verifie: false },
+        ],
+        publications_visibles: [baseRow({ id: "p1", auteur_id: "a" })],
+        profils_publics: [profil("a")],
+      }) as unknown as Awaited<ReturnType<typeof createSupabaseServerClient>>,
+    );
+
+    await getPublicationsExplorables("sergio", null);
+
+    const inCall = tablesQueried("publications_visibles").find((c) => c.method === "in");
+    expect(inCall?.args).toEqual(["auteur_id", ["a"]]);
+  });
+
+  it("never queries publications_visibles or publications_explorables when the search matches no verified créateur", async () => {
+    vi.mocked(createSupabaseServerClient).mockResolvedValue(
+      buildClient(calls, {
+        profils_recherchables: [{ id: "unverified", createur_verifie: false }],
+        publications_visibles: [baseRow()],
         publications_explorables: [baseRow()],
       }) as unknown as Awaited<ReturnType<typeof createSupabaseServerClient>>,
     );
@@ -200,6 +236,7 @@ describe("getPublicationsExplorables", () => {
     const result = await getPublicationsExplorables("nobody-matches-this", null);
 
     expect(result).toEqual({ publications: [], nextCursor: null });
+    expect(tablesQueried("publications_visibles")).toHaveLength(0);
     expect(tablesQueried("publications_explorables")).toHaveLength(0);
   });
 });
