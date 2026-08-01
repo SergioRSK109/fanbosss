@@ -77,7 +77,7 @@
       "repostError": "repost impossible"
     },
     "viewer": {
-      "closeAriaLabel": "Fermer"
+      "backAriaLabel": "Retour"
     }
   },
   "OffresPage": {
