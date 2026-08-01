@@ -16,10 +16,15 @@ function isOffreType(value: string): value is OffreType {
 }
 
 // Public créateur directory (product brief): reads only from the public
-// views (profils_explorables, offres_publiques) -- no auth required, no
-// RLS-restricted table touched directly. See migration 0009 for how
-// profils_explorables computes "has an active offre AND not
-// masque_exploration" without ever exposing masque_exploration itself.
+// views (profils_explorables/profils_recherchables, offres_publiques) --
+// no auth required, no RLS-restricted table touched directly. See
+// migration 0009 for how profils_explorables computes "has an active
+// offre AND not masque_exploration" without ever exposing
+// masque_exploration itself -- used only for the default, no-search
+// grid. See migration 0036 for profils_recherchables, the same
+// population minus the masque_exploration filter: masque_exploration is
+// an opt-out of passive discovery only, never of an active search, so
+// any non-empty `q` switches to this view instead (below).
 export default async function ExplorerPage({
   params,
   searchParams,
@@ -65,13 +70,30 @@ export default async function ExplorerPage({
   // Skip the query entirely when a type filter matched nobody -- avoids an
   // ambiguous empty .in() call and is just as correct.
   if (type === null || (matchingIds && matchingIds.length > 0)) {
+    // masque_exploration only hides a créateur from the default,
+    // no-search grid -- the instant a query is typed (an exact pseudo or
+    // a fuzzy keyword), search must still find them regardless. Both
+    // views share the same "has at least one active offre" population;
+    // profils_recherchables (migration 0036) is the one without the
+    // masque_exploration filter, used only while `q` is set.
     let query = supabase
-      .from("profils_explorables")
+      .from(q ? "profils_recherchables" : "profils_explorables")
       .select("id, pseudo, bio, photo_r2_key, nom_affichage, createur_verifie", { count: "exact" });
 
     if (q) {
       const escaped = escapeIlike(q);
-      query = query.or(`pseudo.ilike.%${escaped}%,bio.ilike.%${escaped}%`);
+      query = query.or(
+        [
+          `pseudo.ilike.%${escaped}%`,
+          `bio.ilike.%${escaped}%`,
+          `nom_affichage.ilike.%${escaped}%`,
+          `lien_tiktok.ilike.%${escaped}%`,
+          `lien_instagram.ilike.%${escaped}%`,
+          `lien_youtube.ilike.%${escaped}%`,
+          `lien_autre.ilike.%${escaped}%`,
+          `lien_reseau_social.ilike.%${escaped}%`,
+        ].join(","),
+      );
     }
     if (matchingIds) {
       query = query.in("id", matchingIds);

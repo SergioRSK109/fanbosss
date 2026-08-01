@@ -373,7 +373,7 @@
       "autre": "Other link -- https://..."
     },
     "classementCheckboxLabel": "Appear in public leaderboards",
-    "masqueExplorationCheckboxLabel": "Don't appear in the explore page",
+    "masqueExplorationCheckboxLabel": "Don't suggest me in the explore page (I stay findable by search)",
     "badgeFideliteCheckboxLabel": "Make my loyalty badges public (visible on your profile and on the créateurs you support)",
     "pseudoLabel": "Choose your handle",
     "pseudoPlaceholder": "e.g.: sergio_123, sergioRSK",

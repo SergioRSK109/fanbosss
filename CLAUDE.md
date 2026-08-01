@@ -151,7 +151,12 @@ before being considered done (see "Testing" below for how).
   from `classement_public`'s opt-*in*: a créateur becomes explorable the
   moment they have one active offre, unless they flip this. See "Product
   judgment calls" below for why, and the first-offre transparency notice
-  that makes sure this default is never silent.
+  that makes sure this default is never silent. **Since migration `0036`,
+  this only opts out of the *default, no-search* grid** — an active
+  search (exact pseudo or fuzzy keyword) always finds the créateur
+  regardless of this flag; see "Explorer" below for the two-view
+  mechanism (`profils_explorables` vs. `profils_recherchables`) this
+  needs.
 - `est_admin boolean not null default false` — added in `0015`. Gates
   `/admin` (see "Admin dashboard" below). **The real guarantee that a
   normal user can never self-promote is a DB trigger, not application
@@ -326,7 +331,18 @@ still unconsulted placeholders as of this writing.
   appears in this view's `information_schema.columns`. Joins straight to
   the `users` base table (for `masque_exploration`) the same way
   `classement_*` views join it for `classement_public` — same
-  view-owner-bypasses-RLS mechanism, nothing new.
+  view-owner-bypasses-RLS mechanism, nothing new. Backs only the
+  default, no-search `/explorer` grid since migration `0036` — see
+  `profils_recherchables` immediately below and "Explorer" further down.
+- `profils_recherchables` (added `0036`): the same "has at least one
+  active offre" population as `profils_explorables`, deliberately
+  **without** the `masque_exploration` filter, plus the social-link
+  columns (`lien_tiktok`, `lien_instagram`, `lien_youtube`, `lien_autre`)
+  `profils_explorables` never exposed. Backs `/explorer` only while a
+  search (`q`) is active — `masque_exploration` opts a créateur out of
+  passive discovery only, never out of being found by an active search.
+  See "Explorer" further down for the full mechanism and why this needed
+  a second view rather than a flag on the existing query.
 - `classement_volume`, `classement_reactivite`, `classement_progression`
   — **rank only** (`createur_id, rang`), never the underlying count or
   average. All three: 30-day rolling window, scoped to
@@ -3240,19 +3256,53 @@ distinct from `lienReseauSocial`, which the view still returns but
 
 Public créateur directory — reverses an earlier "no browse page" decision
 (see "Product judgment calls" below). Server component, no auth, reads
-only `profils_explorables` + `offres_publiques` (both public views,
-granted to `anon`). Search (`q`, matched against `pseudo`/`bio` via
-`.or()` + `ilike`, escaped through `escapeIlike()` in
-`src/lib/validation.ts` — the same escaping `/@pseudo` needs, don't
-reimplement it a third time) and offer-type filter (`type`) are plain GET
-query params read via `searchParams`, so filtering/pagination work
-without client JS: the filter bar is a native `<form method="get">`, and
-pagination links are plain `<Link href="/explorer?...">`. Type filtering
-is a two-step query (first resolve matching `createur_id`s from
-`offres_publiques`, then `.in("id", ...)` against `profils_explorables`)
-since the two are separate views with no PostgREST-embeddable
+only `profils_explorables`/`profils_recherchables` + `offres_publiques`
+(all public views, granted to `anon`). Offer-type filter (`type`) is a
+plain GET query param read via `searchParams`, so filtering/pagination
+work without client JS: the filter bar is a native `<form method="get">`,
+and pagination links are plain `<Link href="/explorer?...">`. Type
+filtering is a two-step query (first resolve matching `createur_id`s from
+`offres_publiques`, then `.in("id", ...)` against whichever profile view
+is in play) since these are separate views with no PostgREST-embeddable
 relationship. Cards link to `/@pseudo` when the créateur has one, else
 fall back to `/createur/[id]`.
+
+**`q` (search) deliberately switches which view is queried, per
+migration `0036`.** `masque_exploration` (see its own schema entry
+above) is an opt-out of *passive* discovery only — the default grid a
+visitor sees with nothing typed — never of *active* search: a créateur
+who's opted out must still be found the instant someone types anything,
+an exact pseudo or a fuzzy keyword. This can't be expressed as one query
+against one view with a flag threaded through it, because the two modes
+are genuinely different `WHERE` clauses (filtered by
+`masque_exploration` vs. not), so `q === ""` queries `profils_explorables`
+exactly as before, and any non-empty `q` switches to `profils_recherchables`
+(migration `0036`) instead — the identical "has at least one active
+offre" population, just without the `masque_exploration` filter. Both
+branches share the same rendered column set
+(`id, pseudo, bio, photo_r2_key, nom_affichage, createur_verifie`); the
+fuzzy match itself (`.or()` + `ilike`, escaped through `escapeIlike()` in
+`src/lib/validation.ts` — the same escaping `/@pseudo` needs, don't
+reimplement it a third time) is only ever built when `q` is set, and was
+widened in the same migration from `pseudo`/`bio` alone to also match
+`nom_affichage` and every social link (`lien_tiktok`, `lien_instagram`,
+`lien_youtube`, `lien_autre`, `lien_reseau_social`) — none of which
+`profils_explorables` exposes at all, which is exactly why the search
+path needs the second view rather than just a wider filter against the
+same one. `masqueExplorationCheckboxLabel` (`/parametres`) was reworded
+to say this plainly — "Ne pas me suggérer dans l'exploration (je reste
+trouvable par recherche)" — rather than the old, now-inaccurate "Ne pas
+apparaître dans l'exploration".
+
+Verified directly in `checklist_2_3.sql`, not assumed: a
+`masque_exploration = true` créateur (with active offres) is absent from
+`profils_explorables` but present in `profils_recherchables`; a créateur
+with zero active offres is absent from `profils_recherchables` too (the
+"must have something to offer" invariant isn't weakened, only the
+`masque_exploration` one is); an exact-pseudo `ilike` match and a fuzzy
+match against a social link (`lien_tiktok`) both find the opted-out
+créateur via `profils_recherchables`; and the same two conditions still
+find nobody via `profils_explorables` (the default, no-search view).
 
 ## Private leaderboard progress + public `/classement` page (migration `0019`)
 
@@ -4637,7 +4687,16 @@ into chat).
   quota-release chain is proven end to end (a rejection at the rate
   limit, freed by toggling an existing repost off, then a successful new
   repost); and the full `0020`/`0021` security-grant pattern holds for
-  both new/renamed functions.
+  both new/renamed functions. Also covers `profils_recherchables` (0036):
+  a `masque_exploration = true` créateur with active offres is absent
+  from `profils_explorables` but present in `profils_recherchables`; a
+  créateur with zero active offres is absent from `profils_recherchables`
+  too; an exact-pseudo match and a fuzzy match against a social link
+  (`lien_tiktok`) both find the opted-out créateur via
+  `profils_recherchables`; and the same two conditions still find nobody
+  via `profils_explorables` (the default, no-search view) — proving
+  `masque_exploration` only opts out of passive discovery, never of an
+  active search.
 - `supabase/tests/stub_auth.sql` fakes just enough of Supabase's `auth`
   schema (an `auth.uid()` reading `app.current_user_id`, plus the
   `authenticated`/`anon`/`service_role` roles) for the real migrations to
