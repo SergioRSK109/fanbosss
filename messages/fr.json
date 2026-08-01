@@ -75,6 +75,9 @@
       "menuError": "une erreur est survenue",
       "shareCopied": "Lien copié !",
       "repostError": "repost impossible"
+    },
+    "viewer": {
+      "closeAriaLabel": "Fermer"
     }
   },
   "OffresPage": {

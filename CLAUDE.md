@@ -2069,6 +2069,169 @@ completes the full upload-url → R2 PUT → `/api/publications` round trip
 (mocked) without error — all confirmed in both `fr` (light) and `/en/`
 (dark).
 
+## Publications: fullscreen viewer via intercepted routes (Lot 5d, no migration)
+
+Clicking a publication's content (text/image/video) in the feed (`/home`)
+or a profile's Publications tab opens it in a fullscreen overlay — the
+URL genuinely changes to its real permalink (`/@pseudo/p/{id}`, Lot 5c)
+and the browser back button closes it, but the underlying feed is never
+unmounted or reloaded. Direct access to that same URL (a shared link,
+refresh, external navigation) still renders the plain, full permalink
+page exactly as before. No schema change — pure Next.js App Router
+routing plus the existing `PublicationCard`/`getPublicationById` stack.
+
+**Mechanism: Next's own Parallel Routes + Intercepting Routes, used for
+their textbook purpose** (per Next's docs, `parallel-routes.md`'s own
+"Modals" section — this is the officially-documented "photo in a feed
+opens as a modal, with a real URL" pattern, not something bespoke).
+Three new files:
+- `src/app/[locale]/@modal/default.tsx` — returns `null`. Required
+  fallback: on a hard navigation/refresh to any URL that doesn't match
+  the intercepted route below, Next can't recover this slot's state and
+  renders this instead, keeping the modal invisible everywhere except
+  right after an internal navigation actually opened it.
+- `src/app/[locale]/@modal/(.)[handle]/p/[id]/page.tsx` — the
+  intercepting route. `(.)` matches route *segments*, not file-system
+  depth — `@modal` is a slot, invisible to the URL, so `[handle]` here
+  is exactly one segment above where this file lives, the same as
+  `[locale]/[handle]` itself (confirmed directly against a running dev
+  server before trusting it, same "verify a non-obvious Next.js/Postgres
+  mechanism before relying on it" discipline as everywhere else in this
+  file — see the testing note below for what broke on the first attempt
+  and why). Renders `PublicationViewerOverlay` wrapping the exact same
+  `PublicationPermalinkView` the real page uses.
+- `src/app/[locale]/layout.tsx` gained a `modal` prop (the `@modal`
+  slot), rendered alongside `{children}` — this is the layout level
+  common to every trigger surface (`/home`, `/[handle]`) and the
+  intercepted target (`/[handle]/p/[id]`), so the slot needs to live
+  here, not inside `(app)/layout.tsx` or `[handle]/layout.tsx` (neither
+  is an ancestor of both).
+
+**`PublicationPermalinkView`** (`src/components/PublicationPermalinkView.tsx`)
+is the fetch/validation/render logic extracted verbatim out of the real
+permalink page (`[handle]/p/[id]/page.tsx`, unchanged in behavior, now a
+thin wrapper) — shared with the intercepting route so the two can never
+render slightly different content for the same publication. The real
+page keeps its own `<main>` wrapper (page-level semantics, one per real
+page load); the overlay provides its own wrapper instead (a `<main>`
+inside a modal `<div role="dialog">` would be a second, invalid `<main>`
+landmark alongside the underlying page's own).
+
+**`PublicationViewerOverlay`** (`src/components/PublicationViewerOverlay.tsx`,
+client component) is pure chrome — fixed `inset-0 z-50` (matches this
+app's existing "wins over the tab bar" convention, see
+`ZoomablePhoto`/`PhotoCropper`; `AppTabBar` itself is `z-40`), a sticky
+close bar, and a `router.back()` button (from `@/i18n/navigation`'s
+locale-aware `useRouter`, which forwards `.back()` unchanged from
+`next/navigation` — only `.push`/`.replace`/`.prefetch` need
+locale-prefix handling). `router.back()`, not a `Link` to a hardcoded
+route, is what makes the brief's "closing lands back exactly where the
+feed was scrolled to" requirement fall out for free — it's a real
+history-back navigation, and the underlying `/home`/`/[handle]` page was
+never unmounted, so the browser's own scroll-position handling does the
+rest. Because this slot renders at the `[locale]` layout level (a
+sibling of every page's own layout tree), it visually covers the bottom
+tab bar without needing to know `AppTabBar` exists at all.
+
+**Click trigger, `PublicationCard.tsx`/`PublicationContentLink.tsx`**:
+a new `expandable` prop (default `false`, matching this component's
+other conservative defaults) on `PublicationCard`/`PublicationBody`/
+`PublicationsList` — `true` only at the two feed/profile-tab call sites
+(`/home/page.tsx`, `CreateurProfileView.tsx`'s Publications tab), left
+`false` at the permalink page's own direct `<PublicationCard>` render
+(clicking content you're already viewing fullscreen has nothing useful
+to do). When `expandable`, `PublicationBody` wraps just the contenu
+text + image/video block — never the author row (its own separate
+`Link` to the profile, untouched) and never the action bar (a sibling,
+outside `PublicationBody` entirely) — in `PublicationContentLink`, a
+small client component so `PublicationCard`/`PublicationBody` themselves
+can stay Server Components. `publicationPermalinkHref()`
+(`src/lib/publications.ts`) computes the target `/@pseudo/p/{id}` from
+whichever `Publication` object was actually passed to `PublicationBody`
+— since a repost's embedded original is rendered via `<PublicationBody
+publication={publication.repostDe} .../>` (unchanged from before this
+lot), this naturally resolves to the **original's** permalink for a
+repost, with zero repost-specific branching needed in the new code.
+Returns `null` (renders unwrapped, non-clickable content) when the
+author has no pseudo — same "no href beats a link guaranteed to 404"
+reasoning as `notificationHref()`.
+
+**The one real design problem this lot had to solve: native `<video
+controls>` can't be wrapped in a plain click-to-navigate link without
+breaking in-feed playback.** A browser's own play/pause/seek/volume/
+fullscreen controls are rendered as an internal overlay on the `<video>`
+element; clicking any of them still dispatches a plain `click` on the
+`<video>` itself (there's no distinguishable sub-target to check), so a
+wrapping `onClick` firing unconditionally would hijack every control
+interaction into "open the viewer" instead. Fixed in
+`PublicationContentLink`'s `onClick`: if the click landed inside a
+`<video>` **and** its vertical position falls within the bottom 48px
+(generously wider than Chrome's actual ~32px control-bar height, so an
+imprecise click on a control never slips through), `event.preventDefault()`
+cancels the navigation and the video handles the interaction itself
+exactly as before this lot; a click anywhere else on the video (the
+frame/poster area) opens the viewer normally. Verified directly, not
+assumed: a real Playwright click at the video's bottom edge left the URL
+unchanged, while a click in the middle of the frame opened the overlay.
+
+**A real bug in the verification harness, not the app, caught before
+trusting the first "no navigation" result**: a naive first Playwright
+run showed the very first click doing nothing (no URL change, no
+dialog) on a cold dev server, then working correctly on every
+subsequent run. Root cause confirmed by re-running immediately after
+warming the route via one throwaway request: Turbopack's on-demand
+compilation of `/home` and the intercepted route hadn't finished before
+the scripted click fired, unrelated to locale or to this feature's own
+code (the exact same click sequence succeeded identically in `fr` and
+`/en/` once the dev server was warm) — flagged here so a future session
+doesn't misread a similar first-cold-request flake as a real regression.
+
+**A real bug in the test *mock* server, not the app or Next.js, found
+while first exercising the modal against it**: `getPublicationById()`'s
+`.maybeSingle()` call started 404ing unconditionally against the
+throwaway mock-Supabase harness this file's testing sections all use.
+Confirmed directly (not assumed) by inspecting the installed
+`@supabase/postgrest-js` source: in this version, `.maybeSingle()`
+deliberately no longer sets the `Accept: application/vnd.pgrst.object+json`
+header `.single()` still sets — it fetches as a plain array instead and
+enforces "0 or 1 rows" **client-side**. The mock's `publications_visibles`/
+`publications_accueil` handler (unlike this project's real Postgres
+views) doesn't implement real `.eq()`/`.in()` filtering, so it kept
+returning its full multi-row fixture array regardless of the requested
+id — satisfying `.single()`'s old header-based contract by coincidence
+wherever a mock table only ever has one fixture row, but failing
+`.maybeSingle()`'s new client-side cardinality check the moment a mock
+table (here, three fixture publications) actually has more than one.
+Fixed in the mock itself (not application code, which was already
+correct) by honoring `id=eq.`/`id=in.()` filters for that one table.
+Flagged here as a trap for any future mock-based verification: a
+`.maybeSingle()` result silently misbehaving against a multi-row mock
+fixture is a test-harness gap, not necessarily evidence of an app bug —
+confirm which layer is actually wrong before "fixing" the wrong one.
+
+**Scope, deliberately**: applies everywhere `PublicationCard` is already
+rendered with `expandable` — `/home` and the profile Publications tab.
+Explorer's own grid (not yet built to show publications at all) is out
+of scope, per the original brief for publications video support itself
+(Phase B/C).
+
+Verified end-to-end with the same throwaway mock-Supabase/Playwright
+technique used throughout this file (extended with a repost fixture
+whose `repost_de_id` points at a real video post, specifically to
+exercise the "repost opens the original" requirement): an internal click
+on a feed card's text/video opens the overlay with the URL genuinely
+changed and a `window`-level marker surviving the transition (proving no
+full reload occurred); closing returns to `/home` with the exact
+pre-open scroll offset restored; clicking the like/repost/share/menu
+action bar never opens the overlay; clicking a repost's embedded content
+opens the **original's** permalink, not the repost's own; clicking the
+author name/photo still navigates to the profile, never the viewer; a
+direct hard-navigation hit on the permalink URL renders the plain page
+(`AppTabBar` visible, no close button, no dialog role) with zero overlay
+chrome; and the video click-zone split (frame vs. controls) holds up to
+a real, coordinate-targeted click in both regions — all confirmed in
+both `fr` (light) and `/en/` (dark).
+
 ## Admin dashboard reorganized into 4 top tabs (no migration)
 
 `/admin` had grown into 8 stacked sections with no grouping, all always

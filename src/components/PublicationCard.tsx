@@ -1,9 +1,10 @@
 import { useLocale, useTranslations } from "next-intl";
 import { PublicationActions } from "@/components/PublicationActions";
+import { PublicationContentLink } from "@/components/PublicationContentLink";
 import { PublicationTeaser } from "@/components/PublicationTeaser";
 import { RepostIcon } from "@/components/ui/icons";
 import { Link } from "@/i18n/navigation";
-import type { Publication } from "@/lib/publications";
+import { publicationPermalinkHref, type Publication } from "@/lib/publications";
 
 function formatDate(iso: string, locale: string): string {
   return new Date(iso).toLocaleString(locale, {
@@ -21,7 +22,20 @@ function auteurHrefFor(auteur: Publication["auteur"]): string {
 // The author row + contenu/image + badges shared by a plain post and a
 // repost's embedded original -- factored out so the two never render
 // this slightly-fiddly block two different ways.
-function PublicationBody({ publication }: { publication: Publication }) {
+function PublicationBody({
+  publication,
+  expandable = false,
+}: {
+  publication: Publication;
+  // Lot 5d (fullscreen viewer): wraps the contenu/media block (not the
+  // author row, not the action bar) in a link to this publication's own
+  // permalink -- true only at the feed/profile-tab call sites
+  // (PublicationsList), false at the permalink page's own direct render
+  // (clicking content you're already viewing fullscreen would be inert
+  // at best). Defaults false so a call site that doesn't opt in never
+  // gets an unexpected click target.
+  expandable?: boolean;
+}) {
   const t = useTranslations("Publications");
   const locale = useLocale();
   const { auteur } = publication;
@@ -30,6 +44,37 @@ function PublicationBody({ publication }: { publication: Publication }) {
   if (!publication.contenuComplet) {
     return <PublicationTeaser auteurHref={auteurHrefFor(auteur)} auteurLabel={auteurLabel} />;
   }
+
+  const contentBlock = (
+    <>
+      <p className="whitespace-pre-wrap text-sm leading-relaxed">{publication.contenu}</p>
+
+      {publication.imageUrl && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={publication.imageUrl}
+          alt=""
+          className="max-h-96 w-full rounded-2xl object-cover"
+        />
+      )}
+
+      {/* Phase A scope only, per explicit instruction: a plain in-feed
+          player -- muted by default (no unexpected sound while scrolling),
+          real visible controls so the viewer opts into sound/fullscreen
+          themselves, no autoplay. No grid auto-preview, no dedicated
+          fullscreen viewer, no Explorer integration yet -- those are
+          phases B/C, once this is verified. */}
+      {publication.videoUrl && (
+        <video
+          src={publication.videoUrl}
+          controls
+          muted
+          playsInline
+          className="max-h-96 w-full rounded-2xl bg-black object-contain"
+        />
+      )}
+    </>
+  );
 
   return (
     <>
@@ -67,31 +112,12 @@ function PublicationBody({ publication }: { publication: Publication }) {
         </div>
       </Link>
 
-      <p className="whitespace-pre-wrap text-sm leading-relaxed">{publication.contenu}</p>
-
-      {publication.imageUrl && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={publication.imageUrl}
-          alt=""
-          className="max-h-96 w-full rounded-2xl object-cover"
-        />
-      )}
-
-      {/* Phase A scope only, per explicit instruction: a plain in-feed
-          player -- muted by default (no unexpected sound while scrolling),
-          real visible controls so the viewer opts into sound/fullscreen
-          themselves, no autoplay. No grid auto-preview, no dedicated
-          fullscreen viewer, no Explorer integration yet -- those are
-          phases B/C, once this is verified. */}
-      {publication.videoUrl && (
-        <video
-          src={publication.videoUrl}
-          controls
-          muted
-          playsInline
-          className="max-h-96 w-full rounded-2xl bg-black object-contain"
-        />
+      {expandable ? (
+        <PublicationContentLink href={publicationPermalinkHref(publication)}>
+          {contentBlock}
+        </PublicationContentLink>
+      ) : (
+        contentBlock
       )}
     </>
   );
@@ -101,6 +127,7 @@ export function PublicationCard({
   publication,
   canRepost = false,
   viewerId = null,
+  expandable = false,
 }: {
   publication: Publication;
   // Same population as publier_message()'s own rule -- computed once per
@@ -117,6 +144,10 @@ export function PublicationCard({
   // ownership server-side regardless, this is purely which button(s) to
   // show.
   viewerId?: string | null;
+  // Lot 5d (fullscreen viewer) -- see PublicationBody's own comment.
+  // true at the feed/profile-tab call sites (PublicationsList), false at
+  // the permalink page's own direct render.
+  expandable?: boolean;
 }) {
   const t = useTranslations("Publications");
   const { auteur } = publication;
@@ -136,12 +167,17 @@ export function PublicationCard({
         </div>
       )}
 
+      {/* A repost's clickable content area (below) opens the ORIGINAL's
+          permalink, not the repost's own -- PublicationBody is called
+          with publication.repostDe here for exactly that reason, same as
+          before this feature, so publicationPermalinkHref() inside it
+          naturally resolves to the original's id/pseudo. */}
       {publication.repostDe ? (
         <div className="rounded-2xl border border-border p-3">
-          <PublicationBody publication={publication.repostDe} />
+          <PublicationBody publication={publication.repostDe} expandable={expandable} />
         </div>
       ) : (
-        <PublicationBody publication={publication} />
+        <PublicationBody publication={publication} expandable={expandable} />
       )}
 
       {/* A locked teaser (publication.contenuComplet === false) shows no

@@ -65,6 +65,19 @@ export interface Publication {
   repostDe: Publication | null;
 }
 
+// Lot 5d (fullscreen viewer): the permalink URL for a given publication,
+// or null when its author has no pseudo -- the permalink page 404s in
+// that case (/[handle]/p/[id]'s own re-verification), same "no href
+// beats a link guaranteed to 404" reasoning already applied to
+// notificationHref() for publication_aimee. Pure, no data access, so
+// call sites (PublicationCard, its own "..." menu, the fullscreen
+// viewer's own content) never duplicate this string-building logic.
+export function publicationPermalinkHref(
+  publication: Pick<Publication, "id" | "auteur">,
+): string | null {
+  return publication.auteur.pseudo ? `/@${publication.auteur.pseudo}/p/${publication.id}` : null;
+}
+
 type PublicationVisibleRow = {
   id: string;
   auteur_id: string;

@@ -75,6 +75,9 @@
       "menuError": "something went wrong",
       "shareCopied": "Link copied!",
       "repostError": "couldn't repost"
+    },
+    "viewer": {
+      "closeAriaLabel": "Close"
     }
   },
   "OffresPage": {
