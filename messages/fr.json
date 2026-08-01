@@ -84,16 +84,12 @@
     "heading": "Offres"
   },
   "Explorer": {
-    "heading": "Découvrir des créateurs",
-    "subheading": "Parcours les profils publics et trouve un créateur à soutenir.",
-    "searchPlaceholder": "Rechercher un pseudo ou une bio...",
-    "filterAll": "Tous les types d'offre",
+    "heading": "Découvrir",
+    "subheading": "Parcours les publications publiques et trouve un créateur à soutenir.",
+    "searchPlaceholder": "Rechercher un pseudo, une bio, un lien...",
     "searchButton": "Rechercher",
-    "empty": "Aucun créateur trouvé.",
-    "anonymous": "Créateur FanBoss",
-    "previous": "Précédent",
-    "next": "Suivant",
-    "pageIndicator": "Page {page} sur {total}"
+    "empty": "Aucune publication trouvée.",
+    "loadingMore": "Chargement..."
   },
   "Home": {
     "title": "FanBoss",

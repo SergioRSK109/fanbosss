@@ -4,7 +4,8 @@ import { PublicationContentLink } from "@/components/PublicationContentLink";
 import { PublicationTeaser } from "@/components/PublicationTeaser";
 import { RepostIcon } from "@/components/ui/icons";
 import { Link } from "@/i18n/navigation";
-import { publicationPermalinkHref, type Publication } from "@/lib/publications";
+import { publicationPermalinkHref } from "@/lib/publicationLinks";
+import type { Publication } from "@/lib/publications";
 
 function formatDate(iso: string, locale: string): string {
   return new Date(iso).toLocaleString(locale, {

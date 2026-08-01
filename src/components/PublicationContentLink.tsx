@@ -24,18 +24,29 @@ const VIDEO_CONTROLS_ZONE_PX = 48;
 export function PublicationContentLink({
   href,
   children,
+  hasVideoControls = true,
 }: {
   // Null when the publication's author has no pseudo (no working
   // permalink exists at all) -- renders children unwrapped, never a
   // link guaranteed to 404.
   href: string | null;
   children: React.ReactNode;
+  // Phase C: Explorer's grid tiles render a muted, autoplaying,
+  // loop-only <video> with no native `controls` at all (Instagram-style)
+  // -- there's no bottom control strip to protect a click from, so the
+  // whole tile should navigate on any click, including near the bottom
+  // edge. Defaults true, preserving the in-feed <video controls> call
+  // sites' existing behavior unchanged.
+  hasVideoControls?: boolean;
 }) {
   if (!href) {
     return <>{children}</>;
   }
 
   function handleClick(event: React.MouseEvent<HTMLAnchorElement>) {
+    if (!hasVideoControls) {
+      return;
+    }
     const video = (event.target as HTMLElement).closest("video");
     if (!video) {
       return;

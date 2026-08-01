@@ -84,16 +84,12 @@
     "heading": "Offers"
   },
   "Explorer": {
-    "heading": "Discover creators",
-    "subheading": "Browse public profiles and find a creator to support.",
-    "searchPlaceholder": "Search a handle or a bio...",
-    "filterAll": "All offer types",
+    "heading": "Discover",
+    "subheading": "Browse public publications and find a creator to support.",
+    "searchPlaceholder": "Search a handle, a bio, a link...",
     "searchButton": "Search",
-    "empty": "No creator found.",
-    "anonymous": "FanBoss creator",
-    "previous": "Previous",
-    "next": "Next",
-    "pageIndicator": "Page {page} of {total}"
+    "empty": "No publication found.",
+    "loadingMore": "Loading..."
   },
   "Home": {
     "title": "FanBoss",

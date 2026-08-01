@@ -2232,6 +2232,270 @@ chrome; and the video click-zone split (frame vs. controls) holds up to
 a real, coordinate-targeted click in both regions — all confirmed in
 both `fr` (light) and `/en/` (dark).
 
+## Explorer becomes a publications grid (Phase C, migration `0038`)
+
+Follow-up to Phase A (video support) and Phase B (fullscreen viewer,
+above). `/explorer` used to be a paginated list of créateur profile
+cards (photo, display name, bio snippet, `/explorer?type=` offer-type
+filter) — this replaces that entirely with an Instagram-style grid of
+**publications**, on the theory that discovery through actual content
+converts better than a static bio card. The route stays `/explorer`;
+only what it renders changed. **`type` (offer-type filtering) was
+dropped outright**, not carried forward — it was a query against
+`offres_publiques` that made sense for a créateur-card list and has no
+natural equivalent for a publication tile; the spec for this lot never
+asked for it back, and reinventing it would have meant inventing a new
+"offer type of the créateur behind this tile" concept nothing else in
+this schema needs.
+
+**Schema**: `publications_explorables` (view) is the grid's population —
+the exact same "verified créateurs + FanBoss announcements" rule
+`publications_accueil` already uses (migration 0029), narrowed to
+`visibilite = 'public'` only (a locked "soutiens" teaser has no place in
+a discovery grid — it would clutter without converting a visitor who
+doesn't know the créateur yet, unlike `/home`'s feed where a teaser still
+serves a supporter's own following list) and `masque_exploration = false`
+(same opt-out `profils_explorables` already honors — migration 0009).
+**Deliberately no mute filter**, unlike `publications_accueil` — Explorer
+is a shared discovery surface for every visitor, not one viewer's
+personalized feed, so there's no `auth.uid()`-scoped exclusion to apply
+here at all. Granted to `authenticated, anon` like every other public
+view in this project (`profils_explorables`, `publications_visibles`) —
+a plain view, no `SECURITY DEFINER` function involved, so there's no
+`EXECUTE` grant to get wrong the way migration 0020 found for
+`accept_transaction()`.
+
+**Search reuses `profils_recherchables` (migration 0036) to identify
+which créateurs match, never a duplicated search implementation**:
+`getPublicationsExplorables()` (`src/lib/publications.ts`) queries
+`profils_recherchables` first (same exact-pseudo/fuzzy-keyword-against-
+bio/nom_affichage/social-links `.or()` shape the old créateur-card search
+already used) to get a list of matching `auteur_id`s, then filters
+`publications_explorables` by `auteur_id in (...)`. **One deliberate,
+non-obvious consequence worth stating plainly**: this does *not* bypass
+`publications_explorables`'s own `masque_exploration` filter the way
+`profils_recherchables` bypasses it for `profils_publics`-driven search —
+a query only narrows *which créateurs* are considered; the grid's own
+population rule (baked directly into the view) still applies on top.
+There is no `publications_recherchables` view, by design — unlike
+`profils_explorables`/`profils_recherchables`'s two-views-for-two-rules
+split, Explorer's spec asked for exactly one grid population rule
+regardless of whether a search is active, so one view suffices. Concretely:
+a créateur who opts out of passive discovery (`masque_exploration = true`)
+stays findable by *profile* search (`/explorer`'s old behavior, now gone,
+and `/@pseudo` directly) but their *publications* never appear in this
+grid, search or not. Flagged here rather than silently assumed
+consistent with the profile-search precedent, since the two features now
+genuinely disagree on this point — a deliberate scope call for this lot,
+revisit if that turns out to be surprising in practice.
+
+**Cursor (keyset) pagination**, `PUBLICATIONS_EXPLORABLES_PAGE_SIZE = 21`
+(a multiple of 3, so a full batch always ends the 3-column grid on a row
+boundary, never a partial one). Sorted `(created_at desc, id desc)` —
+`created_at` alone can't guarantee no duplicate/skipped tile across a
+page boundary if two rows ever share a timestamp, so the id is a real
+tiebreaker, not decoration. `buildExplorerCursorFilter()` (pure, exported,
+unit-tested) builds the standard Supabase/PostgREST composite-cursor
+filter shape: `or=(created_at.lt.V,and(created_at.eq.V,id.lt.ID))`. Offset
+pagination (`.range()`) was deliberately not used here, unlike
+`/explorer`'s old page-number pagination or `/home`'s — an infinitely
+scrolling grid has no stable "page number" a visitor is ever shown, and
+offset pagination would double-fetch/skip rows whenever a new publication
+lands between two batch requests; keyset pagination is immune to that
+because each batch is defined relative to the last row actually seen, not
+a row count.
+
+**`getPublicationsExplorables(q, cursor)`** (`src/lib/publications.ts`)
+reuses the same `hydratePublications()`/`PUBLICATIONS_SELECT` pipeline
+every other publications read path in this file already shares (never a
+second, parallel row-to-`Publication` mapping) — so a grid tile's
+`Publication` object carries the exact same `repostDe`-embedding,
+signed-URL-resolving behavior as a feed card, with zero grid-specific
+hydration code. `getPublicationsExplorables()` itself is the one place
+that decides `nextCursor`: `null` whenever fewer than a full page came
+back (the natural "no more rows" signal with keyset pagination — no
+separate `count` query needed, unlike `/home`'s offset-based
+`{ count: "exact" }`).
+
+**`/api/explorer/publications`** (`src/app/api/explorer/publications/
+route.ts`) is a thin GET wrapper around the same function, used only for
+every batch *after* the first — the initial batch is server-rendered
+directly by `/explorer/page.tsx` (no round trip needed for the first
+paint), same "SSR the first screen, fetch the rest" split this project's
+infinite-scroll UI didn't have precedent for elsewhere but follows the
+same spirit as `/home`'s "page 1 comes from the Server Component" shape.
+No auth required — `publications_explorables` is granted to `anon`, same
+as the créateur directory it replaces.
+
+**`ExplorerGrid.tsx`** (client) owns the infinite-scroll state
+(`publications`, `cursor`, `loading`) and a bottom sentinel `<div>`
+observed via `IntersectionObserver` (`rootMargin: "400px"`, so the next
+batch is usually ready before the visitor actually reaches the bottom).
+**Keyed by `q` from the parent Server Component** (`/explorer/page.tsx`)
+— a new search is a plain GET navigation (the search form is a native
+`<form method="get">`, same "works without client JS" philosophy the old
+page already established), and React does not reset a client component's
+own `useState` across a prop change unless its `key` actually changes;
+without the `key={q}`, switching searches would keep the previous query's
+already-loaded tiles mixed in underneath the new results. Deliberately
+does **not** reuse `PublicationsList`/`PublicationCard` — those render a
+full feed card (author row, action bar, engagement counts), none of
+which a grid tile needs or shows; a tile only ever opens the *permalink*
+(Phase B's viewer), where the full card already renders via
+`PublicationPermalinkView`'s own independent `getViewerContext()` call.
+Building a second, lighter component (`PublicationTile.tsx`) rather than
+adding a "compact mode" flag to `PublicationCard` avoids threading a
+grid-specific prop through a component whose whole shape (flex column,
+author header, action bar footer) doesn't apply here at all.
+
+**`PublicationTile.tsx`** (client — needs its own `IntersectionObserver`
+for autoplay, see below) renders one tile's media only, `aspect-[4/5]`
+portrait (Instagram's current ratio), `object-cover`. Media priority,
+per the type's own exclusivity guarantee
+(`publications_media_exclusif`, migration 0037): video → image → text.
+The **effective publication is `publication.repostDe ?? publication`** —
+exactly the same resolution `PublicationCard`/`PublicationBody` already
+use to render a repost's embedded original instead of the repost's own
+(always-null) media, reused rather than reimplemented, per the spec's own
+explicit instruction not to write new logic for this. The repost **badge**
+(a small `RepostIcon` in a dark circular chip, top-right corner) is keyed
+off `publication.repostDe !== null` — the tile's own row being a repost —
+independent of which media source ends up rendered.
+
+**Click-through reuses `PublicationContentLink` and the Phase B
+intercepted route verbatim, per the spec's explicit "no new
+overlay/modal logic"** — `publicationPermalinkHref(effective)` computes
+the href exactly like `PublicationBody` does for a repost's embedded
+original, so a repost tile's click naturally opens the **original's**
+permalink with zero repost-specific branching in the click handler
+itself. **One real, necessary extension to `PublicationContentLink`,
+not a duplication**: it gained an optional `hasVideoControls` prop
+(default `true`, so the feed's own `<video controls>` call site is
+completely unaffected) — the component's existing click-guard logic
+assumes a native control strip sits along the bottom ~48px of any
+`<video>` it wraps (to avoid hijacking a control click into navigation),
+but a grid tile's video has **no `controls` attribute at all** (muted
+autoplay loop, Instagram-style — a visible scrubber/volume bar would be
+noise in a grid). Without `hasVideoControls={false}` from
+`PublicationTile`, a tap on the bottom fifth of a video tile would have
+silently failed to navigate, protecting a control strip that was never
+rendered. This is the one piece of "new" code this lot's reuse
+instruction still required — a parameter on the shared component, not a
+second, parallel content-link implementation.
+
+**A real build error, caught empirically the first time this page was
+actually driven in a browser, not spotted by inspection**:
+`publicationPermalinkHref()` used to live in `src/lib/publications.ts`
+alongside every server-only data-fetching function in that module
+(`createSupabaseServerClient`, which itself imports `next/headers`).
+`PublicationCard.tsx` (a Server Component) importing it from there was
+always fine — but `PublicationTile.tsx` is a `"use client"` component
+(it needs `useRef`/`useEffect` for the autoplay observer below), and a
+client component importing ANY runtime value — not just a type — from a
+module that also imports server-only code pulls that entire module graph
+into the client bundle. Turbopack refused outright:
+`You're importing a module that depends on "next/headers". This API is
+only available in Server Components...`, tracing straight back to
+`next/headers` through `publications.ts` through `PublicationTile.tsx`.
+This is the exact same class of bug already caught once in this
+codebase — `PUBLICATION_CONTENU_MAX_LENGTH` was moved out of
+`publications.ts` for `PublicationComposer.tsx` for the identical reason
+(see the Lot 5a section above) — and the fix follows the same pattern:
+`publicationPermalinkHref()` now lives in its own tiny module,
+`src/lib/publicationLinks.ts`, with no server-only imports at all (just
+a `type Publication` import from `publications.ts`, which is erased
+before bundling and never triggers this). Every call site — including
+`PublicationCard.tsx`, which could have safely kept importing it from
+the old location — now imports it from `publicationLinks.ts` instead, so
+there's exactly one canonical import path, not two that could silently
+drift or trap a future client component in the same way.
+
+**Video autoplay, `IntersectionObserver`-driven, per tile**
+(`PublicationTile.tsx`): `threshold: 0.5`, matching the spec's "~50%
+visible" trigger exactly — `entry.isIntersecting` calls `video.play()`
+(swallowing the benign `AbortError` a fast scroll can cause when a
+`play()` is immediately followed by a `pause()`, same "nothing actionable
+to surface for a muted background loop" reasoning as every other
+best-effort catch in this codebase), losing intersection calls
+`video.pause()`. **Deliberately one independent observer per tile, never
+a single shared "which video is active" flag** — several tiles in the
+same viewport row can legitimately cross 50% visibility at once, and
+autoplaying all of them simultaneously is the *correct* behavior, not a
+bug to guard against; the only invariant that actually matters is "a
+video never plays while genuinely below the visibility threshold," which
+each tile's own observer guarantees independently regardless of how many
+others are also playing. **Verified empirically, not assumed** (see
+testing below) — this project's own discipline for any
+`IntersectionObserver`-based claim, following the same "reproduce before
+trusting" pattern already used for the Lot 5d fullscreen viewer's
+video-click-zone split.
+
+**Testing**:
+- SQL (`checklist_2_3.sql`): a fixture of four créateurs (E — verified,
+  posts a public post AND a soutiens-only post; F — verified but
+  `masque_exploration = true`; G — deliberately not verified/admin,
+  inserted directly since `publier_message()` itself would reject the
+  call; admin H — not itself `createur_verifie`) proves
+  `publications_explorables` includes E's public post, excludes E's
+  soutiens-only post entirely (never even as a teaser), excludes F's
+  post (`masque_exploration`), excludes G's post (not verified/admin),
+  and includes H's FanBoss announcement regardless of the posting
+  admin's own `createur_verifie` — plus, reusing Phase A's own fixture
+  (créateur D reposting créateur A's public video), that a public repost
+  by a verified créateur appears in the grid's population too. Grants
+  checked the same way as every other public view (`anon`/`authenticated`
+  both hold `SELECT`, via both a live query and `has_table_privilege`).
+- Unit (`src/lib/__tests__/publications.test.ts`): `buildExplorerCursorFilter`'s
+  exact output string; `getPublicationsExplorables()`'s query shape via a
+  mocked chainable Supabase client (spied `.select()`/`.order()`/`.limit()`/
+  `.in()`/`.or()` calls) — no `q`/cursor sends neither an `.in()` nor an
+  `.or()` filter; `nextCursor` is `null` on a partial page and computed
+  from the real last row on a full page; a search resolves
+  `profils_recherchables` first (asserting the exact `.or()` ilike string)
+  then filters by `auteur_id in (...)`; and a search matching no créateur
+  at all never queries `publications_explorables`.
+- Visual (throwaway mock-Supabase/Playwright technique, same as every
+  other lot in this file — a small Node mock of the Auth/PostgREST
+  surface plus a **real** tiny `.webm`/`.jpg` fixture generated on the fly
+  via Chromium's own canvas + `MediaRecorder`/`toBlob` APIs, since this
+  sandbox's ffmpeg build is a stripped Playwright-internal one with no
+  usable encoder/demuxer for synthetic frames — served through Playwright
+  network interception on the R2 domain so the browser has real bytes to
+  decode, not a broken image icon): confirmed empirically, not assumed —
+  the grid renders exactly 3 columns at a real computed
+  `grid-template-columns`; tiles are portrait (~0.8 width/height ratio);
+  at least one image, one video, and one text-only tile render correctly
+  (the text tile's own snippet is present in the DOM); grid video tiles
+  are `muted`+`loop` with **no** native `controls`; exactly one repost
+  badge renders, on exactly the repost tile, and its link resolves to the
+  **original's** permalink, not the repost's own id; a real video element
+  is confirmed `paused` before ever scrolling it into view, `paused ===
+  false` after scrolling it to >=50% visibility and waiting for the
+  observer callback, and `paused === true` again once scrolled back out —
+  the actual empirical proof the spec asked for, not an assumption that
+  the observer logic works; clicking a tile navigates to its real
+  permalink URL, opens the Phase B overlay (`role="dialog"`), and does
+  **not** trigger a full page reload (a `window`-level marker set before
+  the click survives the navigation, same technique Lot 5d's own
+  verification already established); closing the viewer returns to
+  `/explorer`; infinite scroll loads the remaining rows of a 25-row
+  fixture (21 in the first batch, the rest after scrolling) with **no
+  omitted row** across the two batches, verified directly against the
+  mock's own data (curl) to confirm the two batches share zero
+  overlapping rows. **One nuance the verification script itself got
+  wrong on a first pass, worth recording**: naively asserting every
+  rendered tile's permalink `href` is unique fails, correctly —
+  a repost tile always links to its **original's** permalink (see
+  above), and this fixture's repost targets a post that *also* renders
+  as its own standalone tile elsewhere in the grid, so that one href
+  legitimately appears twice. That's expected app behavior, not a
+  pagination bug; the fix was asserting the *right* invariant (exactly
+  one repeated href, and it's the reposted original's — everything else
+  appears once) instead of raw uniqueness. A search for a créateur's own
+  pseudo still finds their tiles. Re-confirmed in `/en/` + dark mode:
+  heading translates, the grid still renders 3 columns, and the repost
+  badge still renders correctly.
+
 ## Admin dashboard reorganized into 4 top tabs (no migration)
 
 `/admin` had grown into 8 stacked sections with no grouping, all always
@@ -5016,7 +5280,19 @@ into chat).
   migration `0037`'s own `publications_accueil` anon-grant regression
   (see that migration's own section) before it ever shipped — the
   pre-existing `anon`-rejection assertion for that view failed the first
-  time this migration's SQL ran, exactly as intended.
+  time this migration's SQL ran, exactly as intended. Also covers
+  `publications_explorables` (0038, Explorer's publications grid) with a
+  dedicated fixture (créateur E — verified, posts a public post and a
+  soutiens-only post; créateur F — verified but `masque_exploration =
+  true`; créateur G — deliberately not verified/admin, row inserted
+  directly since `publier_message()` itself rejects the call; admin H —
+  not itself `createur_verifie`): the view includes E's public post,
+  excludes E's soutiens-only post entirely, excludes F's post
+  (`masque_exploration`) and G's post (not verified/admin), includes H's
+  FanBoss announcement regardless of the posting admin's own
+  `createur_verifie`, and includes a public repost by a verified créateur
+  (reusing migration 0037's own fixture) — plus the same
+  `anon`/`authenticated` grant checks as every other public view.
 - `supabase/tests/stub_auth.sql` fakes just enough of Supabase's `auth`
   schema (an `auth.uid()` reading `app.current_user_id`, plus the
   `authenticated`/`anon`/`service_role` roles) for the real migrations to
