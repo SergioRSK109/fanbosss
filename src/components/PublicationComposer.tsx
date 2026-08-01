@@ -6,6 +6,11 @@ import { useState } from "react";
 import { buttonClass } from "@/components/ui/button-styles";
 import { inputClass, labelClass } from "@/components/ui/field-styles";
 import { PUBLICATION_CONTENU_MAX_LENGTH } from "@/lib/validation";
+import {
+  isVideoDurationAllowed,
+  MAX_VIDEO_DURATION_SECONDS,
+  readVideoDurationSeconds,
+} from "@/lib/videoDuration";
 
 // Visible only when the caller is an admin or a créateur_verifie (checked
 // server-side by the page rendering this, per the brief) -- but
@@ -18,13 +23,57 @@ export function PublicationComposer() {
   const [contenu, setContenu] = useState("");
   const [visibilite, setVisibilite] = useState<"public" | "soutiens">("public");
   const [autoriseRepost, setAutoriseRepost] = useState(true);
+  // `file` is only ever an image or a video, never both at once --
+  // publications_media_exclusif (migration 0037) is the real guarantee,
+  // this component just never has a way to attach a second file anyway
+  // (a single native file input, replaced wholesale on every selection).
   const [file, setFile] = useState<File | null>(null);
-  const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "checking" | "saving" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState("");
+  const [fileInputKey, setFileInputKey] = useState(0);
 
   const trimmed = contenu.trim();
   const canSubmit =
-    trimmed.length > 0 && trimmed.length <= PUBLICATION_CONTENU_MAX_LENGTH && status !== "saving";
+    trimmed.length > 0 &&
+    trimmed.length <= PUBLICATION_CONTENU_MAX_LENGTH &&
+    status !== "saving" &&
+    status !== "checking";
+
+  // Video support (additive alongside the existing image upload, migration
+  // 0037): checked at file *selection* time, before any upload starts --
+  // same real-root-cause reasoning and same 90s cap as
+  // LivraisonsEnAttente.tsx's own video-duration check for offer delivery
+  // (src/lib/videoDuration.ts). An image needs no such check.
+  async function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const selected = event.target.files?.[0] ?? null;
+    setErrorMessage("");
+    setFile(null);
+    if (!selected) return;
+
+    if (!selected.type.startsWith("video/")) {
+      setFile(selected);
+      return;
+    }
+
+    setStatus("checking");
+    try {
+      const duration = await readVideoDurationSeconds(selected);
+      if (!isVideoDurationAllowed(duration)) {
+        setErrorMessage(
+          t("dureeTropLongue", { duree: Math.round(duration), max: MAX_VIDEO_DURATION_SECONDS }),
+        );
+        setStatus("idle");
+        setFileInputKey((key) => key + 1);
+        return;
+      }
+      setFile(selected);
+      setStatus("idle");
+    } catch {
+      setErrorMessage(t("lectureImpossible"));
+      setStatus("idle");
+      setFileInputKey((key) => key + 1);
+    }
+  }
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -33,6 +82,7 @@ export function PublicationComposer() {
 
     try {
       let imageR2Key: string | null = null;
+      let videoR2Key: string | null = null;
 
       if (file) {
         const uploadUrlResponse = await fetch("/api/publications/upload-url", {
@@ -53,7 +103,12 @@ export function PublicationComposer() {
         if (!putResponse.ok) {
           throw new Error(`${t("uploadError")} (HTTP ${putResponse.status})`);
         }
-        imageR2Key = uploadUrlBody.r2Key;
+
+        if (file.type.startsWith("video/")) {
+          videoR2Key = uploadUrlBody.r2Key;
+        } else {
+          imageR2Key = uploadUrlBody.r2Key;
+        }
       }
 
       const response = await fetch("/api/publications", {
@@ -62,6 +117,7 @@ export function PublicationComposer() {
         body: JSON.stringify({
           contenu: trimmed,
           image_r2_key: imageR2Key,
+          video_r2_key: videoR2Key,
           visibilite,
           // Only meaningful when visibilite is "public" -- a soutiens-only
           // post can never be reposted regardless of this value (see
@@ -77,6 +133,7 @@ export function PublicationComposer() {
 
       setContenu("");
       setFile(null);
+      setFileInputKey((key) => key + 1);
       setVisibilite("public");
       setAutoriseRepost(true);
       setStatus("idle");
@@ -106,9 +163,10 @@ export function PublicationComposer() {
 
       <div className="flex flex-wrap items-center gap-3">
         <input
+          key={fileInputKey}
           type="file"
-          accept="image/*"
-          onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+          accept="image/*,video/*"
+          onChange={handleFileChange}
           className="text-sm text-foreground-muted file:mr-2 file:rounded-full file:border-0 file:bg-brand-50 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-brand-600 dark:file:bg-white/10 dark:file:text-brand-300"
         />
 
@@ -142,11 +200,15 @@ export function PublicationComposer() {
           disabled={!canSubmit}
           className={`${buttonClass("primary", "sm")} ml-auto`}
         >
-          {status === "saving" ? t("sending") : t("submit")}
+          {status === "saving" ? t("sending") : status === "checking" ? t("checking") : t("submit")}
         </button>
       </div>
 
-      {status === "error" && <p className="text-sm text-danger-600">{errorMessage}</p>}
+      {/* Not gated on status === "error" -- a rejected video duration
+          resets status back to "idle" (there's nothing further to
+          retry, the field is just cleared), same shape as
+          LivraisonsEnAttente.tsx's own errorMessage rendering. */}
+      {errorMessage && <p className="text-sm text-danger-600">{errorMessage}</p>}
     </form>
   );
 }

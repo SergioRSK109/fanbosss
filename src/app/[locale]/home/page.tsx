@@ -100,7 +100,12 @@ export default async function HomePage({
 
       {canManage && <PublicationComposer />}
 
-      <PublicationsList publications={publications} canRepost={canManage} viewerId={viewerId} />
+      <PublicationsList
+        publications={publications}
+        canRepost={canManage}
+        viewerId={viewerId}
+        expandable
+      />
 
       {totalPages > 1 && (
         <div className="flex items-center justify-between">

@@ -346,7 +346,12 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
           }
           publicationsContent={
             <div className="px-5">
-              <PublicationsList publications={publications} canRepost={viewerCanRepost} viewerId={viewerId} />
+              <PublicationsList
+                publications={publications}
+                canRepost={viewerCanRepost}
+                viewerId={viewerId}
+                expandable
+              />
             </div>
           }
         />

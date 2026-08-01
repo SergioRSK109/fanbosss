@@ -44,9 +44,16 @@ export async function generateMetadata({
 
 export default async function LocaleLayout({
   children,
+  modal,
   params,
 }: Readonly<{
   children: React.ReactNode;
+  // Lot 5d: the publication fullscreen-viewer parallel slot (see
+  // src/app/[locale]/@modal) -- null on every route until an internal
+  // navigation to /[handle]/p/[id] intercepts it. Rendered alongside
+  // (not instead of) children, same "modal overlays the current page"
+  // shape Next's own Parallel + Intercepting Routes docs describe.
+  modal: React.ReactNode;
   params: Promise<{ locale: string }>;
 }>) {
   const { locale } = await params;
@@ -71,6 +78,7 @@ export default async function LocaleLayout({
           <ServiceWorkerRegistration />
           <TopNav isAuthenticated={Boolean(user)} />
           {children}
+          {modal}
         </NextIntlClientProvider>
       </body>
     </html>
