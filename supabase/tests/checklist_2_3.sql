@@ -726,6 +726,75 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------
+-- profils_recherchables (migration 0036): masque_exploration must only
+-- hide a créateur from the default, no-search /explorer grid -- never
+-- from an active search (exact pseudo or fuzzy keyword, including social
+-- links). '11111111' is still masque_exploration = true from the block
+-- above, with active offres and pseudo 'Sergio_1' at this point in the
+-- file (not yet touched by the pseudo-cooldown tests further down).
+-- ---------------------------------------------------------------------
+update users set lien_tiktok = 'https://tiktok.com/@findme12345'
+  where id = '11111111-1111-1111-1111-111111111111';
+
+do $$
+begin
+  -- Search population: same "has an active offre" rule as
+  -- profils_explorables, but never filtered by masque_exploration.
+  if not exists (
+    select 1 from profils_recherchables where id = '11111111-1111-1111-1111-111111111111'
+  ) then
+    raise exception 'TEST FAILED: masque_exploration=true créateur missing from profils_recherchables (search must still find them)';
+  end if;
+
+  -- '22222222' still has zero active offres -- search must not surface a
+  -- créateur with nothing to offer either, same invariant as the default grid.
+  if exists (
+    select 1 from profils_recherchables where id = '22222222-2222-2222-2222-222222222222'
+  ) then
+    raise exception 'TEST FAILED: créateur with zero active offres appeared in profils_recherchables';
+  end if;
+
+  raise notice 'PASS: profils_recherchables includes a masque_exploration=true créateur, still requires an active offre';
+end $$;
+
+do $$
+begin
+  -- Exact pseudo search.
+  if not exists (
+    select 1 from profils_recherchables where pseudo ilike 'Sergio_1'
+  ) then
+    raise exception 'TEST FAILED: exact pseudo search did not find the masque_exploration=true créateur via profils_recherchables';
+  end if;
+
+  -- Fuzzy keyword search against a social link (lien_tiktok) -- the
+  -- field this lot added to the searched-columns set.
+  if not exists (
+    select 1 from profils_recherchables where lien_tiktok ilike '%findme12345%'
+  ) then
+    raise exception 'TEST FAILED: fuzzy social-link search did not find the masque_exploration=true créateur via profils_recherchables';
+  end if;
+
+  raise notice 'PASS: both exact pseudo search and fuzzy social-link search find a masque_exploration=true créateur via profils_recherchables';
+end $$;
+
+do $$
+begin
+  -- The default, no-search grid must still exclude them -- confirms this
+  -- lot only widened active search, never weakened the passive default.
+  -- profils_explorables doesn't even expose lien_tiktok (it was never
+  -- part of that view's column set), so the pseudo match alone is what
+  -- proves the exclusion here.
+  if exists (
+    select 1 from profils_explorables
+    where id = '11111111-1111-1111-1111-111111111111' and pseudo ilike 'Sergio_1'
+  ) then
+    raise exception 'TEST FAILED: masque_exploration=true créateur still matched via profils_explorables (the default/no-search view)';
+  end if;
+
+  raise notice 'PASS: profils_explorables (the default, no-search grid) still excludes a masque_exploration=true créateur';
+end $$;
+
+-- ---------------------------------------------------------------------
 -- Pseudo change cool-down (migration 0010): a real change starts the
 -- 30-day clock, a repeat change within that window is blocked even
 -- though the underlying users_update_self RLS policy would otherwise let

@@ -373,7 +373,7 @@
       "autre": "Autre lien -- https://..."
     },
     "classementCheckboxLabel": "Apparaître dans les classements publics",
-    "masqueExplorationCheckboxLabel": "Ne pas apparaître dans l'exploration",
+    "masqueExplorationCheckboxLabel": "Ne pas me suggérer dans l'exploration (je reste trouvable par recherche)",
     "badgeFideliteCheckboxLabel": "Rendre mes badges de fidélité publics (visibles sur ton profil et sur celui des créateurs que tu soutiens)",
     "pseudoLabel": "Choisis ton identifiant",
     "pseudoPlaceholder": "ex: sergio_123, sergioRSK",
