@@ -447,7 +447,7 @@ describe("POST /api/webhooks/cinetpay (produit physique, Phase 1)", () => {
     expect(inserts).toHaveLength(0);
   });
 
-  it("accepts montant = prix × quantite, records the transaction with the real quantite, confirms the reservation, and leaves statut at en_attente", async () => {
+  it("accepts montant = prix × quantite, records the transaction with the real quantite, confirms the reservation, and moves statut to validee only (never livree -- that's livrer_produit(), migration 0040)", async () => {
     const { client, inserts, updates, rpcCalls } = buildSupabaseMock(produitOffre, null, null, {
       disponibiliteDefinitif: 4, // still stock left after this sale -- offre must stay actif
     });
@@ -478,8 +478,8 @@ describe("POST /api/webhooks/cinetpay (produit physique, Phase 1)", () => {
     expect(inserts[0].table).toBe("transactions");
     expect(inserts[0].row.quantite).toBe(3);
     expect(inserts[0].row.montant).toBe(45);
-    // produit has no forced validee/livree cascade -- delivery is a
-    // physical shipment, not something payment success alone completes.
+    // Delivery (statut=livree) is a separate, later step (livrer_produit(),
+    // migration 0040) -- payment success alone never sets it.
     expect(inserts[0].row).not.toHaveProperty("statut");
 
     const reservationUpdate = updates.find((u) => u.table === "reservations_stock");
@@ -510,7 +510,11 @@ describe("POST /api/webhooks/cinetpay (produit physique, Phase 1)", () => {
       },
     ]);
 
-    expect(updates.filter((u) => u.table === "transactions")).toHaveLength(0);
+    // Exactly one transaction update: statut -> validee. Never a second
+    // update to livree (that's a distinct, later, créateur-initiated step).
+    const transactionUpdates = updates.filter((u) => u.table === "transactions");
+    expect(transactionUpdates).toHaveLength(1);
+    expect(transactionUpdates[0].patch).toEqual({ statut: "validee" });
   });
 
   it("closes the offre (actif=false) the instant disponible_definitif reaches 0 after the confirmed sale", async () => {

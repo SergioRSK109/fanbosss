@@ -81,7 +81,11 @@
     }
   },
   "OffresPage": {
-    "heading": "Offers"
+    "heading": "Offers",
+    "tabs": {
+      "service": "Service",
+      "produit": "Physical product"
+    }
   },
   "Explorer": {
     "heading": "Discover",
@@ -263,6 +267,7 @@
     "demandesHeading": "Requests awaiting your response",
     "nouvellesDemandes": "{count, plural, one {# new} other {# new}}",
     "livraisonsHeading": "Pending deliveries",
+    "commandesHeading": "Orders to ship",
     "offresHeading": "Your offers",
     "statutShort": {
       "en_attente": "Pending",
@@ -314,6 +319,17 @@
       "livraisonImpossible": "Delivery failed.",
       "envoiEnCours": "Uploading...",
       "livrer": "Deliver"
+    },
+    "commandes": {
+      "intro": "Paid orders awaiting shipment.",
+      "empty": "No orders to ship.",
+      "row": "{libelle} · quantity {quantite} · ${montant}",
+      "adresseLabel": "Shipping address:",
+      "adresseInconnue": "not provided",
+      "referenceSuiviPlaceholder": "Tracking reference (optional)",
+      "marquerExpedie": "Mark as shipped",
+      "envoiEnCours": "Sending...",
+      "echecExpedition": "Failed to mark as shipped."
     },
     "transactionActions": {
       "reveal": {
@@ -438,7 +454,16 @@
     "objectifLabel": "Goal ($)",
     "liveCalculatorText": "Once this goal is reached, you'll receive about <b>${montant}</b> net (15% platform commission + VAT (16%) deducted -- payment processing fees are still covered by the platform).",
     "dateFinLabel": "End date (optional)",
-    "campagneLaunch": "Launch campaign"
+    "campagneLaunch": "Launch campaign",
+    "produitsIntro": "List a physical product you ship yourself (several distinct products allowed).",
+    "addProduit": "+ Add a product",
+    "produitLibelleLabel": "Product name",
+    "produitLibellePlaceholder": "E.g.: Limited edition t-shirt",
+    "prixUnitaireLabel": "Unit price",
+    "stockLabel": "Stock available",
+    "imageLabel": "Product photo (optional)",
+    "imageDejaTeleversee": "photo already uploaded",
+    "produitLaunch": "Publish product"
   },
   "Admin": {
     "heading": "Administration",

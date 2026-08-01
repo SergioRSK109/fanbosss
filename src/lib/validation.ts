@@ -102,6 +102,10 @@ export const creerOffreSchema = z
     // let through, so every offre stayed at the table's actif=true
     // default forever regardless of what the client sent.
     actif: z.boolean().optional(),
+    // Phase 2 of the produit physique offer type: meaningful only for
+    // `type: "produit"`, mirroring offres_stock_coherent (migration 0039)
+    // as defense in depth -- see the produit-specific refine below.
+    stock_total: z.number().int().positive().optional(),
   })
   .refine((offre) => offre.type === "don" || offre.type === "campagne" || offre.prix !== undefined, {
     message: "le prix est requis pour ce type d'offre",
@@ -151,7 +155,20 @@ export const creerOffreSchema = z
       message: "date_fin doit être au format AAAA-MM-JJ",
       path: ["config", "date_fin"],
     },
-  );
+  )
+  // Phase 2 (Phase 1's own "What Phase 1 deliberately leaves broken"
+  // note flagged this as the gap Phase 2 needed to close): a créateur can
+  // list several distinct physical products, same NULLS NOT DISTINCT
+  // multi-row mechanism video/campagne already use -- each one needs its
+  // own title.
+  .refine((offre) => offre.type !== "produit" || Boolean(offre.libelle), {
+    message: "le nom du produit est requis",
+    path: ["libelle"],
+  })
+  .refine((offre) => offre.type !== "produit" || offre.stock_total !== undefined, {
+    message: "le stock du produit est requis",
+    path: ["stock_total"],
+  });
 
 export const modifierOffreSchema = z
   .object({
@@ -163,6 +180,8 @@ export const modifierOffreSchema = z
     // content-upload-url's own doc comment), except image_r2_key is a
     // real top-level column (migration 0039), not a config key.
     image_r2_key: z.string().optional(),
+    // Phase 2: lets a créateur restock an existing produit offer.
+    stock_total: z.number().int().positive().optional(),
   })
   .strict();
 

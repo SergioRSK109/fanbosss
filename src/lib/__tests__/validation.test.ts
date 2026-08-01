@@ -233,6 +233,52 @@ describe("creerOffreSchema", () => {
       ).toBe(false);
     });
   });
+
+  // Phase 2 of the produit physique offer type (migration 0039/0040) --
+  // mirrors offres_stock_coherent (stock_total required, a positive
+  // integer) and the same "several distinct rows need distinct titles"
+  // libelle requirement campagne/video already have.
+  describe("produit", () => {
+    const valid = {
+      type: "produit" as const,
+      libelle: "T-shirt édition limitée",
+      prix: 15,
+      stock_total: 20,
+    };
+
+    it("accepts a well-formed produit offer", () => {
+      expect(creerOffreSchema.safeParse(valid).success).toBe(true);
+    });
+
+    it("rejects a produit offer with no libelle (product name is required)", () => {
+      expect(
+        creerOffreSchema.safeParse({ type: "produit", prix: 15, stock_total: 20 }).success,
+      ).toBe(false);
+    });
+
+    it("rejects a produit offer with no prix (unlike don/campagne, produit has a fixed unit price)", () => {
+      expect(
+        creerOffreSchema.safeParse({ type: "produit", libelle: valid.libelle, stock_total: 20 })
+          .success,
+      ).toBe(false);
+    });
+
+    it("rejects a produit offer with no stock_total", () => {
+      expect(
+        creerOffreSchema.safeParse({ type: "produit", libelle: valid.libelle, prix: 15 }).success,
+      ).toBe(false);
+    });
+
+    it("rejects a zero or negative stock_total", () => {
+      for (const stock_total of [0, -5]) {
+        expect(creerOffreSchema.safeParse({ ...valid, stock_total }).success).toBe(false);
+      }
+    });
+
+    it("rejects a non-integer stock_total", () => {
+      expect(creerOffreSchema.safeParse({ ...valid, stock_total: 2.5 }).success).toBe(false);
+    });
+  });
 });
 
 describe("publierMessageSchema", () => {

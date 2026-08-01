@@ -6282,6 +6282,210 @@ begin
   raise notice 'PASS: has_table_privilege confirms both anon and authenticated hold SELECT on offres_disponibilite_produit';
 end $$;
 
+-- =======================================================================
+-- Phase 2 of the "produit physique" offer type (migration 0040):
+-- livrer_produit() -- the créateur-facing "mark as shipped" RPC, opening
+-- the same 72h fan-confirmation escrow window deliver_video() does.
+--
+-- Fixture: créateur K (a produit offre and a video offre), fan A, and an
+-- unrelated authenticated user U (proves ownership is actually checked,
+-- not just "some session exists"). Three transactions: a produit one at
+-- validee (the happy path), a video one at validee (proves the
+-- type=produit guard), and a produit one still at en_attente (proves the
+-- "must have reached validee" guard) -- deliberately inserted directly at
+-- en_attente to simulate the moment right after the webhook creates a
+-- brand-new produit transaction, before it moves to validee.
+-- =======================================================================
+insert into users (id) values
+  ('af000001-0000-0000-0000-000000000001'), -- créateur K
+  ('af000002-0000-0000-0000-000000000002'), -- fan A
+  ('af000003-0000-0000-0000-000000000003'); -- unrelated authenticated user U
+
+insert into offres (id, createur_id, type, prix, stock_total, libelle) values
+  ('af000010-0000-0000-0000-000000000010', 'af000001-0000-0000-0000-000000000001', 'produit', 20, 5, 'T-shirt'),
+  ('af000011-0000-0000-0000-000000000011', 'af000001-0000-0000-0000-000000000001', 'video', 20, null, null);
+
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut, quantite, adresse_livraison) values
+  ('af000020-0000-0000-0000-000000000020', 'af000002-0000-0000-0000-000000000002', 'af000001-0000-0000-0000-000000000001', 'af000010-0000-0000-0000-000000000010', 20, 'validee', 1, '12 avenue de la Paix, Kinshasa'),
+  ('af000021-0000-0000-0000-000000000021', 'af000002-0000-0000-0000-000000000002', 'af000001-0000-0000-0000-000000000001', 'af000011-0000-0000-0000-000000000011', 20, 'validee', 1, null),
+  ('af000022-0000-0000-0000-000000000022', 'af000002-0000-0000-0000-000000000002', 'af000001-0000-0000-0000-000000000001', 'af000010-0000-0000-0000-000000000010', 20, 'en_attente', 1, null);
+
+-- Rejection: no auth.uid() at all.
+select set_config('app.current_user_id', '', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform livrer_produit('af000020-0000-0000-0000-000000000020');
+    raise exception 'TEST FAILED: livrer_produit succeeded with a NULL auth.uid()';
+  exception when others then
+    if sqlerrm !~ 'not authenticated' then
+      raise exception 'TEST FAILED: expected a not-authenticated error, got: %', sqlerrm;
+    end if;
+    raise notice 'PASS: livrer_produit rejects a NULL auth.uid() caller';
+  end;
+end $$;
+reset role;
+
+-- Rejection: the target transaction's offre is not type=produit (video).
+select set_config('app.current_user_id', 'af000001-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform livrer_produit('af000021-0000-0000-0000-000000000021');
+    raise exception 'TEST FAILED: livrer_produit accepted a video transaction';
+  exception when others then
+    if sqlerrm !~ 'produit' then
+      raise exception 'TEST FAILED: expected a not-a-produit error, got: %', sqlerrm;
+    end if;
+    raise notice 'PASS: livrer_produit rejects a non-produit (video) transaction -- the exact inverse of deliver_video()''s own video/shoutout-only guard';
+  end;
+end $$;
+reset role;
+
+-- Rejection: a genuinely different authenticated user (not the créateur
+-- who owns this transaction) is not authorized.
+select set_config('app.current_user_id', 'af000003-0000-0000-0000-000000000003', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform livrer_produit('af000020-0000-0000-0000-000000000020');
+    raise exception 'TEST FAILED: livrer_produit accepted a non-owner caller';
+  exception when others then
+    if sqlerrm !~ 'not authorized' then
+      raise exception 'TEST FAILED: expected a not-authorized error, got: %', sqlerrm;
+    end if;
+    raise notice 'PASS: livrer_produit rejects a caller who does not own the transaction';
+  end;
+end $$;
+reset role;
+
+-- Rejection: the transaction has not reached validee yet (still
+-- en_attente -- simulating the instant right after the webhook creates a
+-- brand-new produit transaction, before its own validee update lands).
+select set_config('app.current_user_id', 'af000001-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform livrer_produit('af000022-0000-0000-0000-000000000022');
+    raise exception 'TEST FAILED: livrer_produit accepted a transaction still at en_attente';
+  exception when others then
+    if sqlerrm !~ 'validee' then
+      raise exception 'TEST FAILED: expected a not-yet-validee error, got: %', sqlerrm;
+    end if;
+    raise notice 'PASS: livrer_produit rejects a transaction that has not reached validee -- deliberately NOT requiring a separate acceptation step first (see CLAUDE.md), just that a real payment landed';
+  end;
+end $$;
+reset role;
+
+-- None of the four rejected attempts above touched any of the three
+-- fixture transactions -- same "always confirm a rejected attempt leaves
+-- no trace" discipline as every other RPC in this file.
+do $$
+declare
+  v_statut text;
+  v_confirmation text;
+begin
+  select statut, confirmation_fan into v_statut, v_confirmation
+    from transactions where id = 'af000020-0000-0000-0000-000000000020';
+  if v_statut != 'validee' or v_confirmation != 'non_applicable' then
+    raise exception 'TEST FAILED: the happy-path fixture transaction was mutated by a rejected attempt (statut=%, confirmation_fan=%)', v_statut, v_confirmation;
+  end if;
+  raise notice 'PASS: none of the rejected livrer_produit attempts left any trace on the fixture transactions';
+end $$;
+
+-- The genuine success path: statut -> livree, livrable carries the
+-- reference_suivi, and the same 72h escrow window deliver_video() opens
+-- (confirmation_fan='en_attente', deadline_confirmation ~72h out).
+select set_config('app.current_user_id', 'af000001-0000-0000-0000-000000000001', false);
+set role authenticated;
+select livrer_produit('af000020-0000-0000-0000-000000000020', 'DHL-CD-98765');
+reset role;
+
+do $$
+declare
+  v_tx record;
+begin
+  select statut, livrable, confirmation_fan, deadline_confirmation into v_tx
+    from transactions where id = 'af000020-0000-0000-0000-000000000020';
+
+  if v_tx.statut != 'livree' then
+    raise exception 'TEST FAILED: expected statut=livree after livrer_produit, got %', v_tx.statut;
+  end if;
+  if v_tx.livrable->>'reference_suivi' != 'DHL-CD-98765' then
+    raise exception 'TEST FAILED: expected livrable.reference_suivi=DHL-CD-98765, got %', v_tx.livrable;
+  end if;
+  if v_tx.confirmation_fan != 'en_attente' then
+    raise exception 'TEST FAILED: expected confirmation_fan=en_attente (escrow opened), got %', v_tx.confirmation_fan;
+  end if;
+  if v_tx.deadline_confirmation is null
+     or v_tx.deadline_confirmation < now() + interval '71 hours'
+     or v_tx.deadline_confirmation > now() + interval '73 hours' then
+    raise exception 'TEST FAILED: expected deadline_confirmation ~72h out, got %', v_tx.deadline_confirmation;
+  end if;
+  raise notice 'PASS: livrer_produit marks the order livree, records the tracking reference, and opens the same 72h fan-confirmation escrow window as deliver_video()';
+end $$;
+
+-- reference_suivi is genuinely optional -- a second produit order shipped
+-- with no reference at all still succeeds, with a null reference_suivi
+-- recorded (not an empty string, not a missing key crash). Reset directly
+-- as the superuser (no direct-table UPDATE policy exists for
+-- authenticated on transactions -- every state change goes through a
+-- vetted RPC, which is exactly the mechanism under test here).
+update transactions set statut = 'validee'
+  where id = 'af000022-0000-0000-0000-000000000022';
+
+select set_config('app.current_user_id', 'af000001-0000-0000-0000-000000000001', false);
+set role authenticated;
+select livrer_produit('af000022-0000-0000-0000-000000000022');
+reset role;
+
+do $$
+declare
+  v_reference jsonb;
+begin
+  select livrable into v_reference from transactions where id = 'af000022-0000-0000-0000-000000000022';
+  if v_reference->'reference_suivi' is distinct from 'null'::jsonb then
+    raise exception 'TEST FAILED: expected a JSON null reference_suivi when none was given, got %', v_reference;
+  end if;
+  raise notice 'PASS: livrer_produit works with no reference_suivi at all (genuinely optional)';
+end $$;
+
+-- Grants: same authenticated-only discipline as every write RPC since
+-- migration 0020 (reserver_stock_produit's own grant test, above, is the
+-- most recent precedent).
+select set_config('app.current_user_id', '', false);
+set role anon;
+do $$
+begin
+  begin
+    perform livrer_produit('af000020-0000-0000-0000-000000000020');
+    raise exception 'TEST FAILED: anon was able to call livrer_produit';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE on livrer_produit (real Postgres permission error)';
+  end;
+end $$;
+reset role;
+
+do $$
+begin
+  if has_function_privilege('anon', 'livrer_produit(uuid,text)', 'EXECUTE') then
+    raise exception 'TEST FAILED: anon holds EXECUTE on livrer_produit';
+  end if;
+  raise notice 'PASS: has_function_privilege confirms anon lacks EXECUTE on livrer_produit';
+end $$;
+
+do $$
+begin
+  if not has_function_privilege('authenticated', 'livrer_produit(uuid,text)', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lacks EXECUTE on livrer_produit';
+  end if;
+  raise notice 'PASS: has_function_privilege confirms authenticated holds EXECUTE on livrer_produit';
+end $$;
+
 do $$
 begin
   raise notice 'ALL SQL CHECKLIST TESTS PASSED';

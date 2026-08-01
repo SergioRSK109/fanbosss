@@ -80,6 +80,9 @@ export async function POST(request: NextRequest) {
   if (parsed.data.actif !== undefined) {
     upsertPayload.actif = parsed.data.actif;
   }
+  if (parsed.data.stock_total !== undefined) {
+    upsertPayload.stock_total = parsed.data.stock_total;
+  }
 
   // Application-level checks mirror the DB constraints
   // (check_whatsapp_minimum_price, offres_prix_required_unless_don on

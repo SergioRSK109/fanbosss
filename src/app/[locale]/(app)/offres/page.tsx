@@ -1,8 +1,10 @@
 import { getTranslations } from "next-intl/server";
 import { redirect } from "@/i18n/navigation";
+import { CommandesAExpedier } from "@/components/CommandesAExpedier";
 import { DemandesEnAttente } from "@/components/DemandesEnAttente";
 import { LivraisonsEnAttente } from "@/components/LivraisonsEnAttente";
 import { OffresManager } from "@/components/OffresManager";
+import { OffresTabs } from "@/components/OffresTabs";
 import type { OffreType } from "@/lib/validation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -14,7 +16,22 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 // "Offres" namespace -- renaming a namespace that's not itself
 // user-visible would be a much wider change than this lot needs, same
 // call already made for the Finance/finance split in Lot 2b.
-
+//
+// Phase 2 of the produit physique offer type adds a second, nested level
+// of tabs on top of that ("Service" / "Produit physique", via
+// OffresTabs) -- same pattern as CreateurProfileView's Offres/Publications
+// tabs (Lot 5a): both tabs' content is built server-side right here and
+// handed to a client component that only toggles visibility. "Service" is
+// every offer type that already existed before this lot (its own content
+// is unchanged from before -- video/campagne/QUESTION_TYPES never
+// included produit, and produit transactions never reach `en_attente` at
+// all since the webhook now moves them straight to `validee`, so
+// DemandesEnAttente's own query needs no new filter either). "Produit
+// physique" is new: no "Demandes en attente" equivalent at all -- there
+// is no acceptation step to accept/refuse (see CLAUDE.md's "Physical
+// products -- Phase 2" section for why) -- just "Commandes à expédier"
+// (validee produit transactions awaiting livrer_produit()) and
+// OffresManager filtered to produit only.
 export default async function OffresPage({
   params,
 }: {
@@ -33,11 +50,11 @@ export default async function OffresPage({
     return;
   }
 
-  const [{ data: offres }, { data: demandes }, { data: profil }, { data: livraisons }] =
+  const [{ data: offres }, { data: demandes }, { data: profil }, { data: validees }] =
     await Promise.all([
       supabase
         .from("offres")
-        .select("id, type, prix, libelle, actif, config")
+        .select("id, type, prix, libelle, actif, config, stock_total, image_r2_key")
         .eq("createur_id", user.id),
       supabase
         .from("transactions")
@@ -49,15 +66,15 @@ export default async function OffresPage({
       // Security audit fix: accepted (validee) video/shoutout
       // transactions still awaiting the créateur's own file upload --
       // this list never existed before (see LivraisonsEnAttente.tsx's
-      // own comment). In practice only video/shoutout transactions ever
-      // sit at `validee` at all (every other type either cascades
-      // straight through to livree or skips validee entirely -- see
-      // CLAUDE.md's "Transaction lifecycle"), so no extra offer-type
-      // filter is needed here, same reasoning DemandesEnAttente's own
-      // query already relies on for `en_attente`.
+      // own comment). Since Phase 2 (migration 0040 + the webhook change
+      // it required), a produit transaction ALSO reaches `validee` --
+      // awaiting shipment, not a file -- so this same query is now split
+      // in JS below into the Service tab's `livraisons` (video/shoutout)
+      // and the Produit physique tab's `commandes` (produit), rather than
+      // querying twice.
       supabase
         .from("transactions")
-        .select("id, montant, deadline_livraison, offres(type, libelle)")
+        .select("id, montant, quantite, deadline_livraison, adresse_livraison, offres(type, libelle)")
         .eq("createur_id", user.id)
         .eq("statut", "validee")
         .order("deadline_livraison", { ascending: true }),
@@ -95,10 +112,44 @@ export default async function OffresPage({
     .update({ dernier_vu_demandes_at: new Date().toISOString() })
     .eq("id", user.id);
 
-  return (
-    <main className="mx-auto flex max-w-2xl flex-col gap-8 p-5 sm:p-6">
-      <h1 className="text-2xl font-bold">{tOffres("heading")}</h1>
+  const valideesNormalisees = (validees ?? []).map((validee) => ({
+    ...validee,
+    offres: Array.isArray(validee.offres) ? validee.offres[0] : validee.offres,
+  })) as {
+    id: string;
+    montant: number;
+    quantite: number;
+    deadline_livraison: string | null;
+    adresse_livraison: string | null;
+    offres: { type: OffreType; libelle: string | null } | null;
+  }[];
 
+  const livraisonsService = valideesNormalisees.filter(
+    (validee) => validee.offres?.type !== "produit",
+  );
+  const commandesProduit = valideesNormalisees.filter(
+    (validee) => validee.offres?.type === "produit",
+  );
+
+  const offresNormalisees = (
+    (offres ?? []) as {
+      id: string;
+      type: OffreType;
+      prix: number | null;
+      libelle: string | null;
+      actif: boolean;
+      config: Record<string, unknown>;
+      stock_total: number | null;
+      image_r2_key: string | null;
+    }[]
+  ).map((offre) => ({
+    ...offre,
+    montantCollecte:
+      offre.type === "campagne" ? montantCollecteParOffre.get(offre.id) ?? 0 : undefined,
+  }));
+
+  const serviceContent = (
+    <div className="flex flex-col gap-8">
       <section>
         <h2 className="mb-3 flex items-center gap-2 text-lg font-bold">
           {t("demandesHeading")}
@@ -126,40 +177,35 @@ export default async function OffresPage({
       <section>
         <h2 className="mb-3 text-lg font-bold">{t("livraisonsHeading")}</h2>
         <p className="mb-3 text-sm text-foreground-muted">{t("livraisons.intro")}</p>
-        <LivraisonsEnAttente
-          livraisons={
-            (livraisons ?? []).map((livraison) => ({
-              ...livraison,
-              offres: Array.isArray(livraison.offres) ? livraison.offres[0] : livraison.offres,
-            })) as {
-              id: string;
-              montant: number;
-              deadline_livraison: string | null;
-              offres: { type: OffreType; libelle: string | null } | null;
-            }[]
-          }
-        />
+        <LivraisonsEnAttente livraisons={livraisonsService} />
       </section>
 
       <section>
         <h2 className="mb-3 text-lg font-bold">{t("offresHeading")}</h2>
-        <OffresManager
-          offres={(
-            (offres ?? []) as {
-              id: string;
-              type: OffreType;
-              prix: number | null;
-              libelle: string | null;
-              actif: boolean;
-              config: Record<string, unknown>;
-            }[]
-          ).map((offre) => ({
-            ...offre,
-            montantCollecte:
-              offre.type === "campagne" ? montantCollecteParOffre.get(offre.id) ?? 0 : undefined,
-          }))}
-        />
+        <OffresManager offres={offresNormalisees} mode="service" />
       </section>
+    </div>
+  );
+
+  const produitContent = (
+    <div className="flex flex-col gap-8">
+      <section>
+        <h2 className="mb-3 text-lg font-bold">{t("commandesHeading")}</h2>
+        <p className="mb-3 text-sm text-foreground-muted">{t("commandes.intro")}</p>
+        <CommandesAExpedier commandes={commandesProduit} />
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-lg font-bold">{t("offresHeading")}</h2>
+        <OffresManager offres={offresNormalisees} mode="produit" />
+      </section>
+    </div>
+  );
+
+  return (
+    <main className="mx-auto flex max-w-2xl flex-col gap-8 p-5 sm:p-6">
+      <h1 className="text-2xl font-bold">{tOffres("heading")}</h1>
+      <OffresTabs serviceContent={serviceContent} produitContent={produitContent} />
     </main>
   );
 }
