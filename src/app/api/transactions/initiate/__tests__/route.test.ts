@@ -93,6 +93,47 @@ describe("POST /api/transactions/initiate (produit)", () => {
     expect(initiateCinetPayPayment).not.toHaveBeenCalled();
   });
 
+  it("rejects a produit checkout with no adresseLivraison", async () => {
+    vi.mocked(createSupabaseServerClient).mockResolvedValue(
+      buildSupabase({ id: "fan-1" }, produitOffre, null) as unknown as Awaited<
+        ReturnType<typeof createSupabaseServerClient>
+      >,
+    );
+
+    const { POST } = await import("@/app/api/transactions/initiate/route");
+    const response = await POST(
+      buildRequest({ offreId: "offre-produit-1", quantite: 1, reservationId: "res-1" }) as never,
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error).toMatch(/adresseLivraison/);
+    expect(initiateCinetPayPayment).not.toHaveBeenCalled();
+  });
+
+  it("rejects a blank (whitespace-only) adresseLivraison the same way as a missing one", async () => {
+    vi.mocked(createSupabaseServerClient).mockResolvedValue(
+      buildSupabase({ id: "fan-1" }, produitOffre, null) as unknown as Awaited<
+        ReturnType<typeof createSupabaseServerClient>
+      >,
+    );
+
+    const { POST } = await import("@/app/api/transactions/initiate/route");
+    const response = await POST(
+      buildRequest({
+        offreId: "offre-produit-1",
+        quantite: 1,
+        reservationId: "res-1",
+        adresseLivraison: "   ",
+      }) as never,
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error).toMatch(/adresseLivraison/);
+    expect(initiateCinetPayPayment).not.toHaveBeenCalled();
+  });
+
   it("rejects a reservationId that doesn't resolve to a row at all (forged/unknown id)", async () => {
     vi.mocked(createSupabaseServerClient).mockResolvedValue(
       buildSupabase({ id: "fan-1" }, produitOffre, null) as unknown as Awaited<
@@ -102,7 +143,12 @@ describe("POST /api/transactions/initiate (produit)", () => {
 
     const { POST } = await import("@/app/api/transactions/initiate/route");
     const response = await POST(
-      buildRequest({ offreId: "offre-produit-1", quantite: 1, reservationId: "not-mine" }) as never,
+      buildRequest({
+        offreId: "offre-produit-1",
+        quantite: 1,
+        reservationId: "not-mine",
+        adresseLivraison: "12 Avenue de la Paix, Kinshasa",
+      }) as never,
     );
     const body = await response.json();
 
@@ -128,7 +174,12 @@ describe("POST /api/transactions/initiate (produit)", () => {
 
     const { POST } = await import("@/app/api/transactions/initiate/route");
     const response = await POST(
-      buildRequest({ offreId: "offre-produit-1", quantite: 1, reservationId: "res-1" }) as never,
+      buildRequest({
+        offreId: "offre-produit-1",
+        quantite: 1,
+        reservationId: "res-1",
+        adresseLivraison: "12 Avenue de la Paix, Kinshasa",
+      }) as never,
     );
 
     expect(response.status).toBe(400);
@@ -152,7 +203,12 @@ describe("POST /api/transactions/initiate (produit)", () => {
 
     const { POST } = await import("@/app/api/transactions/initiate/route");
     const response = await POST(
-      buildRequest({ offreId: "offre-produit-1", quantite: 1, reservationId: "res-1" }) as never,
+      buildRequest({
+        offreId: "offre-produit-1",
+        quantite: 1,
+        reservationId: "res-1",
+        adresseLivraison: "12 Avenue de la Paix, Kinshasa",
+      }) as never,
     );
 
     expect(response.status).toBe(400);
@@ -176,7 +232,12 @@ describe("POST /api/transactions/initiate (produit)", () => {
 
     const { POST } = await import("@/app/api/transactions/initiate/route");
     const response = await POST(
-      buildRequest({ offreId: "offre-produit-1", quantite: 1, reservationId: "res-1" }) as never,
+      buildRequest({
+        offreId: "offre-produit-1",
+        quantite: 1,
+        reservationId: "res-1",
+        adresseLivraison: "12 Avenue de la Paix, Kinshasa",
+      }) as never,
     );
 
     expect(response.status).toBe(400);
@@ -200,7 +261,12 @@ describe("POST /api/transactions/initiate (produit)", () => {
 
     const { POST } = await import("@/app/api/transactions/initiate/route");
     const response = await POST(
-      buildRequest({ offreId: "offre-produit-1", quantite: 1, reservationId: "res-1" }) as never,
+      buildRequest({
+        offreId: "offre-produit-1",
+        quantite: 1,
+        reservationId: "res-1",
+        adresseLivraison: "12 Avenue de la Paix, Kinshasa",
+      }) as never,
     );
 
     expect(response.status).toBe(400);
@@ -224,7 +290,12 @@ describe("POST /api/transactions/initiate (produit)", () => {
 
     const { POST } = await import("@/app/api/transactions/initiate/route");
     const response = await POST(
-      buildRequest({ offreId: "offre-produit-1", quantite: 3, reservationId: "res-1" }) as never,
+      buildRequest({
+        offreId: "offre-produit-1",
+        quantite: 3,
+        reservationId: "res-1",
+        adresseLivraison: "  12 Avenue de la Paix, Kinshasa  ",
+      }) as never,
     );
     const body = await response.json();
 
@@ -234,7 +305,13 @@ describe("POST /api/transactions/initiate (produit)", () => {
       expect.objectContaining({
         amount: 75, // 25 × 3
         customerId: "fan-1",
-        custom: { fanId: "fan-1", offreId: "offre-produit-1", quantite: 3, reservationId: "res-1" },
+        custom: {
+          fanId: "fan-1",
+          offreId: "offre-produit-1",
+          quantite: 3,
+          reservationId: "res-1",
+          adresseLivraison: "12 Avenue de la Paix, Kinshasa",
+        },
       }),
     );
   });

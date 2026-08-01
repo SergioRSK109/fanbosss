@@ -46,18 +46,6 @@ export interface CreateurProfileData {
   // bar/badge/donate flow, not a plain price card, and (unlike every
   // other type) must stay visible here even once actif=false, so they
   // can't come from the same actif-only offres_publiques query.
-  //
-  // `produit` (Phase 1 of the physical-product offer type, migration
-  // 0039) is excluded from `offres` the same way, for a different reason:
-  // CheckoutButton's plain "type -> POST /api/transactions/initiate"
-  // flow has no quantity selector and never sends reservationId, which
-  // /api/transactions/initiate now requires for a produit offer -- a
-  // fan clicking "Payer" on one today would just hit a clean 400. That
-  // quantity-selector/reservation UI is Phase 3 (fan checkout), out of
-  // scope for this lot; excluding produit here is what keeps this page
-  // from offering a checkout button that can't currently succeed, same
-  // "don't ship a broken affordance" reasoning as campagne's own
-  // exclusion above.
   campagnes: {
     id: string;
     titre: string;
@@ -66,6 +54,22 @@ export interface CreateurProfileData {
     dateFin: string | null;
     montantCollecte: number;
     actif: boolean;
+  }[];
+  // `produit` (Phase 1: migration 0039, Phase 3: fan-facing UI, this
+  // section) is kept out of `offres` above for the same reason
+  // `campagnes` is: it needs its own card shape (image, quantity
+  // selector, live availability), not a plain price row. `disponible*`/
+  // `prochaineLiberation` come straight from offres_disponibilite_produit
+  // (migration 0039) -- never computed here, so this page's numbers can
+  // never disagree with what reserver_stock_produit() itself enforces.
+  produits: {
+    id: string;
+    libelle: string | null;
+    prix: number;
+    imageUrl: string | null;
+    disponibleMaintenant: number;
+    disponibleDefinitif: number;
+    prochaineLiberation: string | null;
   }[];
   ranks: {
     volume: number | null;
@@ -146,6 +150,7 @@ export async function getCreateurProfileData(
     { data: profil },
     { data: offres },
     { data: campagnesRows },
+    { data: produitRows },
     { data: volumeRow },
     { data: reactiviteRow },
     { data: progressionRow },
@@ -172,6 +177,17 @@ export async function getCreateurProfileData(
       .from("campagnes_publiques")
       .select("id, libelle, actif, config, created_at")
       .eq("createur_id", createurId),
+    // Phase 3: produit offres, read separately from the generic `offres`
+    // query above for the same "needs its own card shape" reason
+    // campagnes already are -- see the field's own comment. Still
+    // actif-only via offres_publiques (a sold-out/deactivated produit
+    // offer stops being orderable, unlike a campagne's own deliberate
+    // "stays visible as history" exception).
+    supabase
+      .from("offres_publiques")
+      .select("id, prix, libelle, image_r2_key")
+      .eq("createur_id", createurId)
+      .eq("type", "produit"),
     supabase
       .from("classement_volume")
       .select("rang")
@@ -265,6 +281,49 @@ export async function getCreateurProfileData(
     })
     .filter((c): c is NonNullable<typeof c> => c !== null);
 
+  // Live availability per produit offre, straight from
+  // offres_disponibilite_produit (migration 0039) -- same "only fetch
+  // when there's something to fetch" discipline as
+  // campagnes_montant_collecte above. This is the one and only source of
+  // truth for the three-state (en stock/réservé/épuisé) card logic --
+  // never re-derived from stock_total here, since that column isn't even
+  // exposed publicly.
+  const produitIds = (produitRows ?? []).map((row) => row.id);
+  const { data: disponibiliteRows } =
+    produitIds.length > 0
+      ? await supabase
+          .from("offres_disponibilite_produit")
+          .select("offre_id, disponible_maintenant, disponible_definitif, prochaine_liberation")
+          .in("offre_id", produitIds)
+      : {
+          data: [] as {
+            offre_id: string;
+            disponible_maintenant: number;
+            disponible_definitif: number;
+            prochaine_liberation: string | null;
+          }[],
+        };
+  const disponibiliteParOffre = new Map(
+    (disponibiliteRows ?? []).map((row) => [row.offre_id, row]),
+  );
+
+  const produits = await Promise.all(
+    (produitRows ?? []).map(async (row) => {
+      const disponibilite = disponibiliteParOffre.get(row.id);
+      return {
+        id: row.id,
+        libelle: row.libelle,
+        prix: Number(row.prix),
+        imageUrl: row.image_r2_key
+          ? await getSignedDownloadUrl(row.image_r2_key, PHOTO_SIGNED_URL_EXPIRY_SECONDS)
+          : null,
+        disponibleMaintenant: disponibilite?.disponible_maintenant ?? 0,
+        disponibleDefinitif: disponibilite?.disponible_definitif ?? 0,
+        prochaineLiberation: disponibilite?.prochaine_liberation ?? null,
+      };
+    }),
+  );
+
   // Resolve pseudo/nom_affichage for whichever other users show up on
   // either side of the badge lists -- a second, dependent query (needs
   // supporterRows/badgeRows' ids first), same "only fetch when there's
@@ -322,6 +381,7 @@ export async function getCreateurProfileData(
     },
     offres: sortOffresDonFirst(offres ?? []),
     campagnes,
+    produits,
     ranks: {
       volume: volumeRow?.rang ?? null,
       reactivite: reactiviteRow?.rang ?? null,

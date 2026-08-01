@@ -205,8 +205,35 @@
     "verified": "Verified",
     "tabs": {
       "offres": "Offers",
-      "publications": "Publications"
+      "publications": "Publications",
+      "service": "Service",
+      "produit": "Product"
+    },
+    "produits": {
+      "empty": "No product available.",
+      "quantiteLabel": "Quantity",
+      "commander": "Order",
+      "reserveAvecEstimation": "Temporarily held by another fan -- a unit could free up around {date}.",
+      "reserveSansEstimation": "Temporarily held by another fan.",
+      "epuise": "Sold out"
     }
+  },
+  "PaiementProduit": {
+    "heading": "Confirm your order",
+    "recapitulatif": "{libelle} · quantity {quantite} · ${prix}",
+    "reservationEnCours": "Reserving your stock...",
+    "erreurGenerique": "Something went wrong. Try again.",
+    "recommencer": "Start over",
+    "reserveAvecEstimation": "Temporarily held by another fan -- a unit could free up around {date}.",
+    "reserveSansEstimation": "Temporarily held by another fan.",
+    "epuise": "Sold out",
+    "tempsRestant": "Time left to confirm",
+    "adresseLabel": "Shipping address",
+    "adressePlaceholder": "Name, street/neighborhood, city, country...",
+    "reservationExpiree": "Your reservation has expired. Start over to reserve again.",
+    "confirmerPaiement": "Confirm payment",
+    "confirmationEnCours": "Confirming...",
+    "confirmationImpossible": "Confirmation failed. Try again."
   },
   "PaiementRetour": {
     "heading": "Thank you!",

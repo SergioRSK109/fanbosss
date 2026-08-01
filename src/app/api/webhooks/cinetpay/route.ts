@@ -70,6 +70,7 @@ export async function POST(request: NextRequest) {
     offreId?: string;
     quantite?: number;
     reservationId?: string;
+    adresseLivraison?: string;
   } = {};
   try {
     custom = JSON.parse(String(notification.cpm_custom ?? "{}"));
@@ -127,13 +128,22 @@ export async function POST(request: NextRequest) {
   // verified against the calling fan's own row at /api/transactions/
   // initiate (section 4); re-parsed here from the same HMAC-verified
   // cpm_custom payload every other field in this webhook is already
-  // trusted from.
+  // trusted from. Phase 3: adresseLivraison rides the same trust
+  // boundary and the same required-for-produit rule.
   let quantite = 1;
   if (offerType === "produit") {
     quantite = Number(custom.quantite);
-    if (!Number.isInteger(quantite) || quantite <= 0 || !custom.reservationId) {
+    if (
+      !Number.isInteger(quantite) ||
+      quantite <= 0 ||
+      !custom.reservationId ||
+      !custom.adresseLivraison
+    ) {
       return NextResponse.json(
-        { error: "cpm_custom missing/invalid quantite or reservationId for a produit offer" },
+        {
+          error:
+            "cpm_custom missing/invalid quantite, reservationId or adresseLivraison for a produit offer",
+        },
         { status: 400 },
       );
     }
@@ -152,7 +162,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { error: insertError } = await supabase.from("transactions").insert({
+  const transactionRow: Record<string, unknown> = {
     id: transactionId,
     fan_id: custom.fanId,
     createur_id: offre.createur_id,
@@ -160,7 +170,15 @@ export async function POST(request: NextRequest) {
     montant: amount,
     quantite,
     reference_cinetpay: transactionId,
-  });
+  };
+  // Phase 3 -- only ever meaningful for produit; the key is omitted
+  // entirely (not set to undefined/null) for every other offer type, so
+  // the column simply keeps its table default (null) for them.
+  if (offerType === "produit") {
+    transactionRow.adresse_livraison = custom.adresseLivraison;
+  }
+
+  const { error: insertError } = await supabase.from("transactions").insert(transactionRow);
 
   if (insertError) {
     throw new Error(`failed to record transaction: ${insertError.message}`);

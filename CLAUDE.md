@@ -1109,6 +1109,347 @@ now-`livree` transaction's absence from the `validee` filter); zero
 console errors throughout — confirmed in both `fr` (light/dark) and
 `/en/` (light/dark), all four combinations.
 
+## Physical products (offre type `produit`, Phase 3: fan-facing purchase UI, migration `0041`)
+
+Follow-up to Phase 1 (schema + reservation + webhook, migration `0039`)
+and Phase 2 (créateur UI, migration `0040`), both above. This lot builds
+the fan-facing half: a produit tab on a créateur's public profile, a
+product card with a quantity selector and three availability states, and
+a dedicated reservation/checkout page that turns "commander" into a real
+10-minute stock hold before payment. **Phase 4 (if any — e.g. order
+tracking for the fan, a delivery-status view) is not started here.**
+
+### `offres_publiques` gains `image_r2_key` (migration `0041`)
+
+The only schema change this lot needed. `image_r2_key` (Phase 2,
+migration `0040`) was already on the raw `offres` table but never
+exposed through the public view — Phase 2 had no fan-facing surface that
+needed it yet. `create or replace view` adding it as a **trailing**
+column, same "can append, can't reorder/insert among existing columns"
+constraint already documented for `publications_visibles`/
+`publications_accueil` (migration `0037`). Verified empirically before
+trusting it (same discipline as every other view change in this file):
+ran a throwaway database through every migration and confirmed `anon`/
+`authenticated` both still hold `SELECT` afterward — `CREATE OR REPLACE
+VIEW` doesn't reset existing grants, and this migration deliberately
+doesn't restate one, matching the same "don't copy an older migration's
+grant statement forward, but also don't gratuitously re-grant what a
+plain `CREATE OR REPLACE` already preserves" reasoning migration `0037`
+had to actually learn the hard way for `publications_accueil`'s `anon`
+regression — here there was nothing to accidentally re-widen, since
+`offres_publiques` has always been granted to both roles since migration
+`0006` and this change touches no grant statement at all.
+
+### `getCreateurProfileData()` re-includes `produit` offres, with their own shape
+
+`profil.ts`'s `produits` field is Phase 1's own doc comment finally paid
+off — that section already flagged "a créateur cannot successfully
+create a produit offer through the app yet" and "excluded from
+`CreateurProfileView`'s public profile list" as Phase 2/3's job, not an
+oversight. Queried separately from the plain `offres` array, same reason
+`campagnes` already is: a produit card needs its own shape (image,
+quantity selector, live availability), not a generic price row. Read
+straight from `offres_publiques` (`id, prix, libelle, image_r2_key`,
+`actif`-filtered — unlike `campagnes_publiques`'s deliberate exception, a
+sold-out/deactivated produit stops being orderable, matching every other
+non-campagne type), joined against `offres_disponibilite_produit`
+(Phase 1) for `disponibleMaintenant`/`disponibleDefinitif`/
+`prochaineLiberation` — **never re-derived from `stock_total` here**,
+since that column isn't even exposed publicly; this view is the one and
+only source of truth for the three-state card logic, same "compute live,
+never store/re-derive a number `offres_disponibilite_produit` (or
+`reserver_stock_produit()`) already owns" discipline as everywhere else
+in this feature. Image URLs are signed the same way profile
+photos/campaign images already are (`PHOTO_SIGNED_URL_EXPIRY_SECONDS`,
+24h — not sensitive, just consistently signed rather than a public
+bucket URL, per this project's standing R2 policy).
+
+### `src/lib/produits.ts` — pure helpers, shared by both fan-facing components
+
+Same reasoning as `campagnes.ts`/`classementProgres.ts`: this project has
+no jsdom/testing-library, so a React component itself can't be rendered
+in a test — the parts of this lot's UI logic that are worth unit-testing
+directly are extracted as pure functions instead, imported by both
+`ProduitCard.tsx` (the profile-page card) and `ProduitCheckoutContent.tsx`
+(the verification page), so the two can never silently disagree about
+which state a given `disponible_maintenant`/`disponible_definitif` pair
+represents or how a countdown is computed/formatted.
+
+- `computeDisponibiliteEtat(disponibleMaintenant, disponibleDefinitif)` —
+  the three-way split exactly mirroring `offres_disponibilite_produit`'s
+  own three states (see migration `0039`): `en_stock` whenever a new
+  reservation could succeed right now, `reserve` when someone else's
+  active hold is the only thing blocking a new one (still recoverable
+  once it expires), `epuise` when every unit is a confirmed, permanent
+  sale.
+- `buildQuantiteOptions(disponibleMaintenant)` — the quantity `<select>`'s
+  options, bounded to the real, live `disponibleMaintenant`, never a
+  hardcoded cap; a harmless `[]` (not a throw) for zero/negative/
+  non-finite input, since the caller is expected not to render a selector
+  at all in that case.
+- `RESERVATION_HOLD_SECONDS` (`10 * 60`) — `reserver_stock_produit()`'s
+  own hold window (migration `0039`), kept here as the single source of
+  truth for the verification page's countdown rather than a magic number
+  duplicated in the component.
+- `computeRemainingSeconds(expireAt, nowMs?)` — never negative (a passed
+  `expire_at` reads as a clean `0`, not a confusing negative countdown);
+  accepts either the ISO string the reservation API returns or an
+  already-parsed epoch ms (what the countdown's own ref stores between
+  ticks), so neither call site needs a throwaway `new Date(...).getTime()`
+  of its own.
+- `formatCountdown(remainingSeconds)` — `mm:ss`, zero-padded.
+
+### `ServiceProduitTabs.tsx` — nested inside `ProfileTabs`'s existing "Offres" tab
+
+Deliberately a new, simple component rather than reusing `OffresTabs.tsx`
+(the créateur-facing Service/Produit physique split from Phase 2) — this
+one needs none of that component's richness (it wraps pre-fetched, unread
+`*Manager` state across a tab switch); it's a pure display filter over
+two already-rendered `ReactNode`s, so it mirrors `ProfileTabs.tsx`'s own
+visual style and `hidden`-toggle mechanism instead — same underline-on-
+active tab row, same "both panels are already rendered server-side by
+`CreateurProfileView`, the client component only toggles visibility"
+shape. Nested *inside* `ProfileTabs`'s "Offres" panel (not a third
+top-level tab next to "Offres"/"Publications") — a produit and a video
+offer are still both "offres" from a visitor's perspective, this is a
+finer-grained filter within that same category, not a new category.
+"Service" (the default) renders exactly what `CreateurProfileView`
+already rendered before this lot (campagnes + the non-produit offres
+list) — byte-identical, since `getCreateurProfileData`'s existing
+`offres`/`campagnes` queries were never touched. "Produit" is new: the
+`produits` array, one `ProduitCard` per row, or an empty-state message
+when the créateur has no produit offers at all.
+
+### `ProduitCard.tsx` — the three availability states, per the brief exactly
+
+Availability is always read straight from `produit.disponibleMaintenant`/
+`disponibleDefinitif` (themselves straight from
+`offres_disponibilite_produit`, never re-derived) via
+`computeDisponibiliteEtat()` — this card can never disagree with what
+`reserver_stock_produit()` itself will actually enforce a moment later,
+same "the DB view is the one source of truth" principle stated above.
+
+- **En stock** (`disponibleMaintenant > 0`): a quantity `<select>` bounded
+  to the real `disponibleMaintenant` via `buildQuantiteOptions()`, and a
+  **"Commander"** button — deliberately not "Payer" directly, since the
+  next step is a reservation, not a payment yet (per the brief's own
+  wording). Links to
+  `/paiement/produit/{offreId}?quantite={selected}` — the chosen quantity
+  travels via a query param, read back by the verification page below,
+  rather than a client-side-only piece of state the next page would have
+  no way to recover on a fresh navigation.
+- **Réservé temporairement** (`disponibleMaintenant` insufficient but
+  `disponibleDefinitif > 0`): a message with the `prochaineLiberation`
+  estimate (locale-formatted via `toLocaleString`) when one exists, a
+  plainer "temporarily held" sentence when it doesn't (an offer can have
+  an active hold with no computable next-release estimate exposed — see
+  `offres_disponibilite_produit`'s own definition, Phase 1) — **no
+  actionable button at all**, per the brief.
+- **Épuisé** (`disponibleDefinitif = 0`): a plain "Épuisé" badge, no
+  countdown, no button.
+
+### `/paiement/produit/[offreId]` — the reservation/checkout page
+
+Server Component (`page.tsx`) does the minimum needed before handing off
+to the real client logic: redirects a logged-out visitor to `/login`
+(reserving stock requires a real account —
+`reserver_stock_produit()` itself rejects a `NULL auth.uid()`, migration
+`0039` — there's no meaningful "browse this page while logged out" state
+to preserve here, unlike `/home` or a public profile), reads the target
+offre through `offres_publiques` (never the raw table — this is a fan
+reading someone else's offer, same reasoning as
+`/api/transactions/initiate`), and 404s outright if it's missing, not
+`type = "produit"`, or `!actif`. `quantite` is read from the `?quantite=`
+query param ProduitCard's own link set, clamped to a positive integer
+(default `1` for a missing/malformed value — this page is still reachable
+by directly typing a URL, so it can't assume the param is always well-
+formed).
+
+**`ProduitCheckoutContent.tsx`** (client) is the actual state machine,
+`Phase = "reserving" | "reserved" | "unavailable" | "error"`. Auto-
+triggers a reservation attempt (`POST
+/api/offres/[id]/reserver-produit`) the moment it mounts — there is
+nothing for a fan to configure first, `quantite` was already chosen on
+`ProduitCard`. The mount effect is wrapped in `setTimeout(fn, 0)`,
+exactly the established `react-hooks/set-state-in-effect` workaround
+already used by `ParametresForm.tsx`'s own real-time pseudo-availability
+check (confirmed by reading that file before reusing the pattern) —
+splitting the reservation logic into `attemptReservation` (no resets at
+its own top, called from the effect) and a separate `handleRetry` (a
+plain click handler, not an effect, that resets local state *then* calls
+`attemptReservation`) is what makes this pass the linter without
+disabling the rule.
+
+- **Success** (a reservation is granted): shows a real 10-minute
+  countdown (`formatCountdown(computeRemainingSeconds(...))`, ticking
+  every second via `setInterval`), a required free-text delivery-address
+  `<textarea>`, and a **"Confirmer le paiement"** button — disabled until
+  both the countdown is still positive *and* the address is non-blank.
+  Hitting zero disables the button and shows an inline "reservation
+  expired, start over" message with a **"Recommencer"** button
+  (`handleRetry`) — the reserved card itself stays visible (the typed
+  address isn't lost) the whole time, only the action is blocked, per the
+  brief's own "invite à recommencer" wording.
+- **Unavailable** (`reserver_stock_produit()` itself rejected the
+  request): the API route
+  (`/api/offres/[id]/reserver-produit`, below) re-queries
+  `offres_disponibilite_produit` on failure so the component can render
+  the exact same "réservé par un tiers" (with the live
+  `prochaineLiberation` estimate) or "épuisé" messages `ProduitCard`
+  already shows — **the exact same copy as the card, per the brief's own
+  "mêmes messages que sur la carte produit"** — with **no redirect
+  possible** (there is nothing to retry into; a "Recommencer" button only
+  appears in the countdown-expired sub-case above, not here, since a
+  fresh reservation attempt against the same already-known-unavailable
+  offer would just fail again identically).
+- **Error** (a genuine network/unexpected failure, not a stock rejection):
+  a generic retry card.
+
+### `/api/offres/[id]/reserver-produit` — new route
+
+Thin RPC wrapper around `reserver_stock_produit()` (Phase 1), same shape
+as every other one in this project — validates `quantite` is a positive
+integer, requires a real session (401 otherwise), and on an RPC failure
+re-queries `offres_disponibilite_produit` for the offer's current
+`disponible_maintenant`/`disponible_definitif`/`prochaine_liberation` so
+the client never has to make a second round trip to learn *why* the
+reservation failed or what to show instead. On success, returns
+`{reservationId, expireAt}` straight from the RPC's own `returns table
+(reservation_id, expire_at)` shape (Phase 1) — nothing computed
+client-side, the 10-minute window's real expiry always comes from the
+database.
+
+### `/api/transactions/initiate` + the webhook — `adresseLivraison`
+
+`adresseLivraison` is now accepted in the request body, **required for
+`produit`, ignored for every other type** (mirroring exactly how
+`quantite`/`reservationId` were already scoped in Phase 1) — trimmed,
+rejected with a clean 400 (`/adresseLivraison/` in the error text, same
+pattern every other validation message in this route already follows)
+when blank or missing, positioned in the produit-only validation block
+alongside the existing `reservationId` check. Threaded into `custom`
+(`{fanId, offreId, quantite, reservationId, adresseLivraison}`) sent to
+CinetPay — the same HMAC-verified trust boundary every other field in
+`cpm_custom` already relies on, re-read by the webhook on the way back.
+
+The webhook rejects a produit notification missing `adresseLivraison` in
+`cpm_custom` the same way it already rejected one missing
+`quantite`/`reservationId`, and — **the one implementation subtlety worth
+flagging** — the insert payload is built as a mutable
+`Record<string, unknown>` with `adresse_livraison` assigned
+**conditionally, only inside the `type === "produit"` branch**, rather
+than as `adresse_livraison: isProduit ? value : undefined` inline in the
+object literal. `{a: undefined}` still satisfies `hasOwnProperty("a")` —
+inlining it that way would have made the column *technically* present
+(as `undefined`, which Supabase's client would still serialize/send) for
+every non-produit type too, quietly contradicting this feature's own
+"only ever meaningful for produit" framing. Caught before it shipped by
+a test asserting a `don`/`video` transaction's inserted row
+`not.toHaveProperty("adresse_livraison")` — the inline-ternary version
+failed that exact assertion, confirming the distinction is real and
+worth keeping this way, not a stylistic preference.
+
+### The accepted edge case: a reservation expires but payment finalizes late
+
+**Stated here explicitly as a deliberate, accepted risk — not a gap this
+lot forgot to close.** The 10-minute hold (`reserver_stock_produit()`,
+Phase 1) and the actual CinetPay payment round-trip are two genuinely
+separate timers with no coordination between them: a fan can complete
+the reservation, fill the address, click "Confirmer le paiement", get
+redirected to CinetPay's hosted checkout, and then take longer than the
+remaining hold window to actually finish paying there (a slow mobile
+money confirmation, switching apps, re-entering a PIN after a timeout —
+none of which this app controls). If the reservation's `expire_at`
+passes before CinetPay's webhook notification arrives, another fan may
+have concurrently reserved and been confirmed for the same unit in the
+meantime once this fan's hold no longer counted against
+`disponible_maintenant`.
+
+This is **the exact same accepted risk Phase 1's own webhook code comment
+already documents** for the general oversell case ("A rare, accepted
+risk, not a bug to fix here... There is no new automatic-refund mechanism
+in this lot; the oversold fan lands in the existing manual-refund queue")
+— this lot doesn't introduce a new failure mode, it just adds a second,
+concrete way to reach the same already-accepted one (a slow fan, rather
+than only two fast concurrent fans racing for the last unit). Nothing in
+this lot builds a mechanism to re-check the reservation's freshness at
+webhook time, extend the hold mid-payment, or warn the fan mid-checkout
+that time is running low beyond the countdown UI itself — the webhook's
+existing `.eq("id", reservationId)...is("transaction_id", null)` update
+(Phase 1) still succeeds regardless of whether `expire_at` has actually
+passed (nothing in that `UPDATE`'s `WHERE` clause checks `expire_at` at
+all — it only guards against double-confirming an already-confirmed
+reservation), so a late-but-genuine payment for an expired hold still
+gets recorded as a real transaction. If the unit was *not* re-sold to
+someone else in the meantime, this is harmless (the fan gets what they
+paid for, exactly as if the hold had never expired). If it *was*, the
+créateur or admin discovers the overcommitment the same way any other
+oversell surfaces today — manually, via the existing
+`necessite_remboursement_manuel` worklist — and the wronged fan is
+refunded through that same, already-built manual path. Building a
+tighter guarantee here (e.g., re-validating `disponible_definitif` at
+payment-confirmation time and auto-refunding a genuine conflict) is a
+real, separate feature — the same still-pending Lot 2c already referenced
+by Phase 1, blocked on the same CinetPay refund-API gap documented in
+"Automatic CinetPay refunds" above — not something this lot silently
+half-builds.
+
+### Testing
+
+Vitest: `src/lib/__tests__/produits.test.ts` — `computeDisponibiliteEtat`
+at all three states including the priority order (positive
+`disponibleMaintenant` always wins regardless of `disponibleDefinitif`);
+`buildQuantiteOptions` at 0/negative/non-finite/fractional input and a
+normal positive case; `computeRemainingSeconds` accepting both an ISO
+string and an already-parsed epoch ms, the never-negative clamp once
+`expireAt` has passed, rounding to the nearest second, and the
+`nowMs`-omitted default path; `formatCountdown`'s zero-padding at every
+boundary (`9` → `"00:09"`, the full `RESERVATION_HOLD_SECONDS` → `"10:00"`,
+crossing the minute boundary, exactly `0`, and no truncation past 99
+minutes). `route.test.ts` (`/api/transactions/initiate`) — a produit
+checkout with no `adresseLivraison` and one with a whitespace-only value
+are both rejected the same way, and the success-path test now also
+asserts the trimmed address survives into `custom` alongside
+`quantite`/`reservationId`, with the non-produit (`video`) checkout
+re-confirmed completely unaffected (no `adresseLivraison` requirement,
+`custom` unchanged). `route.test.ts`
+(`/api/webhooks/cinetpay`) — a produit notification missing
+`adresseLivraison` in `cpm_custom` is rejected before any DB write, a
+successful notification's inserted row carries the exact `adresse_livraison`
+value from `custom`, and a `don`/`video` notification's inserted row is
+confirmed to **not carry the key at all** (not even as `undefined`) —
+the exact regression the mutable-payload-object fix above exists to
+prevent.
+
+Verified visually end-to-end (same throwaway mock-Supabase/Playwright
+technique used throughout this file — a small Node mock of the
+Auth/PostgREST/RPC surface seeded with three produit offres, one per
+availability state, a real `next dev`, and a scripted Chromium session
+logging in as a real fixture fan): the nested Service/Produit tabs render
+inside the profile's existing Offres tab, defaulting to Service; switching
+to Produit shows all three cards in their correct state (a bounded `1..5`
+quantity selector + "Commander" for the in-stock item, no selector/button
+and a live estimated-release sentence for the temporarily-held item, a
+plain "Épuisé" badge with no selector for the sold-out item); clicking
+"Commander" with quantity 3 lands on the reservation page at the exact
+`?quantite=3` URL and a real countdown appears and genuinely ticks down
+tick-for-tick; the "Confirmer le paiement" button starts disabled with no
+address typed and enables the instant one is; confirming (with
+`/api/transactions/initiate` intercepted at the network boundary — the
+same established technique this file already documents using for
+`/paiement/retour`'s own verification, proving the client-side redirect/
+payload without re-deriving the montant/adresseLivraison plumbing vitest
+already covers exhaustively) posts the real reservationId, the chosen
+quantite, and the typed address, then redirects; visiting the
+"réservé"/"épuisé" offers' verification pages directly renders the exact
+same messages as their respective profile cards, with no countdown box
+and no Confirm button in either case. All of the above confirmed in both
+`fr` (light/dark) and `/en/` (light/dark), 84 assertions total across the
+four combinations, zero unexpected console errors (one pre-existing,
+unrelated hydration warning was observed on `/paiement/retour`'s
+`Confetti` component — present before this lot, not introduced by it,
+and out of this lot's scope to fix).
+
 ## Litige resolution — admin decision on a disputed delivery (Lot 2a-bis, migration `0026`)
 
 Follow-up to Lot 2a (migration `0025`, above), which deliberately left
