@@ -328,7 +328,7 @@ export async function getPublicationsExplorables(
     const escaped = escapeIlike(q);
     const { data } = await supabase
       .from("profils_recherchables")
-      .select("id")
+      .select("id, createur_verifie")
       .or(
         [
           `pseudo.ilike.%${escaped}%`,
@@ -341,7 +341,15 @@ export async function getPublicationsExplorables(
           `lien_reseau_social.ilike.%${escaped}%`,
         ].join(","),
       );
-    auteurIds = Array.from(new Set((data ?? []).map((row) => row.id)));
+    // A search narrows WHICH créateurs are considered, it must never
+    // WIDEN who's explorable at all -- profils_recherchables' own
+    // population has no verified-only rule (same "has an active offre"
+    // filter as profils_explorables), so without this, a non-verified
+    // créateur -- normally excluded from the grid entirely -- would
+    // become searchable, which nothing about this fix asked for.
+    auteurIds = Array.from(
+      new Set((data ?? []).filter((row) => row.createur_verifie).map((row) => row.id)),
+    );
 
     // No matching créateur at all -- skip the publications query entirely,
     // same "an empty .in() is ambiguous, don't even attempt it" discipline
@@ -351,13 +359,33 @@ export async function getPublicationsExplorables(
     }
   }
 
+  // Real bug, found and fixed: the no-search grid correctly reads
+  // publications_explorables, which bakes in masque_exploration = false
+  // (migration 0038) -- but querying that SAME view for a search would
+  // silently re-apply that exact filter, undoing profils_recherchables'
+  // own masque_exploration bypass above and making an opted-out
+  // créateur's publications unfindable even by an exact pseudo search,
+  // contradicting the established "opts out of passive discovery only,
+  // never of active search" rule (profils_explorables/profils_recherchables,
+  // migration 0036). A search instead reads publications_visibles
+  // directly -- the same underlying view publications_explorables itself
+  // is built on (`select v.* from publications_visibles v ...`), just
+  // without that view's own masque_exploration clause -- filtered to the
+  // already-verified auteurIds above. publications_visibles carries no
+  // visibilite filter of its own (it also serves soutiens-only teasers
+  // elsewhere), so `visibilite = 'public'` is restated explicitly here:
+  // a search must never surface a locked "soutiens" teaser, same rule as
+  // the default grid, just no longer inherited for free from the view.
   let query = supabase
-    .from("publications_explorables")
+    .from(q ? "publications_visibles" : "publications_explorables")
     .select(PUBLICATIONS_SELECT)
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
     .limit(PUBLICATIONS_EXPLORABLES_PAGE_SIZE);
 
+  if (q) {
+    query = query.eq("visibilite", "public");
+  }
   if (auteurIds) {
     query = query.in("auteur_id", auteurIds);
   }

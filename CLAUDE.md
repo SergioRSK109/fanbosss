@@ -2270,24 +2270,60 @@ which créateurs match, never a duplicated search implementation**:
 `getPublicationsExplorables()` (`src/lib/publications.ts`) queries
 `profils_recherchables` first (same exact-pseudo/fuzzy-keyword-against-
 bio/nom_affichage/social-links `.or()` shape the old créateur-card search
-already used) to get a list of matching `auteur_id`s, then filters
-`publications_explorables` by `auteur_id in (...)`. **One deliberate,
-non-obvious consequence worth stating plainly**: this does *not* bypass
-`publications_explorables`'s own `masque_exploration` filter the way
-`profils_recherchables` bypasses it for `profils_publics`-driven search —
-a query only narrows *which créateurs* are considered; the grid's own
-population rule (baked directly into the view) still applies on top.
+already used) to get a list of matching `auteur_id`s.
+
+**A real bug shipped in this lot's first version and was fixed
+immediately after, worth documenting precisely since the fix changes
+which table the search path reads from**: the original implementation
+filtered `auteur_id in (...)` against `publications_explorables` for
+*both* the default grid and an active search — but that view bakes in
+`masque_exploration = false` (its own `WHERE` clause, migration 0038), so
+querying it for a search silently re-applied that exact filter, undoing
+`profils_recherchables`'s own `masque_exploration` bypass one step
+upstream. The net effect: an opted-out créateur stayed unfindable even
+by an exact pseudo search, contradicting the established rule this
+project already committed to for `profils_explorables`/
+`profils_recherchables` — "opts out of passive discovery only, never of
+active search." **Fixed** by switching the *search* path (`q` non-empty)
+to query `publications_visibles` directly instead —the exact same
+underlying view `publications_explorables` is itself built on
+(`select v.* from publications_visibles v ...`), just without that
+view's own `masque_exploration` clause. `publications_visibles` carries
+no `visibilite` filter of its own either (it also serves `soutiens`-only
+teasers elsewhere, e.g. `/home`'s feed), so `.eq("visibilite", "public")`
+is restated explicitly in application code for the search path — a
+search must never surface a locked "soutiens" teaser, same rule as the
+default grid, just no longer inherited for free from the view. The
+no-search default grid is completely untouched, still reading
+`publications_explorables` exactly as before.
+
+**One more thing this fix had to get right, not explicitly asked for but
+necessary to avoid silently widening the grid's population**:
+`profils_recherchables`'s own population has no verified-only rule (same
+"has an active offre" filter as `profils_explorables`) — naively
+filtering `publications_visibles` by every matched `auteur_id` would also
+have surfaced a *non-verified* créateur's posts via search, something
+never true for the no-search grid (`publications_explorables` requires
+`createur_verifie = true or type = 'annonce_fanboss'`). `profils_recherchables`
+already exposes `createur_verifie` per row (needed for its own badge
+rendering elsewhere), so `getPublicationsExplorables()` now selects
+`id, createur_verifie` and filters the matched ids down to verified ones
+before ever querying `publications_visibles` — a search narrows *which*
+créateurs are considered, it must never *widen* who's explorable at all.
+FanBoss announcements were never reachable via this créateur-name search
+path either way (an admin posting one typically has no offre, so
+`profils_recherchables` — "has an active offre" — was never going to
+surface them as a match in the first place), so this required no special
+casing for that branch.
+
 There is no `publications_recherchables` view, by design — unlike
 `profils_explorables`/`profils_recherchables`'s two-views-for-two-rules
-split, Explorer's spec asked for exactly one grid population rule
-regardless of whether a search is active, so one view suffices. Concretely:
-a créateur who opts out of passive discovery (`masque_exploration = true`)
-stays findable by *profile* search (`/explorer`'s old behavior, now gone,
-and `/@pseudo` directly) but their *publications* never appear in this
-grid, search or not. Flagged here rather than silently assumed
-consistent with the profile-search precedent, since the two features now
-genuinely disagree on this point — a deliberate scope call for this lot,
-revisit if that turns out to be surprising in practice.
+split (an actual second **view**), Explorer's search instead reuses
+`publications_visibles` (a view that already existed for an unrelated
+reason) plus explicit application-code filters
+(`visibilite`/`auteurIds`) — reusing an existing view with narrower
+code-level filters, rather than adding a third bespoke view whose only
+difference from `publications_explorables` would be one clause.
 
 **Cursor (keyset) pagination**, `PUBLICATIONS_EXPLORABLES_PAGE_SIZE = 21`
 (a multiple of 3, so a full batch always ends the 3-column grid on a row
@@ -2448,12 +2484,17 @@ video-click-zone split.
 - Unit (`src/lib/__tests__/publications.test.ts`): `buildExplorerCursorFilter`'s
   exact output string; `getPublicationsExplorables()`'s query shape via a
   mocked chainable Supabase client (spied `.select()`/`.order()`/`.limit()`/
-  `.in()`/`.or()` calls) — no `q`/cursor sends neither an `.in()` nor an
-  `.or()` filter; `nextCursor` is `null` on a partial page and computed
-  from the real last row on a full page; a search resolves
-  `profils_recherchables` first (asserting the exact `.or()` ilike string)
-  then filters by `auteur_id in (...)`; and a search matching no créateur
-  at all never queries `publications_explorables`.
+  `.in()`/`.or()`/`.eq()` calls) — no `q`/cursor sends neither an `.in()`
+  nor an `.or()` filter, and reads `publications_explorables`; a search
+  resolves `profils_recherchables` first (asserting the exact `.or()`
+  ilike string and that it selects `id, createur_verifie`), then queries
+  `publications_visibles` — **never** `publications_explorables` —
+  filtered to `visibilite = 'public'` and `auteur_id in (...)` restricted
+  to only the *verified* matched créateurs; a matched but non-verified
+  créateur is confirmed excluded from that `auteur_id` list; `nextCursor`
+  is `null` on a partial page and computed from the real last row on a
+  full page; and a search matching no *verified* créateur at all never
+  queries either `publications_visibles` or `publications_explorables`.
 - Visual (throwaway mock-Supabase/Playwright technique, same as every
   other lot in this file — a small Node mock of the Auth/PostgREST
   surface plus a **real** tiny `.webm`/`.jpg` fixture generated on the fly
@@ -2494,7 +2535,15 @@ video-click-zone split.
   appears once) instead of raw uniqueness. A search for a créateur's own
   pseudo still finds their tiles. Re-confirmed in `/en/` + dark mode:
   heading translates, the grid still renders 3 columns, and the repost
-  badge still renders correctly.
+  badge still renders correctly. **Extended after the search/masque_exploration
+  fix**, with a third fixture créateur (verified, `masque_exploration =
+  true`, one public post, one social link): confirmed their post is
+  absent from the default no-search grid, then confirmed it's found both
+  by an exact pseudo search and by a fuzzy search against their social
+  link — the DB-level guarantee (`publications_visibles` carrying no
+  `masque_exploration` filter) was already proven by the SQL checklist;
+  this is the corresponding empirical, browser-level proof that the
+  application code actually reads from the right table for a search.
 
 ## Admin dashboard reorganized into 4 top tabs (no migration)
 
@@ -5292,7 +5341,14 @@ into chat).
   FanBoss announcement regardless of the posting admin's own
   `createur_verifie`, and includes a public repost by a verified créateur
   (reusing migration 0037's own fixture) — plus the same
-  `anon`/`authenticated` grant checks as every other public view.
+  `anon`/`authenticated` grant checks as every other public view. Also
+  covers the Explorer search fix (application-code, no new migration):
+  `publications_visibles`, unlike `publications_explorables`, is confirmed
+  to still include F's public post (`masque_exploration = true`) with a
+  clean `contenu_complet = true` — the real DB-level guarantee
+  `getPublicationsExplorables()`'s search path now relies on to correctly
+  bypass `masque_exploration` (see that migration's own CLAUDE.md
+  section for the bug and the fix).
 - `supabase/tests/stub_auth.sql` fakes just enough of Supabase's `auth`
   schema (an `auth.uid()` reading `app.current_user_id`, plus the
   `authenticated`/`anon`/`service_role` roles) for the real migrations to
