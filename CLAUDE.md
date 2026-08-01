@@ -2120,18 +2120,41 @@ landmark alongside the underlying page's own).
 **`PublicationViewerOverlay`** (`src/components/PublicationViewerOverlay.tsx`,
 client component) is pure chrome — fixed `inset-0 z-50` (matches this
 app's existing "wins over the tab bar" convention, see
-`ZoomablePhoto`/`PhotoCropper`; `AppTabBar` itself is `z-40`), a sticky
-close bar, and a `router.back()` button (from `@/i18n/navigation`'s
-locale-aware `useRouter`, which forwards `.back()` unchanged from
-`next/navigation` — only `.push`/`.replace`/`.prefetch` need
-locale-prefix handling). `router.back()`, not a `Link` to a hardcoded
-route, is what makes the brief's "closing lands back exactly where the
-feed was scrolled to" requirement fall out for free — it's a real
-history-back navigation, and the underlying `/home`/`/[handle]` page was
-never unmounted, so the browser's own scroll-position handling does the
-rest. Because this slot renders at the `[locale]` layout level (a
-sibling of every page's own layout tree), it visually covers the bottom
-tab bar without needing to know `AppTabBar` exists at all.
+`ZoomablePhoto`/`PhotoCropper`; `AppTabBar` itself is `z-40`) and a
+`router.back()` button (from `@/i18n/navigation`'s locale-aware
+`useRouter`, which forwards `.back()` unchanged from `next/navigation` —
+only `.push`/`.replace`/`.prefetch` need locale-prefix handling).
+`router.back()`, not a `Link` to a hardcoded route, is what makes the
+brief's "closing lands back exactly where the feed was scrolled to"
+requirement fall out for free — it's a real history-back navigation, and
+the underlying `/home`/`/[handle]` page was never unmounted, so the
+browser's own scroll-position handling does the rest. Because this slot
+renders at the `[locale]` layout level (a sibling of every page's own
+layout tree), it visually covers the bottom tab bar without needing to
+know `AppTabBar` exists at all.
+
+**Follow-up fix: the back control used to live inside a full-width
+sticky bar** (`border-b` + `bg-surface/95` + `backdrop-blur-sm`,
+spanning edge to edge) — removed outright, not just realigned within it.
+`BackIcon` (`src/components/ui/navIcons.tsx`, same hand-made-SVG
+discipline as every other icon in that file — `currentColor`, no icon
+library) replaced the plain `✕` character, and the button itself is now
+`fixed left-4 top-4` (not `sticky`, not wrapped in any bar-shaped
+container) — a small, isolated 36×36 circle floating directly over
+whatever content sits behind it, keeping its own tiny
+`bg-surface/80 backdrop-blur-sm` purely for legibility against arbitrary
+image/video/text, never a strip spanning the screen. `aria-label`
+renamed from `Publications.viewer.closeAriaLabel` to `...backAriaLabel`
+("Fermer"/"Close" → "Retour"/"Back") to match the new arrow glyph's own
+semantics — the click handler itself (`router.back()`) is unchanged.
+Verified geometrically, not just by reading the CSS: scanning every
+element inside the dialog for one that's both wide (≥85% of the
+viewport) and short and sitting at the very top (the old bar's exact
+shape) finds nothing; the button's own bounding box is 36×36 at
+`(16, 16)` — matching `left-4`/`top-4` — with `position: fixed`
+confirmed via `getComputedStyle`; the dialog root's `z-index` is still
+`50`; and clicking it still navigates back and closes the dialog. All
+of the above holds in both `fr` (light) and `/en/` (dark).
 
 **Click trigger, `PublicationCard.tsx`/`PublicationContentLink.tsx`**:
 a new `expandable` prop (default `false`, matching this component's

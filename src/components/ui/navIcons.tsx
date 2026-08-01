@@ -161,6 +161,27 @@ export function UserIcon({ className, active }: TabIconProps) {
 // glyph rather than an emoji, same convention as every other icon in this
 // file. No active/inactive state: it's a static link, not a toggle, same
 // reasoning as icons.tsx's own MenuIcon.
+// Simple back arrow (shaft + chevron head) -- used by
+// PublicationViewerOverlay's floating back button (Lot 5d follow-up).
+// Static, no active/inactive state, same reasoning as LeaderboardIcon.
+export function BackIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M19 12H5" />
+      <path d="M11 6 5 12l6 6" />
+    </svg>
+  );
+}
+
 export function LeaderboardIcon({ className }: { className?: string }) {
   return (
     <svg

@@ -77,7 +77,7 @@
       "repostError": "couldn't repost"
     },
     "viewer": {
-      "closeAriaLabel": "Close"
+      "backAriaLabel": "Back"
     }
   },
   "OffresPage": {
