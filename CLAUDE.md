@@ -789,25 +789,35 @@ specifically (still `don`/`campagne`'s free-amount exemption for those
 two, unchanged). The transaction is inserted with the real `quantite`
 (not the column's default `1`).
 
-**`produit` is deliberately NOT added to `TYPES_A_VALIDATION_IMMEDIATE`**
-— payment success is not delivery for a physical product (the créateur
-still has to ship it), unlike `don`/`contenu_debloque`/`evenement_live`/
-`campagne`. The transaction is simply inserted and left at its default
-`statut = 'en_attente'`, exactly like `video`/`shoutout`/`whatsapp`
-already default to when not force-validated. This falls out of the
-*absence* of a change, not a new branch — `TYPES_A_VALIDATION_IMMEDIATE`'s
-own existing `!includes(offerType)` check already routes a `produit`
-transaction to a `demande_recue` notification (the créateur has
-something to act on), the identical logic path video/whatsapp/shoutout
-already use, with zero code changes needed for that part. **No accept/
-ship/deliver flow was wired up for `produit` in this lot** — the generic
-`accept_transaction()` RPC (migration `0002`/`0020`) already works
-unmodified for it regardless (it only special-cases `whatsapp`'s
-acceptance-is-delivery cascade, and treats every other type's deadline
-generically via a null `deadline_acceptation`, since `set_deadline_acceptation()`'s
-`case` statement has no `produit` branch and falls to its `else null`) —
-but nothing calls it from a créateur-facing UI yet; that's Phase 2/3
-work, deliberately left undone here.
+**`produit` is not added to `TYPES_A_VALIDATION_IMMEDIATE`** — payment
+success is not delivery for a physical product (the créateur still has
+to ship it), unlike `don`/`contenu_debloque`/`evenement_live`/`campagne`.
+
+> **Revised by Phase 2 (migration `0040`) — corrected in place here per
+> this file's own "the code is correct, update the doc" rule, rather than
+> left describing stale behavior.** This section originally said the
+> transaction was simply inserted and left at its default `statut =
+> 'en_attente'`, the same as `video`/`shoutout`/`whatsapp`. That turned
+> out to be the wrong call once Phase 2 designed `livrer_produit()` and
+> the "Commandes à expédier" screen: **a `produit` transaction has no
+> accept/refuse step at all** — a créateur listing a fixed-price,
+> fixed-stock product has nothing to individually approve per order the
+> way a custom video request might (there's no équivalent "refuse this
+> video" decision to make once someone's already paid for a listed
+> product) — so there was never anything for `accept_transaction()` to
+> usefully do here. The webhook now runs a second, produit-specific
+> branch (`else if (offerType === "produit")`) that moves the transaction
+> straight to `statut = 'validee'` in the same request — one step, not
+> the two-step `validee` → `livree` cascade `TYPES_A_VALIDATION_IMMEDIATE`
+> does, since actual delivery still requires the créateur to ship the
+> item via `livrer_produit()` (see "Physical products — Phase 2" below).
+> `demande_recue` still fires exactly as before (produit still isn't in
+> `TYPES_A_VALIDATION_IMMEDIATE`, so the existing `!includes(offerType)`
+> notification branch is untouched) — the créateur still has something
+> to act on, just "ship it" instead of "accept or refuse it." **This is a
+> deliberate, standing product decision, not a gap to "restore" an
+> acceptation step for later** — see the Phase 2 section for the fuller
+> reasoning and its own flag against exactly that mistake.
 
 **Marking the reservation permanent is essential bookkeeping, not an
 optional side effect** — unlike the notification RPC call just below it
@@ -917,6 +927,187 @@ already-confirmed/expired/wrong-quantity `reservationId`, and that a
 `/api/offres/[id]/image-upload-url` (auth/ownership/type/content-type/
 size checks, mirroring `content-upload-url`'s and
 `publications/upload-url`'s own existing test shapes).
+
+## Physical products (offre type `produit`, Phase 2: créateur UI, migration `0040`)
+
+Follow-up to Phase 1 (schema + reservation + webhook, migration `0039`,
+above). This lot adds the créateur-facing UI: nested tabs on `/offres`
+("Service" / "Produit physique"), a shipping screen, and the offer
+creation/edit form for `produit`. Phase 3 (fan-side UI — quantity
+selector, delivery address, availability page) is still not built.
+
+**No accept/refuse step for `produit` — ever, by design, not a gap to
+"restore" later.** This is the one decision in this lot worth flagging as
+plainly as possible, since it revises what Phase 1 originally assumed and
+a future session could easily read as unfinished: a créateur listing a
+fixed-price, fixed-stock physical product has nothing to individually
+approve per order the way a custom video request might (there's no
+"refuse this" judgment call once someone's already paid for something
+listed at a fixed price/stock). So unlike `video`/`whatsapp`/`shoutout`,
+a `produit` transaction never sits at `en_attente` waiting on a créateur
+decision — the webhook moves it straight to `validee` on payment, and
+`livrer_produit()` (below) requires only that, never a prior
+acceptation. **If a future lot ever wants créateurs to be able to
+decline a physical order (e.g., out-of-band stock issues, a fraud
+concern), that needs a real product decision and a new mechanism — not
+quietly wiring `accept_transaction()`/`refuse_transaction()` into a
+produit UI, which would silently reintroduce a step this lot deliberately
+removed.**
+
+### Webhook revision (application code, no new migration)
+
+`src/app/api/webhooks/cinetpay/route.ts` gained a second branch,
+`else if (offerType === "produit")`, alongside the existing
+`TYPES_A_VALIDATION_IMMEDIATE` block: it runs the *same* `statut ->
+validee` update those types run, but never the second `-> livree` update
+— a physical product still needs the créateur to ship it. This corrects
+Phase 1's own original design (documented, and now amended in place, in
+that section above) — Phase 1 assumed no accept step meant no state
+transition at all (leaving the transaction at its default `en_attente`),
+which turned out to be the wrong call once this lot's `livrer_produit()`
+and "Commandes à expédier" needed something to actually query
+(`statut = 'validee'`, the same shape `LivraisonsEnAttente` already
+relies on for video/shoutout). `demande_recue` still fires exactly as
+before — produit still isn't in `TYPES_A_VALIDATION_IMMEDIATE`, so the
+existing `!includes(offerType)` notification branch needed no change.
+
+### `transactions.adresse_livraison` + `livrer_produit()`
+
+`adresse_livraison text`, nullable — collected at checkout in Phase 3
+(not built yet), added now so this lot's shipping screen can be built
+and tested against a real column without depending on Phase 3 landing
+first. Every produit transaction created before Phase 3 ships will
+simply have `adresse_livraison = null` — `CommandesAExpedier.tsx` shows
+`t("adresseInconnue")` ("non renseignée") rather than a blank line in
+that case.
+
+**`livrer_produit(p_transaction_id, p_reference_suivi default null)`**
+is a `SECURITY DEFINER` RPC, same structure as `deliver_video()`
+(`auth.uid()` rejected when null, `is distinct from` for the ownership
+check — never `!=`, same reasoning as migration `0020` — a row lock via
+`for update`), with three differences: no `p_r2_key` (a physical product
+has no file to upload — `p_reference_suivi` is a plain, entirely
+optional text field, stored as `livrable = jsonb_build_object
+('reference_suivi', p_reference_suivi)`); it requires `type = 'produit'`
+specifically, the exact inverse of `deliver_video()`'s own
+video/shoutout-only guard; and — the point flagged above — it does
+**not** require a prior acceptation step, only that the transaction has
+genuinely reached `statut = 'validee'` (a real payment landed). Opens
+the exact same 72h fan-confirmation escrow window `deliver_video()`
+does (`confirmation_fan = 'en_attente'`, `deadline_confirmation = now()
++ interval '72 hours'`) — if anything more warranted here than for a
+video, since a physical shipment takes days to arrive rather than being
+reviewable the instant it's delivered. `revoke all ... from public` +
+`grant execute ... to authenticated` only, same discipline as every
+write RPC since migration `0020`. Verified empirically against a real
+throwaway database before being trusted (same discipline as everywhere
+else in this file): every rejection case individually, and the genuine
+success path stamping the correct escrow fields.
+
+### `/api/transactions/[id]/livrer-produit` — new route
+
+Thin RPC wrapper, same shape as `/api/transactions/[id]/deliver` —
+trims the tracking reference and passes `null` (never an empty string)
+when none was given, since it's genuinely optional.
+
+### Nested tabs on `/offres`
+
+`OffresTabs.tsx` — same client-side-only, pre-built-content-as-props
+pattern as `ProfileTabs.tsx`/`AdminTabs.tsx` (both tabs' content is
+already rendered server-side by `OffresPage`; the client component only
+toggles `hidden`, so a `*Manager`'s in-flight local state is never reset
+by switching tabs away and back). "Service" is every offer type that
+already existed before this lot — **its content is byte-identical to
+before**: `video`/`campagne`/`QUESTION_TYPES` never included `produit`,
+and a `produit` transaction never reaches `en_attente` at all anymore
+(see the webhook revision above), so `DemandesEnAttente`'s own query
+needed no new filter either. "Produit physique" is new: no "Demandes en
+attente" equivalent — per the no-acceptation-step decision above, there
+is nothing to accept/refuse — just "Commandes à expédier" (below) and
+`OffresManager` filtered to `produit` only.
+
+`/offres/page.tsx`'s own `validee`-transactions query (previously
+`LivraisonsEnAttente`'s alone) is now shared by both tabs: since a
+`produit` transaction also reaches `validee` now, querying it once and
+splitting the results in JS (`livraisonsService` = not `produit`,
+`commandesProduit` = `produit`) avoids a second, near-duplicate query —
+same "reuse one fetch, filter in JS" pattern this codebase already uses
+for `campagneIds` on this same page.
+
+### `CommandesAExpedier.tsx` — "Commandes à expédier"
+
+Deliberately its own component, not a reuse/extension of
+`LivraisonsEnAttente.tsx` — mirrors that component's repeatable-row shape
+(one `card` per pending item, a `router.refresh()`-on-success callback)
+but the interaction itself is genuinely different: an address display
+plus an optional plain-text tracking-reference field, never a file
+upload. Calls `/api/transactions/[id]/livrer-produit` on submit.
+
+### `OffresManager.tsx` — `mode` prop + `ProduitsList`/`ProduitRow`
+
+`OffresManager` gained a `mode?: "service" | "produit"` prop
+(`"service"` by default, preserving every existing call site's
+behavior unchanged). `mode="produit"` renders only the new
+`ProduitsList`/`ProduitRow` — same repeatable, multi-row pattern as
+`VideoOffresList`/`CampagnesList` (a créateur can list several distinct
+physical products, each needing its own title, same `NULLS NOT
+DISTINCT` mechanism migration `0007` already established). `ProduitRow`
+collects libellé/prix/stock_total, then — only if a file was chosen —
+uploads it via `/api/offres/[id]/image-upload-url` (Phase 1) and PATCHes
+`{ image_r2_key }`, the identical "create the offre first, then upload,
+then PATCH the resulting key" flow `contenu_debloque`'s own `r2_key`
+already uses, just against a real top-level column instead of a
+`config` key.
+
+**`creerOffreSchema`/`modifierOffreSchema` (`src/lib/validation.ts`)**
+gained `stock_total: z.number().int().positive().optional()` plus two
+new produit-specific refines mirroring `offres_stock_coherent`
+(migration `0039`) and campagne's own "each row needs its own title"
+requirement: `libelle` and `stock_total` are both required when
+`type === "produit"`. This is what closes the exact gap Phase 1's own
+"What Phase 1 deliberately leaves broken" note flagged — a `produit`
+offer can now actually be created end-to-end through the app.
+`/api/offres`'s `upsertPayload` gained a conditional `stock_total`
+inclusion, same "only write it when the caller actually sent it" pattern
+`config`/`actif` already use, so a partial submit can never accidentally
+wipe out a value it didn't mention.
+
+### Testing
+
+`checklist_2_3.sql`: every `livrer_produit()` rejection case individually
+(`NULL auth.uid()`, a non-`produit`/video target — the exact inverse of
+`deliver_video()`'s own guard, a non-owner caller, and a transaction that
+hasn't reached `validee` yet), each confirmed to leave zero trace on the
+fixture transactions; the genuine success path (`statut -> livree`,
+`livrable.reference_suivi` recorded, `confirmation_fan = 'en_attente'`,
+`deadline_confirmation` ~72h out — the same escrow window
+`deliver_video()` opens); a second produit order shipped with no
+tracking reference at all, confirming it's genuinely optional (a JSON
+`null`, not an empty string or a crash); and the full `0020`/`0021`
+grant-audit pattern (`anon` has no `EXECUTE`, `authenticated` does).
+Vitest: `/api/transactions/[id]/livrer-produit` (auth required, RPC
+rejection surfaced as a 400, the tracking reference trimmed and passed
+through — or `null` when omitted); the webhook's revised produit branch
+(re-asserted to move `statut` to `validee` only, never `livree`, in the
+same test that already covered the reservation-confirm/offre-close
+behavior from Phase 1); and `creerOffreSchema`'s produit-specific
+validation (`libelle`/`prix`/`stock_total` each individually required,
+a zero/negative/non-integer `stock_total` rejected).
+
+Verified visually end-to-end (same throwaway mock-Supabase/Playwright
+technique used throughout this file — a small Node mock of the
+Auth/PostgREST surface, a real `next dev`, and a scripted Chromium
+session logging in as a real fixture créateur with one `produit` offer
+and one `validee` produit order awaiting shipment): the nested tabs
+render with "Service" active by default and switching to "Produit
+physique" swaps in "Commandes à expédier" (showing the order's
+libellé/quantité/montant/adresse) and the produit form (pre-filled with
+the existing offer's name/price/stock); typing a tracking reference and
+clicking "Marquer comme expédié" succeeds and the shipped order
+disappears from the list on refresh (`router.refresh()` re-querying the
+now-`livree` transaction's absence from the `validee` filter); zero
+console errors throughout — confirmed in both `fr` (light/dark) and
+`/en/` (light/dark), all four combinations.
 
 ## Litige resolution — admin decision on a disputed delivery (Lot 2a-bis, migration `0026`)
 
@@ -5701,7 +5892,13 @@ into chat).
   offre type `produit`, Phase 1) — see that section's own "Testing"
   entry above for the full account, including the standalone
   `supabase/tests/concurrency_test_produit.sh` real-multi-connection
-  race test `run_sql_tests.sh` now also runs.
+  race test `run_sql_tests.sh` now also runs. Also covers physical
+  products Phase 2 (0040) — `livrer_produit()`'s full rejection set (a
+  non-produit target, a non-owner caller, a not-yet-`validee`
+  transaction), the genuine success path stamping the same 72h escrow
+  window `deliver_video()` opens, the genuinely-optional tracking
+  reference, and the `0020`/`0021` grant-audit pattern — see that
+  section's own "Testing" entry above for the full account.
 - `supabase/tests/stub_auth.sql` fakes just enough of Supabase's `auth`
   schema (an `auth.uid()` reading `app.current_user_id`, plus the
   `authenticated`/`anon`/`service_role` roles) for the real migrations to

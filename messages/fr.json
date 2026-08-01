@@ -81,7 +81,11 @@
     }
   },
   "OffresPage": {
-    "heading": "Offres"
+    "heading": "Offres",
+    "tabs": {
+      "service": "Service",
+      "produit": "Produit physique"
+    }
   },
   "Explorer": {
     "heading": "Découvrir",
@@ -263,6 +267,7 @@
     "demandesHeading": "Demandes en attente de votre réponse",
     "nouvellesDemandes": "{count, plural, one {# nouvelle} other {# nouvelles}}",
     "livraisonsHeading": "Livraisons en attente",
+    "commandesHeading": "Commandes à expédier",
     "offresHeading": "Vos offres",
     "statutShort": {
       "en_attente": "En attente",
@@ -314,6 +319,17 @@
       "livraisonImpossible": "Échec de la livraison.",
       "envoiEnCours": "Envoi en cours...",
       "livrer": "Livrer"
+    },
+    "commandes": {
+      "intro": "Commandes payées en attente d'expédition.",
+      "empty": "Aucune commande à expédier.",
+      "row": "{libelle} · quantité {quantite} · {montant}$",
+      "adresseLabel": "Adresse de livraison :",
+      "adresseInconnue": "non renseignée",
+      "referenceSuiviPlaceholder": "Référence de suivi (optionnel)",
+      "marquerExpedie": "Marquer comme expédié",
+      "envoiEnCours": "Envoi en cours...",
+      "echecExpedition": "Échec de l'expédition."
     },
     "transactionActions": {
       "reveal": {
@@ -438,7 +454,16 @@
     "objectifLabel": "Objectif ($)",
     "liveCalculatorText": "Une fois cet objectif atteint, tu recevras environ <b>{montant}$</b> net (commission plateforme de 15% + TVA (16%) déduites -- les frais de paiement restent pris en charge par la plateforme).",
     "dateFinLabel": "Date de fin (optionnelle)",
-    "campagneLaunch": "Lancer la campagne"
+    "campagneLaunch": "Lancer la campagne",
+    "produitsIntro": "Liste un produit physique que tu expédies toi-même (plusieurs produits distincts possibles).",
+    "addProduit": "+ Ajouter un produit",
+    "produitLibelleLabel": "Nom du produit",
+    "produitLibellePlaceholder": "Ex : T-shirt édition limitée",
+    "prixUnitaireLabel": "Prix unitaire",
+    "stockLabel": "Stock disponible",
+    "imageLabel": "Photo du produit (optionnelle)",
+    "imageDejaTeleversee": "photo déjà téléversée",
+    "produitLaunch": "Publier le produit"
   },
   "Admin": {
     "heading": "Administration",

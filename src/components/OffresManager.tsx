@@ -28,6 +28,10 @@ type Offre = {
   // campagnes_montant_collecte (migration 0017), never stored on the row
   // itself. Optional because non-campagne offres never carry it.
   montantCollecte?: number;
+  // Phase 2 of the produit physique offer type -- only meaningful for
+  // `produit` rows (migration 0039/0040).
+  stock_total?: number | null;
+  image_r2_key?: string | null;
 };
 
 // One settings row per offer type (brief v3 point 4): each type is its own
@@ -49,13 +53,22 @@ const QUESTION_TYPES: {
   { type: "evenement_live", kind: "live" },
 ];
 
-export function OffresManager({ offres }: { offres: Offre[] }) {
+// Phase 2 of the produit physique offer type: `/offres`'s Service tab
+// renders this in `mode="service"` (its original, unmodified behavior --
+// video/campagne/QUESTION_TYPES already never included `produit`, so
+// nothing here needed to change for that mode), and the new Produit
+// physique tab renders it in `mode="produit"` instead, which shows only
+// ProduitsList. One component, two mutually exclusive render branches --
+// not two separate components -- since both share the same
+// SavedOptions/first-offre-notice plumbing.
+export function OffresManager({ offres, mode = "service" }: { offres: Offre[]; mode?: "service" | "produit" }) {
   const t = useTranslations("OffresManager");
   const tCommon = useTranslations("Common");
   const router = useRouter();
   const byType = new Map(offres.map((offre) => [offre.type, offre]));
   const videoOffres = offres.filter((offre) => offre.type === "video");
   const campagneOffres = offres.filter((offre) => offre.type === "campagne");
+  const produitOffres = offres.filter((offre) => offre.type === "produit");
   // "une seule fois" (product brief): naturally self-limiting without a
   // persisted flag -- offres are never deleted in this app, so the API's
   // isFirstOffre can only be true on the very first successful creation,
@@ -67,6 +80,40 @@ export function OffresManager({ offres }: { offres: Offre[] }) {
       setShowFirstOffreNotice(true);
     }
     router.refresh();
+  }
+
+  if (mode === "produit") {
+    return (
+      <section className="flex flex-col gap-4">
+        {showFirstOffreNotice && (
+          <div className="card flex items-start gap-3 border-brand-200 bg-brand-50 p-4 dark:border-brand-500/30 dark:bg-brand-500/10">
+            <span aria-hidden className="text-xl">
+              👀
+            </span>
+            <div className="flex-1 text-sm">
+              <p>
+                {t.rich("firstOffreNotice", {
+                  link: (chunks) => (
+                    <Link href="/parametres" className="font-semibold underline">
+                      {chunks}
+                    </Link>
+                  ),
+                })}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowFirstOffreNotice(false)}
+              aria-label={tCommon("close")}
+              className="text-foreground-muted hover:text-foreground"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+        <ProduitsList produitOffres={produitOffres} onSaved={handleSaved} />
+      </section>
+    );
   }
 
   return (
@@ -506,6 +553,228 @@ function CampagneRow({
           className={buttonClass("primary", "sm", "ml-auto")}
         >
           {status === "saving" ? "..." : existing ? tCommon("update") : t("campagneLaunch")}
+        </button>
+
+        {existing && (
+          <button
+            type="button"
+            disabled={status === "saving"}
+            onClick={() => submit(!existing.actif)}
+            className="text-sm text-foreground-muted hover:text-foreground"
+          >
+            {existing.actif ? tCommon("deactivate") : tCommon("reactivate")}
+          </button>
+        )}
+      </div>
+      {errorMessage && <p className="text-sm text-danger-600">{errorMessage}</p>}
+    </form>
+  );
+}
+
+// Phase 2 of the produit physique offer type -- repeatable, multi-row,
+// same "several distinct rows, distinguished by libelle" pattern as
+// VideoOffresList/CampagnesList above (a créateur can list several
+// different physical products, each with its own price/stock/image).
+function ProduitsList({
+  produitOffres,
+  onSaved,
+}: {
+  produitOffres: Offre[];
+  onSaved: (opts?: SavedOptions) => void;
+}) {
+  const t = useTranslations("OffresManager");
+  const [draftIds, setDraftIds] = useState<string[]>([]);
+
+  function addDraft() {
+    setDraftIds((ids) => [...ids, `draft-${Date.now()}-${ids.length}`]);
+  }
+
+  function removeDraft(draftId: string) {
+    setDraftIds((ids) => ids.filter((id) => id !== draftId));
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-sm font-semibold">{t("produitsIntro")}</p>
+      {produitOffres.map((offre) => (
+        <ProduitRow key={offre.id} existing={offre} onSaved={onSaved} />
+      ))}
+      {draftIds.map((draftId) => (
+        <ProduitRow
+          key={draftId}
+          existing={undefined}
+          onSaved={(opts) => {
+            removeDraft(draftId);
+            onSaved(opts);
+          }}
+        />
+      ))}
+      <button
+        type="button"
+        onClick={addDraft}
+        className="self-start text-sm font-semibold text-brand-600 dark:text-brand-300"
+      >
+        {t("addProduit")}
+      </button>
+    </div>
+  );
+}
+
+function ProduitRow({
+  existing,
+  onSaved,
+}: {
+  existing: Offre | undefined;
+  onSaved: (opts?: SavedOptions) => void;
+}) {
+  const t = useTranslations("OffresManager");
+  const tCommon = useTranslations("Common");
+  const [libelle, setLibelle] = useState(existing?.libelle ?? "");
+  const [prix, setPrix] = useState(existing?.prix?.toString() ?? "");
+  const [stockTotal, setStockTotal] = useState(existing?.stock_total?.toString() ?? "");
+  const [file, setFile] = useState<File | null>(null);
+  const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
+  const [errorMessage, setErrorMessage] = useState("");
+  const hasImage = Boolean(existing?.image_r2_key);
+
+  async function submit(nextActif: boolean) {
+    setStatus("saving");
+    setErrorMessage("");
+
+    try {
+      const response = await fetch("/api/offres", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "produit",
+          libelle,
+          prix: Number(prix),
+          stock_total: Number(stockTotal),
+          actif: nextActif,
+        }),
+      });
+      const body = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          typeof body.error === "string" ? body.error : tCommon("saveError"),
+        );
+      }
+
+      // Same "create the offre first, then upload, then PATCH the
+      // resulting key" flow as contenu_debloque's own r2_key (OffreRow
+      // below), except image_r2_key is a real top-level column
+      // (migration 0039), not a config key.
+      if (file) {
+        const offreId = body.offre.id as string;
+        const uploadUrlResponse = await fetch(
+          `/api/offres/${offreId}/image-upload-url`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ contentType: file.type, size: file.size }),
+          },
+        );
+        const uploadUrlBody = await uploadUrlResponse.json();
+        if (!uploadUrlResponse.ok) {
+          throw new Error(uploadUrlBody.error ?? t("uploadImpossible"));
+        }
+
+        await fetch(uploadUrlBody.uploadUrl, {
+          method: "PUT",
+          headers: { "Content-Type": file.type },
+          body: file,
+        });
+
+        await fetch(`/api/offres/${offreId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image_r2_key: uploadUrlBody.r2Key }),
+        });
+      }
+
+      setStatus("idle");
+      setFile(null);
+      onSaved({ isFirstOffre: body.isFirstOffre });
+    } catch (err) {
+      setStatus("error");
+      setErrorMessage(err instanceof Error ? err.message : tCommon("unknownError"));
+    }
+  }
+
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit(true);
+      }}
+      className="card flex flex-col gap-3 p-4"
+    >
+      <label className={labelClass}>
+        <span>{t("produitLibelleLabel")}</span>
+        <input
+          type="text"
+          required
+          placeholder={t("produitLibellePlaceholder")}
+          value={libelle}
+          onChange={(event) => setLibelle(event.target.value)}
+          className={`${inputClass} w-full`}
+        />
+      </label>
+
+      <div className="flex flex-wrap items-center gap-4">
+        <label className={labelClass}>
+          <span>{t("prixUnitaireLabel")}</span>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={1}
+              step="0.01"
+              required
+              value={prix}
+              onChange={(event) => setPrix(event.target.value)}
+              className={`${inputClass} w-24`}
+            />
+            <span>$</span>
+          </div>
+        </label>
+
+        <label className={labelClass}>
+          <span>{t("stockLabel")}</span>
+          <input
+            type="number"
+            min={1}
+            step="1"
+            required
+            value={stockTotal}
+            onChange={(event) => setStockTotal(event.target.value)}
+            className={`${inputClass} w-24`}
+          />
+        </label>
+      </div>
+
+      <label className={labelClass}>
+        <span>{t("imageLabel")}</span>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="file"
+            accept="image/*"
+            onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+            className="text-sm text-foreground-muted file:mr-2 file:rounded-full file:border-0 file:bg-brand-50 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-brand-600 dark:file:bg-white/10 dark:file:text-brand-300"
+          />
+          {hasImage && !file && (
+            <span className="text-sm text-foreground-muted">{t("imageDejaTeleversee")}</span>
+          )}
+        </div>
+      </label>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="submit"
+          disabled={status === "saving"}
+          className={buttonClass("primary", "sm", "ml-auto")}
+        >
+          {status === "saving" ? "..." : existing ? tCommon("update") : t("produitLaunch")}
         </button>
 
         {existing && (

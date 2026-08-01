@@ -275,6 +275,23 @@ export async function POST(request: NextRequest) {
     if (deliverError) {
       throw new Error(`failed to deliver transaction: ${deliverError.message}`);
     }
+  } else if (offerType === "produit") {
+    // Phase 2 revision of Phase 1's original design (see CLAUDE.md): a
+    // produit transaction skips the accept/refuse step entirely -- a
+    // créateur listing a fixed-price, fixed-stock product has nothing to
+    // individually approve per order the way a custom video request
+    // might. It still isn't immediate delivery either (unlike
+    // TYPES_A_VALIDATION_IMMEDIATE above) -- the créateur still has to
+    // ship it, via livrer_produit() (migration 0040) -- so this is only
+    // the first of those two steps, never the second.
+    const { error: validateError } = await supabase
+      .from("transactions")
+      .update({ statut: "validee" })
+      .eq("id", transactionId);
+
+    if (validateError) {
+      throw new Error(`failed to validate produit transaction: ${validateError.message}`);
+    }
   }
 
   return NextResponse.json({ status: "ok" });
