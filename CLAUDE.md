@@ -592,6 +592,332 @@ own check, a different authenticated user can't act on someone else's
 transaction, none of the rejected attempts leave any trace, and the
 legitimate callers still hold `EXECUTE`).
 
+## Physical products (offre type `produit`, Phase 1: schema + atomic reservation + webhook, migration `0039`)
+
+A 7th offer type, alongside the six digital-service/content types
+(`video`, `don`, `whatsapp`, `shoutout`, `contenu_debloque`,
+`evenement_live`, `campagne`): a physical good with limited stock,
+shipped by the créateur, no file upload involved. Origin: créateurs in
+Kinshasa already sell physical products over TikTok DMs, taking payment
+blind via mobile money with zero protection — TikTok Shop's real
+integrated cart isn't available in most of francophone Africa. This
+reuses the existing CinetPay/escrow/litige infrastructure rather than
+building a new payment path.
+
+**This lot is Phase 1 only — schema, atomic stock reservation, and the
+webhook. Phases 2 (créateur UI on `/offres`: stock/prix/image
+configuration) and 3 (fan UI on `/[handle]`: quantity selector, delivery
+address, availability page) are deliberately not built here**, per
+explicit instruction — this lot stays usable/testable in isolation via
+the RPC and the webhook directly, with no new UI beyond the one upload
+route listed below. A créateur cannot actually create a working
+`produit` offer through the app yet (see "What Phase 1 deliberately
+leaves broken" below) — that's Phase 2's job, not an oversight here.
+
+**Already-decided, not reopened by this lot**: an oversell (two fans
+both charged by CinetPay for the same last unit, rare but possible if
+timing lines up badly around a reservation's expiry) lands the wronged
+fan in the existing manual-refund queue
+(`necessite_remboursement_manuel`) — no new automatic-refund mechanism
+was built here; that's a separate, still-pending chantier (Lot 2c),
+blocked on the same CinetPay refund-API gap documented in "Automatic
+CinetPay refunds" above.
+
+### Schema
+
+`offres` gained `stock_total integer` and `image_r2_key text` (no offre
+had an image before this — a real, first-time addition, not an extension
+of an existing pattern). `offres_type_check` (the actual constraint name,
+confirmed by reading `0006_v3_no_roles_new_offer_types.sql` before
+writing the `ALTER`, not assumed) now includes `'produit'`.
+`offres_stock_coherent`: `(type = 'produit' and stock_total is not null
+and stock_total > 0) or (type != 'produit' and stock_total is null)` —
+every other type must leave `stock_total` null. `offres_prix_required_unless_don`
+(migration `0017`) already requires `prix is not null` for anything
+other than `don`/`campagne`, so `produit` — a real fixed per-unit price —
+falls under that existing rule with zero change needed there.
+`unique_offre_type_par_createur` (NULLS NOT DISTINCT, migration `0007`)
+needed no change either: a créateur giving each `produit` offer a
+distinct `libelle` (the product's name) lets several coexist, the exact
+same mechanism `video`/`campagne` already use.
+
+**`stock_total` never changes after creation — availability is always
+computed live from `reservations_stock`, never a decremented counter**,
+same "compute live, never store a derived number" discipline this
+project already applies to `campagnes.montant_collecte`
+(migration `0017`) and `badges_fidelite_publics.depuis`
+(migration `0022`).
+
+`transactions` gained `quantite integer not null default 1 check
+(quantite > 0)` — meaningful for `produit` (a fan can buy more than one),
+left at the default `1` for every other type.
+
+`reservations_stock` (`id, offre_id, fan_id, quantite, expire_at,
+transaction_id, created_at`) is one row per reservation *attempt*,
+whether it ever converts into a sale or not. `transaction_id` is null
+for a still-held-but-unconfirmed reservation and gets set the moment the
+webhook confirms payment — that's what makes a reservation permanent
+(see `offres_disponibilite_produit` below). No `ON DELETE` clause on
+`transaction_id`'s FK — this codebase still has no delete path for a
+`transactions` row.
+
+**RLS**: no INSERT/UPDATE/DELETE policy at all for `authenticated` — same
+"state machine only via a vetted RPC" shape as `transactions`/
+`publications`/`demandes_verification`. A fan reserves via
+`reserver_stock_produit()` below; the webhook confirms (sets
+`transaction_id`) via the service-role client, which bypasses RLS
+regardless of policy, same as every other transaction-creating path in
+this codebase. **A self-only `SELECT` policy WAS needed, though, unlike
+those other write-only tables** — flagged here because it's easy to miss:
+`/api/transactions/initiate` re-verifies a submitted `reservationId`
+using the calling fan's own authenticated client (never service-role, so
+a fan can't have someone else's reservation validated by forging an id),
+and without a `reservations_stock_select_own` policy (`fan_id =
+auth.uid()`) that read would come back empty even for the reservation's
+real owner — breaking the legitimate flow, not just a forged one.
+
+### `reserver_stock_produit(p_offre_id, p_quantite)` — atomic reservation
+
+`SECURITY DEFINER`, same discipline as every write RPC since migration
+`0020`: `auth.uid() is null` rejected, `revoke all ... from public` +
+`grant execute ... to authenticated` only (never `anon` — reserving
+stock requires a real account). Locks the target `offres` row (`select
+... for update`) before reading `reservations_stock` — this is what
+serializes two concurrent callers racing for the same offer's last unit:
+whichever transaction acquires the row lock first computes disponibilité
+and inserts its hold before releasing the lock; the second caller's own
+`for update` blocks until the first commits, then re-reads
+`reservations_stock` under a fresh snapshot (READ COMMITTED semantics)
+that already includes the first caller's insert. Rejects, with a
+specific message for each: `auth.uid()` null, target not `produit`,
+target not `actif`, offer not found, or the requested quantity exceeding
+real availability.
+
+**Verified empirically before being trusted — the single most critical
+point of this lot, per the brief.** A throwaway Postgres database was
+built from the real migrations and driven with genuinely concurrent OS
+processes (real separate `psql` connections via backgrounded shell jobs,
+not a single sequential script — this can't be simulated from
+`checklist_2_3.sql`'s one connection): (1) two sessions, one holding the
+row lock inside an explicit transaction with `pg_sleep(3)` before
+committing, the other issuing its own reservation attempt ~1s later —
+confirmed the second session's call genuinely blocked (its own timing
+showed a ~2s wait) until the first committed, then correctly saw the
+reduced stock and was rejected; (2) 5 truly concurrent callers racing
+for a single last unit (no artificial delay, real OS-level
+concurrency) — exactly 1 succeeded, 4 rejected cleanly, confirmed via
+the real `reservations_stock` row count, not just each call's own return
+value; (3) 5 truly concurrent callers against 5 units of stock — all 5
+succeeded, proving the lock serializes without over-rejecting when stock
+is actually sufficient. **A real bug was caught by this exact
+verification, before it ever reached the checklist file**: the
+function's own OUT parameter `expire_at` (from `returns table
+(reservation_id uuid, expire_at timestamptz)`) shadowed
+`reservations_stock.expire_at` in the internal disponibilité query — the
+exact same class of bug already documented for
+`creer_demande_verification()`/`publier_message()`/
+`toggler_repost_publication()` in this codebase — caught by actually
+running the function (`column reference "expire_at" is ambiguous`), not
+spotted by reading the code, and fixed by table-qualifying every column
+in that query (`rs.quantite`, `rs.offre_id`, `rs.transaction_id`,
+`rs.expire_at`).
+
+**This proof lives in two places, permanently, not just as a one-time
+manual check**: `supabase/tests/concurrency_test_produit.sh` is a new,
+standalone script (real backgrounded `psql` processes against a
+throwaway database it creates and drops itself) reproducing exactly the
+5-vs-1-unit and 5-vs-5-units races above as an automated regression test
+— wired into `npm run test:sql` via `run_sql_tests.sh` calling it right
+after `checklist_2_3.sql`. `checklist_2_3.sql` itself covers everything
+reachable from its single sequential connection: every rejection case,
+expiry release, and the view's three states (below) — but deliberately
+does **not** attempt to simulate the race itself; a comment in that file
+points to the concurrency script for the real proof, rather than
+pretending a sequential script could establish it.
+
+### `offres_disponibilite_produit` — public view (one row per `produit` offer)
+
+Granted to `authenticated, anon`, same as `offres_publiques`/
+`campagnes_publiques`. Three columns:
+- **`disponible_maintenant`** — `stock_total` minus every reservation
+  that's either confirmed (`transaction_id is not null`) or still within
+  its unexpired 10-minute hold (`expire_at > now()`). Governs whether a
+  *new* reservation can succeed right now.
+- **`disponible_definitif`** — `stock_total` minus only *confirmed*
+  reservations. Never reduced by an in-flight, unconfirmed hold — this is
+  what the webhook checks after a sale to decide whether to close the
+  offer (below), and what makes the three states below distinguishable:
+  "en stock" (both columns at `stock_total`), "réservé temporairement par
+  un tiers" (`disponible_maintenant` reduced, `disponible_definitif`
+  untouched — someone else could still free it up), "épuisé pour de bon"
+  (`disponible_definitif = 0` — gone for real).
+- **`prochaine_liberation`** — the soonest `expire_at` among active,
+  unconfirmed holds on that offer, or `null` if there are none.
+  **Deliberately exposes only the timing, never the reservataire's
+  identity** — no `fan_id` anywhere in this view, verified directly via
+  `information_schema.columns` in the checklist, not just by reading the
+  view's own definition.
+
+### `/api/transactions/initiate` — `quantite`/`reservationId` (produit only)
+
+Both fields are only relevant/required when `offre.type === "produit"` —
+ignored for every other type, which keeps their existing behavior
+completely unchanged (covered by a regression test asserting a `video`
+checkout's `custom` payload is still exactly `{fanId, offreId}`, no
+`quantite`/`reservationId` added). For `produit`: `quantite` must be a
+positive integer; `reservationId` is looked up via the calling fan's own
+authenticated client (relying on `reservations_stock_select_own`'s RLS
+scoping, see above) and rejected unless it belongs to this exact
+offer/fan pair, is not already confirmed (`transaction_id is null`),
+hasn't expired, and its own stored `quantite` matches what's being
+checked out — **there is no way to forge another fan's reservation id
+through this route; the ownership check happens via RLS before the
+application code's own explicit filters even run.** `montant` is
+computed as `prix × quantite` rather than `prix` alone. `custom` sent to
+CinetPay gains `quantite`/`reservationId` alongside the existing
+`{fanId, offreId}`, for the webhook to read back.
+
+### CinetPay webhook — produit handling
+
+Added on top of the existing logic (see "CinetPay webhook" above for the
+unchanged parts): `quantite`/`reservationId` are read from the
+HMAC-verified `cpm_custom` payload — the same trust boundary every other
+field in this webhook already relies on — and a produit notification
+missing either is rejected outright (400) before any further processing.
+The montant check becomes `amount == prix × quantite` for this type
+specifically (still `don`/`campagne`'s free-amount exemption for those
+two, unchanged). The transaction is inserted with the real `quantite`
+(not the column's default `1`).
+
+**`produit` is deliberately NOT added to `TYPES_A_VALIDATION_IMMEDIATE`**
+— payment success is not delivery for a physical product (the créateur
+still has to ship it), unlike `don`/`contenu_debloque`/`evenement_live`/
+`campagne`. The transaction is simply inserted and left at its default
+`statut = 'en_attente'`, exactly like `video`/`shoutout`/`whatsapp`
+already default to when not force-validated. This falls out of the
+*absence* of a change, not a new branch — `TYPES_A_VALIDATION_IMMEDIATE`'s
+own existing `!includes(offerType)` check already routes a `produit`
+transaction to a `demande_recue` notification (the créateur has
+something to act on), the identical logic path video/whatsapp/shoutout
+already use, with zero code changes needed for that part. **No accept/
+ship/deliver flow was wired up for `produit` in this lot** — the generic
+`accept_transaction()` RPC (migration `0002`/`0020`) already works
+unmodified for it regardless (it only special-cases `whatsapp`'s
+acceptance-is-delivery cascade, and treats every other type's deadline
+generically via a null `deadline_acceptation`, since `set_deadline_acceptation()`'s
+`case` statement has no `produit` branch and falls to its `else null`) —
+but nothing calls it from a créateur-facing UI yet; that's Phase 2/3
+work, deliberately left undone here.
+
+**Marking the reservation permanent is essential bookkeeping, not an
+optional side effect** — unlike the notification RPC call just below it
+in the same route (which only logs and continues on failure, since a
+missed bell notification isn't worth turning a successful payment into a
+500), a failure to set `reservations_stock.transaction_id` **throws**,
+matching this file's own existing precedent for `insertError`/
+`validateError`/`deliverError`. The update is scoped to
+`.eq("id", reservationId).eq("offre_id", offre.id).eq("fan_id",
+custom.fanId).is("transaction_id", null)` — the last clause guards
+against ever double-confirming the same reservation, though the route's
+own top-of-function idempotency check (existing transaction id → early
+`already_processed` return) already prevents a genuine CinetPay resend
+from reaching this far a second time.
+
+**Once confirmed, `offres_disponibilite_produit` is re-queried for that
+offer's `disponible_definitif`; if it's `<= 0`, `offres.actif` is set to
+`false` in the same request** — this is what makes a sold-out `produit`
+offer stop looking purchasable, mirroring `close_campagne_if_goal_reached()`'s
+trigger-based auto-close for campaigns (migration `0017`), except this
+one runs in application code (the webhook) rather than a DB trigger,
+since it needs the JS-side `offres_disponibilite_produit` read the
+webhook already has reason to make.
+
+### `/api/offres/[id]/image-upload-url` — new route
+
+Reuses the existing R2 pipeline verbatim (`checkUploadSize`/
+`getSignedUploadUrl`, the same 10MB image cap from the security audit,
+migration `0033`) — same ownership-check-before-minting shape as
+`content-upload-url` (offres). Restricted to `type === "produit"` for
+now, same "one clear purpose per route" discipline as
+`content-upload-url`'s own `contenu_debloque` restriction — `image_r2_key`
+itself carries no DB-level type restriction, so loosening this later for
+another offer type is a one-line change, not a migration. `modifierOffreSchema`
+(`src/lib/validation.ts`) gained a matching optional `image_r2_key`
+field so the natural "upload-url → PATCH with the resulting key" flow
+(same shape `contenu_debloque`'s `config.r2_key` already uses) actually
+persists the value — no UI calls this route yet (Phase 2), this is just
+the route plus its wiring to the table, per the brief.
+
+### What Phase 1 deliberately leaves broken (by design, not an oversight)
+
+- **A créateur cannot successfully create a `produit` offer through the
+  app yet.** `'produit'` was added to `OFFRE_TYPES`/`OffreType`
+  (`src/lib/validation.ts`) — needed so the CinetPay webhook's own
+  `offerType === "produit"` branching type-checks against the one
+  authoritative offer-type union — but `creerOffreSchema` was
+  deliberately **not** extended with `stock_total`/image validation
+  (that's Phase 2's job). A `POST /api/offres` call with `type: "produit"`
+  today would pass zod (it already requires `prix`, inherited from the
+  existing base rule) but fail at the database layer on
+  `offres_stock_coherent` (`stock_total` would be null) — a clean
+  constraint violation, not a crash, and the DB constraint being the real
+  guarantee here is exactly this project's own standing philosophy, not
+  a gap to route around with extra JS validation for a route nothing
+  calls with this type yet.
+- **A `produit` offer is excluded from `CreateurProfileView`'s public
+  profile list** (`getCreateurProfileData()`, `src/lib/profil.ts` —
+  `.neq("type", "produit")`, added alongside the existing `.neq("type",
+  "campagne")`), for the same reason `campagne` needs its own separate
+  rendering: `CheckoutButton`'s plain flow has no quantity selector and
+  never sends `reservationId`, which `/api/transactions/initiate` now
+  requires for this type — without this exclusion, a `produit` offer that
+  somehow existed would render a "Payer" button doomed to a clean 400 the
+  instant a fan clicked it. This is Phase 3's job to fix properly
+  (quantity selector, reservation flow, availability display); excluding
+  it here just prevents shipping a broken affordance in the meantime.
+- Reserved-pseudo list, top nav, `/explorer` — untouched by this lot,
+  since none of those surfaces have anything `produit`-specific to show
+  yet either.
+
+### Testing
+
+`checklist_2_3.sql`: `offres_stock_coherent` rejected directly at the raw
+constraint level (both directions — `produit` with null `stock_total`,
+non-`produit` with `stock_total` set); every `reserver_stock_produit()`
+rejection case individually (`NULL auth.uid()`, non-`produit` target,
+inactive target, quantity exceeding real availability), each confirmed
+to leave zero trace in `reservations_stock` afterward; a real successful
+reservation reducing `disponible_maintenant` only, never
+`disponible_definitif`; a second fan correctly blocked from
+over-reserving what's left, then successfully taking the exact remaining
+unit; an expired hold (backdated `expire_at`, the only way to simulate
+the 10-minute window passing, same "disable/backdate directly" pattern
+as the pseudo-cooldown test) freeing its stock back up for a new
+reservation; `prochaine_liberation`'s no-`fan_id` guarantee (schema-level
+via `information_schema.columns`, plus a positive check that it's
+populated with a real upcoming timestamp when a hold is active); the
+view's three states each proven against a dedicated, clean fixture per
+state; the full `0020`/`0021` grant-audit pattern (`anon` has no
+`EXECUTE` on `reserver_stock_produit`, `authenticated` does, both `anon`
+and `authenticated` hold `SELECT` on `offres_disponibilite_produit`).
+`supabase/tests/concurrency_test_produit.sh` (new, run automatically by
+`npm run test:sql` via `run_sql_tests.sh`): the real multi-connection
+proof described above — no oversell under contention, no spurious
+rejection with sufficient stock. Vitest: the webhook's produit branch
+(`route.test.ts` — missing `quantite`/`reservationId` rejected,
+mismatched montant rejected, a correct sale records `quantite` and
+leaves `statut` at `en_attente`/no forced validee-livree cascade,
+confirms the reservation with the exact expected filter chain, closes
+the offre only when `disponible_definitif` reaches `0` and leaves it
+untouched otherwise, and a reservation-confirm failure throws rather
+than being swallowed); `/api/transactions/initiate`'s produit-specific
+validation (missing/invalid `quantite`, an unknown/mismatched-offer/
+already-confirmed/expired/wrong-quantity `reservationId`, and that a
+`video` checkout's payload is completely unaffected); and
+`/api/offres/[id]/image-upload-url` (auth/ownership/type/content-type/
+size checks, mirroring `content-upload-url`'s and
+`publications/upload-url`'s own existing test shapes).
+
 ## Litige resolution — admin decision on a disputed delivery (Lot 2a-bis, migration `0026`)
 
 Follow-up to Lot 2a (migration `0025`, above), which deliberately left
@@ -5371,7 +5697,11 @@ into chat).
   clean `contenu_complet = true` — the real DB-level guarantee
   `getPublicationsExplorables()`'s search path now relies on to correctly
   bypass `masque_exploration` (see that migration's own CLAUDE.md
-  section for the bug and the fix).
+  section for the bug and the fix). Also covers physical products (0039,
+  offre type `produit`, Phase 1) — see that section's own "Testing"
+  entry above for the full account, including the standalone
+  `supabase/tests/concurrency_test_produit.sh` real-multi-connection
+  race test `run_sql_tests.sh` now also runs.
 - `supabase/tests/stub_auth.sql` fakes just enough of Supabase's `auth`
   schema (an `auth.uid()` reading `app.current_user_id`, plus the
   `authenticated`/`anon`/`service_role` roles) for the real migrations to

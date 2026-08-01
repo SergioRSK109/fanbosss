@@ -5892,6 +5892,396 @@ begin
   raise notice 'PASS: has_table_privilege confirms authenticated holds SELECT on publications_explorables';
 end $$;
 
+-- =======================================================================
+-- Phase 1 of the "produit physique" offer type (migration 0039): schema,
+-- atomic stock reservation, and the offres_disponibilite_produit view.
+-- True concurrent-race coverage (the single most critical point of this
+-- lot, per the brief) can't be exercised from this single sequential
+-- psql connection -- see supabase/tests/concurrency_test_produit.sh,
+-- run separately by run_sql_tests.sh, for the real multi-connection
+-- proof that reserver_stock_produit's row lock prevents overselling.
+-- This section covers everything reachable from one connection: the
+-- rejection cases, expiry release, and the view's three states.
+--
+-- Fixture: créateur K (two produit offres: P1 stock=2, P2 stock=1
+-- créé inactif), a don offre D1 (for the "not produit" rejection), and
+-- three fans (A, B, C).
+-- =======================================================================
+insert into users (id) values
+  ('9f000001-0000-0000-0000-000000000001'), -- créateur K
+  ('9f000002-0000-0000-0000-000000000002'), -- fan A
+  ('9f000003-0000-0000-0000-000000000003'), -- fan B
+  ('9f000004-0000-0000-0000-000000000004'); -- fan C
+
+insert into offres (id, createur_id, type, prix, stock_total, libelle, actif) values
+  ('9f000010-0000-0000-0000-000000000010', '9f000001-0000-0000-0000-000000000001', 'produit', 15, 2, 'Produit actif', true),
+  ('9f000011-0000-0000-0000-000000000011', '9f000001-0000-0000-0000-000000000001', 'produit', 15, 1, 'Produit inactif', false),
+  ('9f000012-0000-0000-0000-000000000012', '9f000001-0000-0000-0000-000000000001', 'don', null, null, null, true);
+
+-- offres_stock_coherent (the raw CHECK constraint, not the RPC's own
+-- friendlier rejection) -- proven directly against the table, same
+-- "prove the constraint itself" discipline as check_whatsapp_minimum_price
+-- elsewhere in this file.
+do $$
+begin
+  begin
+    insert into offres (createur_id, type, prix, stock_total, libelle)
+      values ('9f000001-0000-0000-0000-000000000001', 'produit', 15, null, 'Sans stock');
+    raise exception 'TEST FAILED: a produit offre with stock_total=null was accepted';
+  exception when check_violation then
+    raise notice 'PASS: offres_stock_coherent rejects a produit offre with no stock_total';
+  end;
+  begin
+    insert into offres (createur_id, type, prix, stock_total)
+      values ('9f000001-0000-0000-0000-000000000001', 'don', null, 5);
+    raise exception 'TEST FAILED: a non-produit offre with stock_total set was accepted';
+  exception when check_violation then
+    raise notice 'PASS: offres_stock_coherent rejects a non-produit offre with stock_total set';
+  end;
+end $$;
+
+-- Rejection: no auth.uid() at all (authenticated role, no session var set).
+select set_config('app.current_user_id', '', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform reserver_stock_produit('9f000010-0000-0000-0000-000000000010', 1);
+    raise exception 'TEST FAILED: reserver_stock_produit succeeded with a NULL auth.uid()';
+  exception when others then
+    if sqlerrm !~ 'not authenticated' then
+      raise exception 'TEST FAILED: expected a not-authenticated error, got: %', sqlerrm;
+    end if;
+    raise notice 'PASS: reserver_stock_produit rejects a NULL auth.uid() caller';
+  end;
+end $$;
+reset role;
+
+-- Rejection: the target offre is not of type produit.
+select set_config('app.current_user_id', '9f000002-0000-0000-0000-000000000002', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform reserver_stock_produit('9f000012-0000-0000-0000-000000000012', 1);
+    raise exception 'TEST FAILED: reserver_stock_produit accepted a non-produit offre';
+  exception when others then
+    if sqlerrm !~ 'produit physique' then
+      raise exception 'TEST FAILED: expected a not-a-produit error, got: %', sqlerrm;
+    end if;
+    raise notice 'PASS: reserver_stock_produit rejects an offre that is not type=produit';
+  end;
+end $$;
+
+-- Rejection: the target offre is not actif.
+do $$
+begin
+  begin
+    perform reserver_stock_produit('9f000011-0000-0000-0000-000000000011', 1);
+    raise exception 'TEST FAILED: reserver_stock_produit accepted an inactive offre';
+  exception when others then
+    if sqlerrm !~ 'plus disponible' then
+      raise exception 'TEST FAILED: expected a not-active error, got: %', sqlerrm;
+    end if;
+    raise notice 'PASS: reserver_stock_produit rejects an inactive offre';
+  end;
+end $$;
+
+-- Rejection: quantité demandée > disponibilité (P1 has stock_total=2).
+do $$
+begin
+  begin
+    perform reserver_stock_produit('9f000010-0000-0000-0000-000000000010', 3);
+    raise exception 'TEST FAILED: reserver_stock_produit accepted a quantité exceeding stock';
+  exception when others then
+    if sqlerrm !~ 'stock insuffisant' then
+      raise exception 'TEST FAILED: expected a stock-insuffisant error, got: %', sqlerrm;
+    end if;
+    raise notice 'PASS: reserver_stock_produit rejects a quantité exceeding disponibilité';
+  end;
+end $$;
+
+-- None of the four rejected attempts above left any trace -- same
+-- "always confirm a rejected attack/invalid call leaves no row behind"
+-- discipline as every other RPC in this file. Raw-table read, so this
+-- must run as the superuser (this test harness's stub_auth.sql, unlike
+-- a real Supabase project, grants authenticated/anon no table-level
+-- privilege at all -- see CLAUDE.md's own testing notes) -- reset role
+-- before touching reservations_stock directly.
+reset role;
+do $$
+declare
+  v_count integer;
+begin
+  select count(*) into v_count from reservations_stock
+    where offre_id in (
+      '9f000010-0000-0000-0000-000000000010',
+      '9f000011-0000-0000-0000-000000000011',
+      '9f000012-0000-0000-0000-000000000012'
+    );
+  if v_count != 0 then
+    raise exception 'TEST FAILED: a rejected reserver_stock_produit call left a reservation row behind (found %)', v_count;
+  end if;
+  raise notice 'PASS: none of the rejected reserver_stock_produit attempts left a reservation row behind';
+end $$;
+
+-- A real, successful reservation: fan A reserves 1 of P1's 2 units.
+-- disponible_maintenant drops immediately; disponible_definitif does not
+-- (a hold is not yet a sale).
+select reserver_stock_produit('9f000010-0000-0000-0000-000000000010', 1);
+
+do $$
+declare
+  v_disponible record;
+begin
+  select disponible_maintenant, disponible_definitif into v_disponible
+    from offres_disponibilite_produit where offre_id = '9f000010-0000-0000-0000-000000000010';
+  if v_disponible.disponible_maintenant != 1 then
+    raise exception 'TEST FAILED: expected disponible_maintenant=1 after a 1-unit hold on 2 stock, got %', v_disponible.disponible_maintenant;
+  end if;
+  if v_disponible.disponible_definitif != 2 then
+    raise exception 'TEST FAILED: an unconfirmed hold should not reduce disponible_definitif, got %', v_disponible.disponible_definitif;
+  end if;
+  raise notice 'PASS: a fresh unconfirmed reservation reduces disponible_maintenant only, never disponible_definitif';
+end $$;
+reset role;
+
+-- Fan B tries to reserve 2 (only 1 left) -- rejected. Then reserves
+-- exactly the 1 remaining unit -- succeeds, bringing disponible_maintenant
+-- to 0 while both holds are still unconfirmed (the "réservé temporairement
+-- par un tiers" state, exercised more directly below via a dedicated
+-- three-offre fixture).
+select set_config('app.current_user_id', '9f000003-0000-0000-0000-000000000003', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform reserver_stock_produit('9f000010-0000-0000-0000-000000000010', 2);
+    raise exception 'TEST FAILED: reserver_stock_produit accepted 2 when only 1 unit remained';
+  exception when others then
+    if sqlerrm !~ 'stock insuffisant' then
+      raise exception 'TEST FAILED: expected a stock-insuffisant error, got: %', sqlerrm;
+    end if;
+    raise notice 'PASS: reserver_stock_produit rejects a request exceeding the real remaining stock (accounting for another fan''s active hold)';
+  end;
+end $$;
+select reserver_stock_produit('9f000010-0000-0000-0000-000000000010', 1);
+reset role;
+
+-- Expiry release: backdate fan A's hold (the only way to simulate the
+-- 10-minute window having passed, same "disable/backdate directly, the
+-- trigger/logic can't be fooled into doing it itself" pattern as the
+-- pseudo-cooldown test elsewhere in this file) and confirm the freed unit
+-- can be reserved again by a third fan.
+update reservations_stock set expire_at = now() - interval '1 minute'
+  where offre_id = '9f000010-0000-0000-0000-000000000010' and fan_id = '9f000002-0000-0000-0000-000000000002';
+
+do $$
+declare
+  v_disponible integer;
+begin
+  select disponible_maintenant into v_disponible
+    from offres_disponibilite_produit where offre_id = '9f000010-0000-0000-0000-000000000010';
+  if v_disponible != 1 then
+    raise exception 'TEST FAILED: an expired hold should free its stock back up, expected disponible_maintenant=1, got %', v_disponible;
+  end if;
+  raise notice 'PASS: an expired, unconfirmed reservation no longer counts against disponible_maintenant';
+end $$;
+
+select set_config('app.current_user_id', '9f000004-0000-0000-0000-000000000004', false);
+set role authenticated;
+select reserver_stock_produit('9f000010-0000-0000-0000-000000000010', 1);
+reset role;
+
+do $$
+declare
+  v_disponible integer;
+begin
+  select disponible_maintenant into v_disponible
+    from offres_disponibilite_produit where offre_id = '9f000010-0000-0000-0000-000000000010';
+  if v_disponible != 0 then
+    raise exception 'TEST FAILED: expected disponible_maintenant=0 once the freed unit was re-reserved, got %', v_disponible;
+  end if;
+  raise notice 'PASS: a new reservation can succeed on stock freed by an earlier reservation''s expiry';
+end $$;
+
+-- prochaine_liberation never leaks the reservataire's identity -- only
+-- the timing. Checked two ways: the view's own column list (no fan_id at
+-- all, information_schema-level) and, positively, that the column IS
+-- populated with a real, upcoming timestamp for an offre with an active
+-- unconfirmed hold.
+do $$
+declare
+  v_columns text;
+begin
+  select string_agg(column_name, ',') into v_columns
+    from information_schema.columns
+    where table_schema = 'public' and table_name = 'offres_disponibilite_produit';
+  if v_columns ~ 'fan' then
+    raise exception 'TEST FAILED: offres_disponibilite_produit exposes a fan-identifying column (%)', v_columns;
+  end if;
+  raise notice 'PASS: offres_disponibilite_produit exposes no fan-identifying column (%)', v_columns;
+end $$;
+
+do $$
+declare
+  v_prochaine timestamptz;
+begin
+  select prochaine_liberation into v_prochaine
+    from offres_disponibilite_produit where offre_id = '9f000010-0000-0000-0000-000000000010';
+  if v_prochaine is null or v_prochaine <= now() then
+    raise exception 'TEST FAILED: expected a real, upcoming prochaine_liberation for an offre with an active hold, got %', v_prochaine;
+  end if;
+  raise notice 'PASS: prochaine_liberation reflects the nearest active hold''s expiry, with no reservataire identity exposed';
+end $$;
+
+-- ---------------------------------------------------------------------
+-- The view's three distinct states, per the brief -- a dedicated,
+-- clean fixture per state (créateur K2) so each assertion is
+-- unambiguous rather than reasoning about a fixture shared with the
+-- rejection tests above.
+-- ---------------------------------------------------------------------
+insert into users (id) values ('9f000005-0000-0000-0000-000000000005'); -- créateur K2
+
+insert into offres (id, createur_id, type, prix, stock_total, libelle) values
+  ('9f000020-0000-0000-0000-000000000020', '9f000005-0000-0000-0000-000000000005', 'produit', 20, 3, 'En stock'),
+  ('9f000021-0000-0000-0000-000000000021', '9f000005-0000-0000-0000-000000000005', 'produit', 20, 1, 'Reserve tiers'),
+  ('9f000022-0000-0000-0000-000000000022', '9f000005-0000-0000-0000-000000000005', 'produit', 20, 1, 'Epuise');
+
+-- State 1: "en stock" -- untouched, disponible_maintenant = disponible_definitif = stock_total.
+do $$
+declare
+  v_disponible record;
+begin
+  select disponible_maintenant, disponible_definitif into v_disponible
+    from offres_disponibilite_produit where offre_id = '9f000020-0000-0000-0000-000000000020';
+  if v_disponible.disponible_maintenant != 3 or v_disponible.disponible_definitif != 3 then
+    raise exception 'TEST FAILED: expected a fresh produit offre fully in stock (3/3), got %/%', v_disponible.disponible_maintenant, v_disponible.disponible_definitif;
+  end if;
+  raise notice 'PASS: offres_disponibilite_produit reports "en stock" correctly for an untouched offre';
+end $$;
+
+-- State 2: "réservé temporairement par un tiers" -- disponible_maintenant
+-- insufficient for a new caller, but disponible_definitif still > 0
+-- (nobody has actually bought it yet).
+select set_config('app.current_user_id', '9f000002-0000-0000-0000-000000000002', false);
+set role authenticated;
+select reserver_stock_produit('9f000021-0000-0000-0000-000000000021', 1);
+reset role;
+
+do $$
+declare
+  v_disponible record;
+begin
+  select disponible_maintenant, disponible_definitif into v_disponible
+    from offres_disponibilite_produit where offre_id = '9f000021-0000-0000-0000-000000000021';
+  if v_disponible.disponible_maintenant != 0 then
+    raise exception 'TEST FAILED: expected disponible_maintenant=0 while held by another fan, got %', v_disponible.disponible_maintenant;
+  end if;
+  if v_disponible.disponible_definitif != 1 then
+    raise exception 'TEST FAILED: an unconfirmed hold must not reduce disponible_definitif, expected 1, got %', v_disponible.disponible_definitif;
+  end if;
+  raise notice 'PASS: offres_disponibilite_produit reports "réservé temporairement par un tiers" correctly (disponible_maintenant=0, disponible_definitif=1)';
+end $$;
+
+-- State 3: "épuisé pour de bon" -- a CONFIRMED sale (transaction_id set,
+-- simulating what the webhook does) permanently reduces
+-- disponible_definitif to 0.
+select set_config('app.current_user_id', '9f000003-0000-0000-0000-000000000003', false);
+set role authenticated;
+do $$
+declare
+  v_id uuid;
+begin
+  select reservation_id into v_id from reserver_stock_produit('9f000022-0000-0000-0000-000000000022', 1);
+  perform set_config('app.tmp_reservation_epuise', v_id::text, false);
+end $$;
+reset role;
+
+insert into transactions (id, fan_id, createur_id, offre_id, montant, quantite) values
+  ('9f000030-0000-0000-0000-000000000030', '9f000003-0000-0000-0000-000000000003', '9f000005-0000-0000-0000-000000000005', '9f000022-0000-0000-0000-000000000022', 20, 1);
+
+update reservations_stock set transaction_id = '9f000030-0000-0000-0000-000000000030'
+  where id = current_setting('app.tmp_reservation_epuise')::uuid;
+
+do $$
+declare
+  v_disponible record;
+begin
+  select disponible_maintenant, disponible_definitif into v_disponible
+    from offres_disponibilite_produit where offre_id = '9f000022-0000-0000-0000-000000000022';
+  if v_disponible.disponible_definitif != 0 then
+    raise exception 'TEST FAILED: expected disponible_definitif=0 once the only unit is confirmed sold, got %', v_disponible.disponible_definitif;
+  end if;
+  if v_disponible.disponible_maintenant != 0 then
+    raise exception 'TEST FAILED: expected disponible_maintenant=0 for a sold-out offre, got %', v_disponible.disponible_maintenant;
+  end if;
+  raise notice 'PASS: offres_disponibilite_produit reports "épuisé pour de bon" correctly (disponible_definitif=0)';
+end $$;
+
+-- A confirmed sale's prochaine_liberation is null -- there is no active,
+-- unconfirmed hold left to eventually free anything up.
+do $$
+declare
+  v_prochaine timestamptz;
+begin
+  select prochaine_liberation into v_prochaine
+    from offres_disponibilite_produit where offre_id = '9f000022-0000-0000-0000-000000000022';
+  if v_prochaine is not null then
+    raise exception 'TEST FAILED: expected a null prochaine_liberation for a fully sold-out offre with no pending hold, got %', v_prochaine;
+  end if;
+  raise notice 'PASS: prochaine_liberation is null once every unit is either confirmed sold or has no active hold';
+end $$;
+
+-- Grants: reserver_stock_produit is authenticated-only (reserving stock
+-- requires a real account); offres_disponibilite_produit is a plain
+-- public view like offres_publiques/campagnes_publiques, open to anon.
+select set_config('app.current_user_id', '', false);
+set role anon;
+do $$
+begin
+  begin
+    perform reserver_stock_produit('9f000020-0000-0000-0000-000000000020', 1);
+    raise exception 'TEST FAILED: anon was able to call reserver_stock_produit';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE on reserver_stock_produit (real Postgres permission error)';
+  end;
+end $$;
+
+do $$
+begin
+  perform 1 from public.offres_disponibilite_produit limit 1;
+  raise notice 'PASS: anon has SELECT on offres_disponibilite_produit';
+end $$;
+reset role;
+
+do $$
+begin
+  if has_function_privilege('anon', 'reserver_stock_produit(uuid,integer)', 'EXECUTE') then
+    raise exception 'TEST FAILED: anon holds EXECUTE on reserver_stock_produit';
+  end if;
+  raise notice 'PASS: has_function_privilege confirms anon lacks EXECUTE on reserver_stock_produit';
+end $$;
+
+do $$
+begin
+  if not has_function_privilege('authenticated', 'reserver_stock_produit(uuid,integer)', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lacks EXECUTE on reserver_stock_produit';
+  end if;
+  raise notice 'PASS: has_function_privilege confirms authenticated holds EXECUTE on reserver_stock_produit';
+end $$;
+
+do $$
+begin
+  if not has_table_privilege('anon', 'public.offres_disponibilite_produit', 'SELECT') then
+    raise exception 'TEST FAILED: anon lacks SELECT on offres_disponibilite_produit';
+  end if;
+  if not has_table_privilege('authenticated', 'public.offres_disponibilite_produit', 'SELECT') then
+    raise exception 'TEST FAILED: authenticated lacks SELECT on offres_disponibilite_produit';
+  end if;
+  raise notice 'PASS: has_table_privilege confirms both anon and authenticated hold SELECT on offres_disponibilite_produit';
+end $$;
+
 do $$
 begin
   raise notice 'ALL SQL CHECKLIST TESTS PASSED';
