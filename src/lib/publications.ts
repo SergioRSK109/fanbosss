@@ -1,6 +1,7 @@
 import { resolveDisplayName } from "@/lib/profil";
 import { getSignedDownloadUrl } from "@/lib/r2";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { escapeIlike } from "@/lib/validation";
 
 // Mirrors publier_message()'s own rate limit (migration 0029) -- purely
 // descriptive (no UI currently reads it), never trusted as the real
@@ -65,18 +66,14 @@ export interface Publication {
   repostDe: Publication | null;
 }
 
-// Lot 5d (fullscreen viewer): the permalink URL for a given publication,
-// or null when its author has no pseudo -- the permalink page 404s in
-// that case (/[handle]/p/[id]'s own re-verification), same "no href
-// beats a link guaranteed to 404" reasoning already applied to
-// notificationHref() for publication_aimee. Pure, no data access, so
-// call sites (PublicationCard, its own "..." menu, the fullscreen
-// viewer's own content) never duplicate this string-building logic.
-export function publicationPermalinkHref(
-  publication: Pick<Publication, "id" | "auteur">,
-): string | null {
-  return publication.auteur.pseudo ? `/@${publication.auteur.pseudo}/p/${publication.id}` : null;
-}
+// publicationPermalinkHref() used to live here -- moved to
+// @/lib/publicationLinks (see that file's own comment) so a "use client"
+// consumer (PublicationTile, Phase C) can import it without pulling this
+// module's server-only createSupabaseServerClient import into the client
+// bundle. Every call site (including Server Components like
+// PublicationCard, which could safely have kept importing it from here)
+// now imports it from that dedicated module instead -- one canonical
+// import path for every consumer, not two that could silently drift.
 
 type PublicationVisibleRow = {
   id: string;
@@ -282,6 +279,103 @@ export async function getPublicationsAccueil(
 
   const publications = await hydratePublications(supabase, data ?? []);
   return { publications, total: count ?? 0 };
+}
+
+// Phase C: Explorer's own publications grid. 21 per batch (multiple of
+// 3) so the 3-column grid always ends a batch flush, never a partial
+// row.
+export const PUBLICATIONS_EXPLORABLES_PAGE_SIZE = 21;
+
+export interface ExplorerCursor {
+  createdAt: string;
+  id: string;
+}
+
+// Keyset (cursor) pagination on the composite (created_at desc, id desc)
+// sort key -- created_at alone can't guarantee no duplicate/skipped tile
+// across a page boundary if two rows ever share a timestamp, so the
+// cursor also carries the previous batch's last row id as a tiebreaker,
+// mirroring the exact order the query itself sorts by. Standard
+// Supabase/PostgREST composite-cursor shape: `or=(col.lt.V,and(col.eq.V,id.lt.ID))`.
+export function buildExplorerCursorFilter(cursor: ExplorerCursor): string {
+  return `created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`;
+}
+
+// Backs /explorer's publications grid (Phase C) -- publications_explorables
+// (migration 0038) already scopes this to verified créateurs/FanBoss
+// announcements, public-only, not masque_exploration; this function only
+// adds search + cursor pagination on top, never a second, parallel
+// visibility rule.
+//
+// Search reuses profils_recherchables (migration 0036) purely to
+// identify WHICH créateurs match the typed query (exact pseudo or fuzzy
+// keyword against bio/nom_affichage/social links) -- the exact same
+// population /explorer's old créateur-list search already used, never
+// duplicated a second way. This does NOT bypass publications_explorables'
+// own masque_exploration filter (see CLAUDE.md for why that's a
+// deliberate difference from profils_recherchables' own "search bypasses
+// the opt-out" rule): a query only narrows which créateurs are
+// considered, the grid's own population rule still applies on top of
+// that -- there is no "publications_recherchables" view, by design.
+export async function getPublicationsExplorables(
+  q: string,
+  cursor: ExplorerCursor | null,
+): Promise<{ publications: Publication[]; nextCursor: ExplorerCursor | null }> {
+  const supabase = await createSupabaseServerClient();
+
+  let auteurIds: string[] | null = null;
+  if (q) {
+    const escaped = escapeIlike(q);
+    const { data } = await supabase
+      .from("profils_recherchables")
+      .select("id")
+      .or(
+        [
+          `pseudo.ilike.%${escaped}%`,
+          `bio.ilike.%${escaped}%`,
+          `nom_affichage.ilike.%${escaped}%`,
+          `lien_tiktok.ilike.%${escaped}%`,
+          `lien_instagram.ilike.%${escaped}%`,
+          `lien_youtube.ilike.%${escaped}%`,
+          `lien_autre.ilike.%${escaped}%`,
+          `lien_reseau_social.ilike.%${escaped}%`,
+        ].join(","),
+      );
+    auteurIds = Array.from(new Set((data ?? []).map((row) => row.id)));
+
+    // No matching créateur at all -- skip the publications query entirely,
+    // same "an empty .in() is ambiguous, don't even attempt it" discipline
+    // /explorer's old type filter already followed.
+    if (auteurIds.length === 0) {
+      return { publications: [], nextCursor: null };
+    }
+  }
+
+  let query = supabase
+    .from("publications_explorables")
+    .select(PUBLICATIONS_SELECT)
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(PUBLICATIONS_EXPLORABLES_PAGE_SIZE);
+
+  if (auteurIds) {
+    query = query.in("auteur_id", auteurIds);
+  }
+  if (cursor) {
+    query = query.or(buildExplorerCursorFilter(cursor));
+  }
+
+  const { data } = await query;
+  const rows = (data ?? []) as PublicationVisibleRow[];
+  const publications = await hydratePublications(supabase, rows);
+
+  const last = rows[rows.length - 1];
+  const nextCursor =
+    rows.length === PUBLICATIONS_EXPLORABLES_PAGE_SIZE && last
+      ? { createdAt: last.created_at, id: last.id }
+      : null;
+
+  return { publications, nextCursor };
 }
 
 // Backs the new permalink page (/@pseudo/p/[id], Lot 5c) -- a single

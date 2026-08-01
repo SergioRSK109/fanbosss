@@ -5711,6 +5711,157 @@ begin
   raise notice 'PASS: reposting a video publication carries the video through via the embedded original, exactly like an image would';
 end $$;
 
+-- =======================================================================
+-- Phase C: publications_explorables (migration 0038) -- Explorer's
+-- publications grid. Same "verified créateurs + FanBoss announcements"
+-- population as publications_accueil, narrowed to visibilite='public'
+-- only (never a locked "soutiens" teaser in a discovery grid) and
+-- respecting masque_exploration (same opt-out profils_explorables
+-- already honors), with no mute filter at all (Explorer is a shared
+-- discovery surface, not one viewer's personal feed).
+--
+-- Fixture: créateur E (verified, not opted out -- posts a public post
+-- AND a soutiens-only post), créateur F (verified, masque_exploration
+-- = true -- posts a public post), créateur G (NOT verified, not admin
+-- -- posts a public post), admin H (est_admin, deliberately NOT itself
+-- createur_verifie -- posts, forced to annonce_fanboss/public).
+-- =======================================================================
+insert into users (id, createur_verifie, est_admin, masque_exploration) values
+  ('8c000001-0000-0000-0000-000000000001', true, false, false),
+  ('8c000002-0000-0000-0000-000000000002', true, false, true),
+  ('8c000003-0000-0000-0000-000000000003', false, false, false),
+  ('8c000004-0000-0000-0000-000000000004', false, true, false);
+
+select set_config('app.current_user_id', '8c000001-0000-0000-0000-000000000001', false);
+set role authenticated;
+select publier_message(p_contenu := 'explorer public post from E', p_visibilite := 'public');
+select publier_message(p_contenu := 'explorer soutiens post from E', p_visibilite := 'soutiens');
+reset role;
+
+select set_config('app.current_user_id', '8c000002-0000-0000-0000-000000000002', false);
+set role authenticated;
+select publier_message(p_contenu := 'explorer public post from F', p_visibilite := 'public');
+reset role;
+
+-- G is deliberately not verified and not admin -- publier_message()
+-- itself would reject this exact call ("not authorized"), so this row
+-- is inserted directly (superuser, bypassing the RPC entirely), same
+-- "prove the view's own filter, not an RPC's refusal to attempt it"
+-- shape as the publications_media_exclusif test above. The scenario this
+-- proves is real regardless: a créateur who later loses verified status
+-- (or an inconsistent row for any other reason) must not linger in the
+-- Explorer grid either way.
+insert into publications (auteur_id, type, contenu, visibilite) values
+  ('8c000003-0000-0000-0000-000000000003', 'createur', 'explorer public post from G', 'public');
+
+select set_config('app.current_user_id', '8c000004-0000-0000-0000-000000000004', false);
+set role authenticated;
+select publier_message(p_contenu := 'explorer FanBoss announcement from H');
+reset role;
+
+do $$
+begin
+  if not exists (
+    select 1 from publications_explorables
+    where auteur_id = '8c000001-0000-0000-0000-000000000001'
+      and contenu = 'explorer public post from E'
+  ) then
+    raise exception 'TEST FAILED: a verified créateur''s public post missing from publications_explorables';
+  end if;
+  raise notice 'PASS: publications_explorables includes a verified créateur''s public post';
+end $$;
+
+do $$
+begin
+  if exists (
+    select 1 from publications_explorables
+    where auteur_id = '8c000001-0000-0000-0000-000000000001'
+      and contenu = 'explorer soutiens post from E'
+  ) then
+    raise exception 'TEST FAILED: a soutiens-only post appeared in publications_explorables (never even as a teaser)';
+  end if;
+  raise notice 'PASS: publications_explorables excludes a soutiens-only post entirely -- no locked teaser in a discovery grid';
+end $$;
+
+do $$
+begin
+  if exists (
+    select 1 from publications_explorables where auteur_id = '8c000002-0000-0000-0000-000000000002'
+  ) then
+    raise exception 'TEST FAILED: a masque_exploration=true créateur''s public post appeared in publications_explorables';
+  end if;
+  raise notice 'PASS: publications_explorables respects masque_exploration, same opt-out as profils_explorables';
+end $$;
+
+do $$
+begin
+  if exists (
+    select 1 from publications_explorables where auteur_id = '8c000003-0000-0000-0000-000000000003'
+  ) then
+    raise exception 'TEST FAILED: a non-verified, non-admin créateur''s public post appeared in publications_explorables';
+  end if;
+  raise notice 'PASS: publications_explorables excludes a non-verified créateur''s posts, same population as publications_accueil';
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from publications_explorables
+    where auteur_id = '8c000004-0000-0000-0000-000000000004' and type = 'annonce_fanboss'
+  ) then
+    raise exception 'TEST FAILED: a FanBoss announcement missing from publications_explorables';
+  end if;
+  raise notice 'PASS: publications_explorables includes a FanBoss announcement regardless of the posting admin''s own createur_verifie';
+end $$;
+
+-- Reuses Lot 5c/Phase A's own fixture (créateur D, 7d000004, reposting
+-- créateur A's public video post) to prove a public repost by a verified
+-- créateur appears in publications_explorables too -- the population this
+-- grid's own repost badge (client-side) relies on.
+do $$
+declare
+  v_repost_id uuid;
+begin
+  select id into v_repost_id from publications
+    where repost_de_id = current_setting('app.tmp_video_public')::uuid
+      and auteur_id = '7d000004-0000-0000-0000-000000000004';
+
+  if not exists (select 1 from publications_explorables where id = v_repost_id) then
+    raise exception 'TEST FAILED: a public repost by a verified créateur missing from publications_explorables';
+  end if;
+  raise notice 'PASS: publications_explorables includes a public repost by a verified créateur';
+end $$;
+
+-- Grants: same public-view shape as profils_explorables/
+-- publications_visibles -- reachable by anon (no auth required to browse
+-- Explorer) and authenticated alike, no SECURITY DEFINER function
+-- involved at all (a plain view, so there's no EXECUTE grant to get
+-- wrong the way migration 0020 found for accept_transaction()).
+select set_config('app.current_user_id', '', false);
+set role anon;
+do $$
+begin
+  perform 1 from public.publications_explorables limit 1;
+  raise notice 'PASS: anon has SELECT on publications_explorables';
+end $$;
+reset role;
+
+do $$
+begin
+  if not has_table_privilege('anon', 'public.publications_explorables', 'SELECT') then
+    raise exception 'TEST FAILED: anon lacks SELECT on publications_explorables';
+  end if;
+  raise notice 'PASS: has_table_privilege confirms anon holds SELECT on publications_explorables';
+end $$;
+
+do $$
+begin
+  if not has_table_privilege('authenticated', 'public.publications_explorables', 'SELECT') then
+    raise exception 'TEST FAILED: authenticated lacks SELECT on publications_explorables';
+  end if;
+  raise notice 'PASS: has_table_privilege confirms authenticated holds SELECT on publications_explorables';
+end $$;
+
 do $$
 begin
   raise notice 'ALL SQL CHECKLIST TESTS PASSED';
