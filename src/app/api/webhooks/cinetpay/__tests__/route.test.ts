@@ -434,6 +434,7 @@ describe("POST /api/webhooks/cinetpay (produit physique, Phase 1)", () => {
         offreId: "offre-produit-1",
         quantite: 2,
         reservationId: "res-1",
+        adresseLivraison: "12 Avenue de la Paix, Kinshasa, RDC",
       }),
     });
     const token = computeCinetPayToken(notification, SECRET);
@@ -463,6 +464,7 @@ describe("POST /api/webhooks/cinetpay (produit physique, Phase 1)", () => {
         offreId: "offre-produit-1",
         quantite: 3,
         reservationId: "res-1",
+        adresseLivraison: "12 Avenue de la Paix, Kinshasa, RDC",
       }),
     });
     const token = computeCinetPayToken(notification, SECRET);
@@ -478,6 +480,7 @@ describe("POST /api/webhooks/cinetpay (produit physique, Phase 1)", () => {
     expect(inserts[0].table).toBe("transactions");
     expect(inserts[0].row.quantite).toBe(3);
     expect(inserts[0].row.montant).toBe(45);
+    expect(inserts[0].row.adresse_livraison).toBe("12 Avenue de la Paix, Kinshasa, RDC");
     // Delivery (statut=livree) is a separate, later step (livrer_produit(),
     // migration 0040) -- payment success alone never sets it.
     expect(inserts[0].row).not.toHaveProperty("statut");
@@ -533,6 +536,7 @@ describe("POST /api/webhooks/cinetpay (produit physique, Phase 1)", () => {
         offreId: "offre-produit-1",
         quantite: 1,
         reservationId: "res-1",
+        adresseLivraison: "12 Avenue de la Paix, Kinshasa, RDC",
       }),
     });
     const token = computeCinetPayToken(notification, SECRET);
@@ -561,6 +565,7 @@ describe("POST /api/webhooks/cinetpay (produit physique, Phase 1)", () => {
         offreId: "offre-produit-1",
         quantite: 1,
         reservationId: "res-1",
+        adresseLivraison: "12 Avenue de la Paix, Kinshasa, RDC",
       }),
     });
     const token = computeCinetPayToken(notification, SECRET);
@@ -568,4 +573,56 @@ describe("POST /api/webhooks/cinetpay (produit physique, Phase 1)", () => {
 
     await expect(POST(request)).rejects.toThrow(/failed to confirm stock reservation/);
   });
+
+  it("rejects a produit notification missing adresseLivraison in cpm_custom", async () => {
+    const { client, inserts } = buildSupabaseMock(produitOffre, null);
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(
+      client as unknown as ReturnType<typeof createSupabaseServiceRoleClient>,
+    );
+
+    const { POST } = await import("@/app/api/webhooks/cinetpay/route");
+    const notification = buildNotification({
+      cpm_amount: "15",
+      cpm_custom: JSON.stringify({
+        fanId: "fan-1",
+        offreId: "offre-produit-1",
+        quantite: 1,
+        reservationId: "res-1",
+      }),
+    });
+    const token = computeCinetPayToken(notification, SECRET);
+    const request = buildRequest(notification, token);
+
+    const response = await POST(request);
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error).toMatch(/adresseLivraison/);
+    expect(inserts).toHaveLength(0);
+  });
+
+  it.each(["don", "video"] as const)(
+    "never sets adresse_livraison for a non-produit type (%s)",
+    async (type) => {
+      const { client, inserts } = buildSupabaseMock(
+        { id: `offre-${type}-1`, type, createur_id: "createur-1", prix: type === "don" ? null : 5 },
+        null,
+      );
+      vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(
+        client as unknown as ReturnType<typeof createSupabaseServiceRoleClient>,
+      );
+
+      const { POST } = await import("@/app/api/webhooks/cinetpay/route");
+      const notification = buildNotification({
+        cpm_amount: type === "don" ? "5" : "5",
+        cpm_custom: JSON.stringify({ fanId: "fan-1", offreId: `offre-${type}-1` }),
+      });
+      const token = computeCinetPayToken(notification, SECRET);
+      const request = buildRequest(notification, token);
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+      expect(inserts[0].row).not.toHaveProperty("adresse_livraison");
+    },
+  );
 });

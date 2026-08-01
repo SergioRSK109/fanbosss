@@ -43,7 +43,13 @@ export async function POST(request: NextRequest) {
   // reservations_stock_select_own already scopes this select to
   // fan_id = auth.uid(), so there's no way to forge another fan's
   // reservation id here even before the explicit checks below).
+  //
+  // Phase 3: adresseLivraison is required alongside quantite/reservationId
+  // for this same type -- a physical shipment needs somewhere to go, and
+  // this is the only checkout path that ever collects it (there's no
+  // separate "add your address" step anywhere else in this flow).
   let quantite = 1;
+  let adresseLivraison: string | null = null;
   if (offre.type === "produit") {
     quantite = Number(body.quantite);
     if (!Number.isInteger(quantite) || quantite <= 0) {
@@ -54,6 +60,14 @@ export async function POST(request: NextRequest) {
     if (!reservationId) {
       return NextResponse.json(
         { error: "reservationId is required for a produit offer" },
+        { status: 400 },
+      );
+    }
+
+    adresseLivraison = String(body.adresseLivraison ?? "").trim();
+    if (!adresseLivraison) {
+      return NextResponse.json(
+        { error: "adresseLivraison is required for a produit offer" },
         { status: 400 },
       );
     }
@@ -100,6 +114,7 @@ export async function POST(request: NextRequest) {
   if (offre.type === "produit") {
     custom.quantite = quantite;
     custom.reservationId = String(body.reservationId);
+    custom.adresseLivraison = adresseLivraison;
   }
 
   const paymentUrl = await initiateCinetPayPayment({

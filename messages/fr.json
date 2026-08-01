@@ -205,8 +205,35 @@
     "verified": "Vérifié",
     "tabs": {
       "offres": "Offres",
-      "publications": "Publications"
+      "publications": "Publications",
+      "service": "Service",
+      "produit": "Produit"
+    },
+    "produits": {
+      "empty": "Aucun produit disponible.",
+      "quantiteLabel": "Quantité",
+      "commander": "Commander",
+      "reserveAvecEstimation": "Réservé temporairement par un autre fan -- une place pourrait se libérer vers {date}.",
+      "reserveSansEstimation": "Réservé temporairement par un autre fan.",
+      "epuise": "Épuisé"
     }
+  },
+  "PaiementProduit": {
+    "heading": "Confirmer ta commande",
+    "recapitulatif": "{libelle} · quantité {quantite} · {prix}$",
+    "reservationEnCours": "Réservation de ton stock en cours...",
+    "erreurGenerique": "Une erreur est survenue. Réessaie.",
+    "recommencer": "Recommencer",
+    "reserveAvecEstimation": "Réservé temporairement par un autre fan -- une place pourrait se libérer vers {date}.",
+    "reserveSansEstimation": "Réservé temporairement par un autre fan.",
+    "epuise": "Épuisé",
+    "tempsRestant": "Temps restant pour confirmer",
+    "adresseLabel": "Adresse de livraison",
+    "adressePlaceholder": "Nom, avenue/quartier, ville, pays...",
+    "reservationExpiree": "Ta réservation a expiré. Recommence pour réserver à nouveau.",
+    "confirmerPaiement": "Confirmer le paiement",
+    "confirmationEnCours": "Confirmation en cours...",
+    "confirmationImpossible": "Confirmation impossible. Réessaie."
   },
   "PaiementRetour": {
     "heading": "Merci !",
