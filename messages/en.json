@@ -548,7 +548,13 @@
       "empty": "No dispute pending.",
       "trancherCreateur": "Rule in favor of the créateur",
       "trancherFan": "Rule in favor of the fan",
-      "notePlaceholder": "Note (optional)"
+      "notePlaceholder": "Note (optional)",
+      "urgence": {
+        "normal": "Normal",
+        "attention": "Attention",
+        "retard": "Overdue"
+      },
+      "joursOuvrablesEcoules": "{jours, plural, one {# business day elapsed} other {# business days elapsed}}"
     },
     "retraitsHeading": "Withdrawal requests pending",
     "retraitsIntro": "A créateur's withdrawal requests against their wallet balance (minimum $25). “Mark handled” means a real manual transfer has already been made outside the app -- there is still no automated payout in this project.",

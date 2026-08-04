@@ -2287,6 +2287,152 @@ begin
   raise notice 'PASS: contester_livraison_fan() freezes the transaction (confirmation_fan=conteste, statut still livree) without attempting any refund';
 end $$;
 
+-- Migration 0042: contester_livraison_fan() must stamp conteste_at in the
+-- same UPDATE as confirmation_fan='conteste' -- this is the actual SLA
+-- clock for the 15-business-day commitment in the CGU (article 6.3), and
+-- must never be confused with created_at (the original payment date).
+do $$
+declare
+  v_conteste_at timestamptz;
+begin
+  select conteste_at into v_conteste_at
+    from transactions where id = 'c0f10002-0002-0002-0002-000000000002';
+
+  if v_conteste_at is null then
+    raise exception 'TEST FAILED: conteste_at was not set by contester_livraison_fan';
+  end if;
+  if v_conteste_at < now() - interval '1 minute' or v_conteste_at > now() then
+    raise exception 'TEST FAILED: conteste_at (%) was not stamped to the actual moment of contestation', v_conteste_at;
+  end if;
+  raise notice 'PASS: contester_livraison_fan() stamps conteste_at to the real dispute timestamp (migration 0042)';
+end $$;
+
+-- conteste_at must never change after the fact -- resoudre_litige()
+-- (migration 0026) only ever touches confirmation_fan/confirme_at
+-- (faveur_createur) or statut (faveur_fan); it has no reason to touch
+-- conteste_at, and never doing so is what keeps the SLA clock honest
+-- (an admin resolving a litige must never quietly reset how overdue it
+-- was). Uses its OWN dedicated transaction/admin fixture, deliberately
+-- NOT c0f10002 -- the Lot 2a-bis section below reuses that exact
+-- transaction for its own resoudre_litige(faveur_fan) test, and
+-- resolving it here first would leave it already-resolved by the time
+-- that later test runs.
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('c0f10042-0042-0042-0042-000000000042',
+   '22222222-2222-2222-2222-222222222222',
+   '11111111-1111-1111-1111-111111111111',
+   '77777777-7777-7777-7777-777777777777', 5, 'validee');
+
+select set_config('app.current_user_id', '11111111-1111-1111-1111-111111111111', false);
+select deliver_video('c0f10042-0042-0042-0042-000000000042', 'shoutouts/test-conteste-at.mp4');
+select set_config('app.current_user_id', '22222222-2222-2222-2222-222222222222', false);
+select contester_livraison_fan('c0f10042-0042-0042-0042-000000000042');
+select set_config('app.current_user_id', '', false);
+
+-- Stash conteste_at right after the dispute, before resolution, via
+-- set_config/current_setting -- the established technique this file
+-- already uses (see Lot 5b's report-id stashing) to carry a value across
+-- separate top-level statements.
+select set_config(
+  'app.test_conteste_at_before',
+  (select conteste_at::text from transactions where id = 'c0f10042-0042-0042-0042-000000000042'),
+  false
+);
+
+-- Dedicated admin for this one check only, same bootstrap mechanism as
+-- every other "dedicated admin for this section" fixture in this file.
+insert into users (id) values ('c0f1a042-0042-0042-0042-000000000042');
+update users set est_admin = true where id = 'c0f1a042-0042-0042-0042-000000000042';
+
+select set_config('app.current_user_id', 'c0f1a042-0042-0042-0042-000000000042', false);
+select resoudre_litige('c0f10042-0042-0042-0042-000000000042', 'faveur_createur', null);
+select set_config('app.current_user_id', '', false);
+
+do $$
+declare
+  v_conteste_at_before timestamptz := current_setting('app.test_conteste_at_before')::timestamptz;
+  v_conteste_at_after timestamptz;
+  v_resolu_at timestamptz;
+begin
+  select conteste_at, litige_resolu_at into v_conteste_at_after, v_resolu_at
+    from transactions where id = 'c0f10042-0042-0042-0042-000000000042';
+
+  if v_resolu_at is null then
+    raise exception 'TEST FAILED: resoudre_litige did not actually resolve the fixture litige -- this check would be vacuous';
+  end if;
+  if v_conteste_at_after is distinct from v_conteste_at_before then
+    raise exception 'TEST FAILED: resoudre_litige() changed conteste_at from % to %', v_conteste_at_before, v_conteste_at_after;
+  end if;
+  raise notice 'PASS: resoudre_litige() never modifies conteste_at (the SLA clock stays honest across resolution)';
+end $$;
+
+-- Sort order: the admin worklist (/admin's own query, LitigesManager.tsx)
+-- must surface the oldest-DISPUTED litige first, not the oldest
+-- transaction -- three fresh litiges, disputed in a deliberately
+-- scrambled order and then backdated (the only way to control
+-- conteste_at precisely, same "disable/backdate directly" pattern
+-- already used elsewhere in this file for the pseudo-cooldown/
+-- reservation-expiry tests -- there's no legitimate app path to set an
+-- arbitrary past dispute timestamp).
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('c0f1a100-0100-0100-0100-000000000100',
+   '22222222-2222-2222-2222-222222222222',
+   '11111111-1111-1111-1111-111111111111',
+   '77777777-7777-7777-7777-777777777777', 5, 'validee'),
+  ('c0f1a101-0101-0101-0101-000000000101',
+   '22222222-2222-2222-2222-222222222222',
+   '11111111-1111-1111-1111-111111111111',
+   '77777777-7777-7777-7777-777777777777', 5, 'validee'),
+  ('c0f1a102-0102-0102-0102-000000000102',
+   '22222222-2222-2222-2222-222222222222',
+   '11111111-1111-1111-1111-111111111111',
+   '77777777-7777-7777-7777-777777777777', 5, 'validee');
+
+select set_config('app.current_user_id', '11111111-1111-1111-1111-111111111111', false);
+select deliver_video('c0f1a100-0100-0100-0100-000000000100', 'shoutouts/sort-a.mp4');
+select deliver_video('c0f1a101-0101-0101-0101-000000000101', 'shoutouts/sort-b.mp4');
+select deliver_video('c0f1a102-0102-0102-0102-000000000102', 'shoutouts/sort-c.mp4');
+select set_config('app.current_user_id', '22222222-2222-2222-2222-222222222222', false);
+select contester_livraison_fan('c0f1a100-0100-0100-0100-000000000100');
+select contester_livraison_fan('c0f1a101-0101-0101-0101-000000000101');
+select contester_livraison_fan('c0f1a102-0102-0102-0102-000000000102');
+select set_config('app.current_user_id', '', false);
+
+-- Disable the trigger the same way the pseudo-cooldown test does, to
+-- backdate conteste_at directly -- a normal UPDATE can't otherwise move
+-- it into the past. Deliberately scrambled: the SECOND transaction
+-- inserted (101) gets the OLDEST dispute date, so an id/insertion-order-
+-- based sort would get this wrong while a real conteste_at sort gets it
+-- right.
+update transactions set conteste_at = now() - interval '5 days'
+  where id = 'c0f1a100-0100-0100-0100-000000000100';
+update transactions set conteste_at = now() - interval '20 days'
+  where id = 'c0f1a101-0101-0101-0101-000000000101';
+update transactions set conteste_at = now() - interval '12 days'
+  where id = 'c0f1a102-0102-0102-0102-000000000102';
+
+do $$
+declare
+  v_ids uuid[];
+begin
+  select array_agg(id order by conteste_at asc nulls last) into v_ids
+    from transactions
+    where id in (
+      'c0f1a100-0100-0100-0100-000000000100',
+      'c0f1a101-0101-0101-0101-000000000101',
+      'c0f1a102-0102-0102-0102-000000000102'
+    );
+
+  if v_ids != array[
+    'c0f1a101-0101-0101-0101-000000000101'::uuid,
+    'c0f1a102-0102-0102-0102-000000000102'::uuid,
+    'c0f1a100-0100-0100-0100-000000000100'::uuid
+  ] then
+    raise exception 'TEST FAILED: ordering by conteste_at asc did not return the oldest-disputed litige first, got %', v_ids;
+  end if;
+  raise notice 'PASS: ordering litiges by conteste_at asc (the admin worklist''s own query, migration 0042) surfaces the oldest-disputed litige first, regardless of insertion order';
+end $$;
+
 -- Auto-confirmation once the fan stays silent past deadline_confirmation
 -- -- and, as the boundary case, a still-open window is left untouched by
 -- the same sweep call.

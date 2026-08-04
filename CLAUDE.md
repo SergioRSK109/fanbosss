@@ -1551,6 +1551,138 @@ guard); `anon` has no `EXECUTE` at all (real Postgres permission check);
 none of the rejected attempts left any trace; and `authenticated` still
 holds `EXECUTE` positively confirmed.
 
+## Litige SLA tracking — 15-business-day CGU commitment (migration `0042`)
+
+The CGU (article 6.3) commits to resolving a litige within 15 business
+days. Nothing in this codebase tracked that clock before this migration
+— `transactions.created_at` (the original payment date) is the only
+timestamp `LitigesManager.tsx` had ever shown, and it reflects *when the
+fan paid*, not *when they disputed the delivery* — those can be days
+apart (the 72h fan-confirmation window, migration `0025`, plus however
+long the fan takes to actually click "Signaler un problème" within it).
+
+**Schema**: `transactions` gained `conteste_at timestamptz`, the mirror
+of `confirme_at` (migration `0025`) for the opposite branch — that
+column existed for a confirmed delivery from day one; the disputed
+branch simply never got its own equivalent until now. Nullable, same
+reasoning as every other "this event predates the column that tracks it"
+addition in this file (`province`/`ville`, `date_naissance`): a litige
+disputed before this migration shipped has no way to know when it
+actually happened and is left `null` rather than backfilled with a
+guess.
+
+**`contester_livraison_fan()`** (originally migration `0025`, already
+once redefined by migration `0034` to add notification wiring) is
+`create or replace`d again with an identical signature — leaves the
+existing `EXECUTE` grant (`authenticated` only) untouched, same
+precedent as every earlier redefinition of this function. The only
+change: `set confirmation_fan = 'conteste', conteste_at = now()` in the
+same `UPDATE`, so the two can never drift apart — there's no window
+where a transaction reads `confirmation_fan = 'conteste'` with a still-
+`null` `conteste_at`. The `creer_notification()` call migration `0034`
+added is preserved verbatim.
+
+**`src/lib/litiges.ts`** — pure helpers, same reasoning as
+`campagnes.ts`/`classementProgres.ts`: this project has no jsdom/
+testing-library, so `LitigesManager.tsx` itself can't be rendered in a
+test; the age/urgency computation is extracted here instead, so it's
+unit-testable directly and can never silently disagree with what the
+component renders.
+
+- `computeJoursOuvrablesEcoules(contesteAt, now?)` — counts business
+  days (Mon-Fri, no holiday calendar — the CGU commitment is stated in
+  plain "jours ouvrables", not against any specific holiday list)
+  strictly *after* the calendar day of contestation, through today,
+  inclusive. A dispute filed today is `0` elapsed business days
+  regardless of time of day. Computed in UTC, matching this project's
+  existing "`current_date` is evaluated in the database's UTC session"
+  convention (see the signup age-gate helpers) — a local-timezone
+  comparison could shift the count by a day right around midnight for an
+  admin near the boundary. **Nullable in, nullable out**, same shape as
+  `computeJoursRestants` (`campagnes.ts`): a `null` `contesteAt` (a
+  pre-migration litige) returns `null` rather than a fabricated number.
+  Confirmed no existing business-day calculation existed anywhere in
+  this project before writing this one — grepped for
+  `jour.*ouvrable`/`business.*day` first, per the brief's own
+  instruction to check.
+- `computeLitigeUrgence(joursOuvrablesEcoules)` — the three-way split per
+  the brief exactly: `normal` under 10 business days, `attention` between
+  10 and 15 inclusive, `retard` past 15 (the CGU's own commitment is no
+  longer held). Also nullable in, nullable out — a litige with no known
+  age gets no urgency verdict at all, not a default "normal" that would
+  misrepresent an unknown age as a known-good one.
+
+**`LitigesManager.tsx`** renders a colored pill badge per litige
+(`URGENCE_BADGE_CLASS`), reusing this project's existing token-based
+badge styling (`bg-*-500/15 text-*-600`, the exact shape already used for
+campagne status badges and publication pills) rather than introducing
+new colors: `normal` → `foreground-muted` (neutral), `attention` →
+`accent-500`/`accent-600` (this app's palette has no dedicated
+orange/warning token — `accent` is a genuine orange-coral, `#ff7a45`,
+already used elsewhere for exactly this "needs attention" register, e.g.
+`PublicationCard`'s own pills), `retard` → `danger-500`/`danger-600`.
+The badge is omitted entirely (not shown as "normal") when `contesteAt`
+is `null` — same reasoning as the pure functions returning `null` rather
+than a fabricated default. Badge text is `t("urgence.{state}")` (a plain
+"Normal"/"Attention"/"En retard" label) alongside a separately-
+translated `t("joursOuvrablesEcoules", {jours})` count, using a real ICU
+plural (`{jours, plural, one {...} other {...}}`) — this project's
+established pattern for count-with-plural strings, not a hand-rolled
+ternary.
+
+**Sort order**: `/admin/page.tsx`'s litige query changed from
+`.order("created_at", { ascending: true })` to `.order("conteste_at", {
+ascending: true, nullsFirst: false })` — the worklist's whole point is
+"which litige is most overdue against the CGU's own clock," which is a
+question about `conteste_at`, not about when the underlying transaction
+happened to be paid. `nullsFirst: false` pushes a pre-migration litige
+with an unknown dispute date to the end rather than (wrongly) treating
+an unknown age as the most urgent — Postgres's own `NULLS LAST` default
+for ascending order would do this anyway, but it's stated explicitly
+here since the correctness of this ordering is the actual point of this
+feature, not something to leave implicit.
+
+Tested end-to-end in `checklist_2_3.sql`: `contester_livraison_fan()`
+stamps `conteste_at` to the real dispute timestamp (checked against a
+tight ±1-minute window around `now()`, not just non-null);
+`resoudre_litige()` (migration `0026`) is confirmed to never modify
+`conteste_at` across a real resolution — captured via
+`set_config`/`current_setting`, the same technique this file already
+uses to carry a value across separate top-level statements (see Lot 5b's
+report-id stashing), since `conteste_at` has to be read *before*
+resolution to prove it's unchanged *after*; and the sort order itself is
+proven with three litiges disputed in a deliberately scrambled
+insertion order, then backdated directly (the only way to control
+`conteste_at` precisely — same "disable/backdate directly" pattern
+already used for the pseudo-cooldown and reservation-expiry tests),
+confirming `order by conteste_at asc nulls last` returns the oldest-
+disputed one first regardless of insertion or transaction-creation
+order. **Deliberately uses its own dedicated transaction fixture for the
+preservation test, not the existing `c0f10002` one** — that transaction
+is reused later in the same file by the pre-existing
+`resoudre_litige(faveur_fan)` test (migration `0026`'s own section), and
+resolving it a second time first would have left it already-resolved by
+the time that later test runs.
+
+`src/lib/__tests__/litiges.test.ts` (vitest) covers both functions
+directly: the null-in/null-out shape for each; a same-day dispute
+reading as `0`; excluding a weekend entirely (a Friday dispute read on
+the following Monday is `1` business day, not `3` calendar days, and
+`2` by the following Tuesday); a multi-weekend span verified by hand
+against a real calendar; and all three urgency thresholds individually,
+including both boundaries (`10` and `15` are both still `attention`,
+`16` is the first `retard`).
+
+Verified visually end-to-end (same throwaway mock-Supabase/Playwright
+technique used throughout this file, with a dedicated fixture of three
+disputed litiges backdated 3/20/30 calendar days — comfortably inside
+each of the three bands regardless of day-of-week alignment): all three
+badges (`Normal`/`Attention`/`En retard`) render with the correct label,
+count, and a distinct color each; the 30-days-ago litige (the most
+overdue) renders first in the list and the 3-days-ago one last, matching
+the real sort order; and all of the above holds in both `fr` (light/
+dark) and `/en/` (light/dark).
+
 ## Wallet ledger + withdrawal requests (Lot 2b, migration `0027`)
 
 A créateur's earnings so far live entirely inside `paiements`/
