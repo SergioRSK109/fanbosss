@@ -6039,6 +6039,112 @@ begin
 end $$;
 
 -- =======================================================================
+-- View counter on publications video, Explorer grid overlay (migration
+-- 0043): vues_count + incrementer_vue_publication().
+-- =======================================================================
+
+-- incrementer_vue_publication only ever increments a genuine video post
+-- -- reuses the real public video fixture from migration 0037's own
+-- section above (app.tmp_video_public) rather than a fresh insert, since
+-- that publication already has a real video_r2_key.
+do $$
+declare
+  v_before int;
+  v_after int;
+begin
+  select vues_count into v_before from publications
+    where id = current_setting('app.tmp_video_public')::uuid;
+
+  perform incrementer_vue_publication(current_setting('app.tmp_video_public')::uuid);
+
+  select vues_count into v_after from publications
+    where id = current_setting('app.tmp_video_public')::uuid;
+
+  if v_after != v_before + 1 then
+    raise exception 'TEST FAILED: incrementer_vue_publication did not increment a real video post (before=%, after=%)', v_before, v_after;
+  end if;
+  raise notice 'PASS: incrementer_vue_publication increments vues_count on a genuine video post';
+end $$;
+
+-- A text-only post (no video_r2_key at all) is silently left untouched
+-- -- the WHERE clause is the real guarantee, not an exception a caller
+-- would need to handle; this is what makes the route safely callable
+-- without knowing in advance whether a given id is a video post.
+insert into publications (id, auteur_id, type, contenu, visibilite) values
+  ('9c000001-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111', 'createur', 'text-only post, no video', 'public');
+
+do $$
+declare
+  v_vues int;
+begin
+  perform incrementer_vue_publication('9c000001-0000-0000-0000-000000000001');
+  select vues_count into v_vues from publications where id = '9c000001-0000-0000-0000-000000000001';
+  if v_vues != 0 then
+    raise exception 'TEST FAILED: incrementer_vue_publication incremented a text-only post (no video_r2_key) -- got vues_count=%', v_vues;
+  end if;
+  raise notice 'PASS: incrementer_vue_publication silently no-ops for a publication with no video_r2_key';
+end $$;
+
+-- vues_count flows through all three layered views (publications_visibles
+-- -> publications_accueil/publications_explorables), never re-derived,
+-- confirming the "select v.*" recreation in this same migration actually
+-- picked up the new trailing column in each downstream view.
+do $$
+declare
+  v_visibles int;
+  v_explorables int;
+begin
+  select vues_count into v_visibles from publications_visibles
+    where id = current_setting('app.tmp_video_public')::uuid;
+  select vues_count into v_explorables from publications_explorables
+    where id = current_setting('app.tmp_video_public')::uuid;
+
+  if v_visibles is null or v_explorables is null then
+    raise exception 'TEST FAILED: vues_count missing from publications_visibles (%) or publications_explorables (%)', v_visibles, v_explorables;
+  end if;
+  if v_visibles != v_explorables then
+    raise exception 'TEST FAILED: vues_count disagrees between publications_visibles (%) and publications_explorables (%)', v_visibles, v_explorables;
+  end if;
+  raise notice 'PASS: vues_count is exposed identically through publications_visibles and publications_explorables';
+end $$;
+
+-- Grants: anon has EXECUTE on incrementer_vue_publication (the one
+-- deliberate exception alongside peut_voir_publication_complete --  a
+-- view count is a public, non-sensitive metric, so a logged-out visitor
+-- scrolling Explorer must still be able to increment it), and both
+-- publications_visibles/publications_explorables still grant SELECT to
+-- anon while publications_accueil stays authenticated-only (migration
+-- 0033's revoke, re-verified here since this migration recreated all
+-- three views).
+select set_config('app.current_user_id', '', false);
+set role anon;
+do $$
+begin
+  perform incrementer_vue_publication(current_setting('app.tmp_video_public')::uuid);
+  raise notice 'PASS: anon has EXECUTE on incrementer_vue_publication';
+end $$;
+reset role;
+
+do $$
+begin
+  if not has_function_privilege('anon', 'incrementer_vue_publication(uuid)', 'EXECUTE') then
+    raise exception 'TEST FAILED: anon lacks EXECUTE on incrementer_vue_publication';
+  end if;
+  if not has_function_privilege('authenticated', 'incrementer_vue_publication(uuid)', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lacks EXECUTE on incrementer_vue_publication';
+  end if;
+  raise notice 'PASS: has_function_privilege confirms both anon and authenticated hold EXECUTE on incrementer_vue_publication';
+end $$;
+
+do $$
+begin
+  if has_table_privilege('anon', 'public.publications_accueil', 'SELECT') then
+    raise exception 'TEST FAILED: anon regained SELECT on publications_accueil -- migration 0043 recreated this view and must not have re-widened the 0033 revoke';
+  end if;
+  raise notice 'PASS: publications_accueil still has no anon SELECT after being recreated by migration 0043 (the 0033 revoke was not silently undone)';
+end $$;
+
+-- =======================================================================
 -- Phase 1 of the "produit physique" offer type (migration 0039): schema,
 -- atomic stock reservation, and the offres_disponibilite_produit view.
 -- True concurrent-race coverage (the single most critical point of this

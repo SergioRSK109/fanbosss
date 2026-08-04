@@ -32,7 +32,7 @@ import {
 } from "@/lib/publications";
 
 const PUBLICATIONS_SELECT =
-  "id, auteur_id, type, contenu, image_r2_key, video_r2_key, visibilite, created_at, contenu_complet, repost_de_id, autorise_repost, likes_count, partages_count, reposts_count, viewer_a_aime, viewer_a_partage, viewer_a_reposte";
+  "id, auteur_id, type, contenu, image_r2_key, video_r2_key, visibilite, created_at, contenu_complet, repost_de_id, autorise_repost, likes_count, partages_count, reposts_count, viewer_a_aime, viewer_a_partage, viewer_a_reposte, vues_count";
 
 type Call = { table: string; method: string; args: unknown[] };
 

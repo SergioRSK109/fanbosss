@@ -3558,6 +3558,183 @@ video-click-zone split.
   this is the corresponding empirical, browser-level proof that the
   application code actually reads from the right table for a search.
 
+## Publications video view counter — Explorer grid overlay (migration `0043`)
+
+A raw, public view counter on video publications, shown as an
+Instagram-Reels-style overlay (eye icon + abbreviated count, bottom-left)
+on Explorer grid tiles — the one surface the brief asked for, per its own
+reference screenshot. Same "raw counter, no per-visitor dedup table"
+reasoning already used for likes/partages (migration `0031`): a view
+isn't a meaningful per-account action worth a uniqueness guarantee, just
+a rough public metric, incremented on every counted view with no
+deduplication.
+
+**Schema**: `publications` gained `vues_count integer not null default 0
+check (vues_count >= 0)`. **`incrementer_vue_publication(p_publication_id)`**
+is a `SECURITY DEFINER` RPC with a real, deliberate difference from every
+other write RPC since migration `0020`: it's granted to **both**
+`authenticated` and `anon` — the one other deliberate exception alongside
+`peut_voir_publication_complete()` (migration `0029`) to "never grant a
+`SECURITY DEFINER` function to `anon`". Safe for the same class of reason
+that one is: a view count is never sensitive, and a logged-out visitor
+scrolling Explorer must still be able to increment it. The `where ... and
+video_r2_key is not null` clause is the *real* guarantee that a view only
+ever counts against an actual video post — not a defensive check in the
+calling route, which never even inspects the target's type before
+calling this; a request against a text/image post, or an unknown id,
+both just silently match zero rows and return normally. **No auth check
+in `/api/publications/[id]/vue` either**, unlike every sibling
+`/api/publications/[id]/*` route in this file (`like`/`repost`/`partager`/
+`signaler`) — this is the one route in that family that's genuinely
+reachable by a logged-out caller, matching the RPC's own grant.
+
+**`vues_count` gets no teaser treatment at all** in `publications_visibles`
+— unlike `contenu`/`image_r2_key`/`video_r2_key`, it's exposed
+unconditionally regardless of `peut_voir_publication_complete()`, same
+reasoning as `likes_count`/`partages_count`/`reposts_count` immediately
+above it in that view's own `SELECT` list: a view count was never part of
+the "locked teaser" contract to begin with, nothing about this feature
+changes what a stranger can see, only what number appears under it.
+Appended as a **trailing** column (`create or replace view` can add new
+trailing columns but cannot reorder/insert among existing ones, see the
+Phase A video-support section above) — which is also why
+`publications_accueil` and `publications_explorables` both needed
+recreating in this same migration even though *their own* SQL text is
+byte-identical to before (`select v.*`): a view's `*` is expanded into an
+explicit column list at `CREATE` time, not re-resolved when the
+underlying view later gains a column, the exact trap this file has
+already documented (and once actually caught a grant regression from,
+migration `0037`) more than once. **Re-verified here too**: recreating
+`publications_accueil` did *not* silently re-grant `anon` (the migration
+`0033` revoke stays intact) and `publications_explorables`/
+`publications_visibles` both still grant `anon` correctly — checked
+directly with `has_table_privilege`, not assumed from the SQL text alone.
+
+**`src/lib/formatCount.ts`** — `formatVuesCount(count, locale)`, its own
+tiny module with **no server-only imports**, same reasoning as
+`publicationLinks.ts` (see that file's own comment, and the Phase C
+section above for the exact Turbopack build error this pattern exists to
+avoid): `PublicationTile.tsx` is a `"use client"` component, and
+anything it imports from `publications.ts` (which pulls in
+`next/headers` via `createSupabaseServerClient`) would drag that whole
+module graph into the client bundle. Abbreviates to `K`/`M` past 1,000/
+1,000,000, **truncating toward the real count rather than rounding up
+past it** (999,999 views reads "999.9K", never a misleading "1.0M" it
+hasn't reached) — the same convention Instagram/TikTok already use for
+this exact abbreviation. Locale-aware via `Intl.NumberFormat` for the
+decimal separator only (comma in French, period in English) — the
+truncated value is always under 1000 either way, so there's never a
+thousands-grouping symbol to get right or wrong.
+
+**`src/lib/videoViewTracking.ts`** — pure helpers behind the shared
+counting hook, same DOM-free-vs-DOM-touching split already established
+for `imageCrop.ts`/`videoDuration.ts` (this project has no jsdom, so the
+hook itself can't be rendered in a test):
+`computeFurthestFraction(previous, currentTime, duration)` is always a
+`max(previous, currentTime/duration)`, never a plain reassignment — this
+is what makes seeking backward never "un-count" progress already made,
+per the brief's own explicit requirement — and safely no-ops (returns
+`previous` unchanged) for a zero/negative/non-finite duration (metadata
+not loaded yet). `shouldCountView(furthestFraction)` is the flat `>= 0.3`
+threshold check, `VIEW_COUNT_THRESHOLD_FRACTION` exported as the single
+source of truth for that number rather than a magic literal duplicated
+anywhere.
+
+**`src/lib/useVideoViewCounter.ts`** — the shared hook itself, per the
+brief's explicit "one single definition, reused by both surfaces"
+instruction: listens to the video's own `timeupdate` event, feeds
+`currentTime`/`duration` through the pure functions above on every tick,
+and the instant `shouldCountView()` turns true, removes its own listener
+(not just a guard flag — genuinely stops listening for the rest of this
+mount's viewing session) and fires `POST /api/publications/[id]/vue`,
+fire-and-forget (a failed increment is one uncounted view, never a
+reason to disrupt playback — same "a missed metric isn't worth
+surfacing an error" posture as the webhook's own best-effort notification
+call). Reused by exactly two call sites, per the brief:
+- **`PublicationTile.tsx`** (Explorer grid, autoplay loop) — counted
+  against the **effective** (original) publication's id, exactly the
+  same `repostDe ?? self` resolution this component already uses for
+  its media/permalink: a repost row has no `video_r2_key` of its own
+  (`publications_media_exclusif`), so counting against the repost's own
+  id would silently no-op via the RPC's own guard.
+- **`PublicationVideoPlayer.tsx`** (new) — extracted out of
+  `PublicationCard.tsx`'s own `PublicationBody`, which is a Server
+  Component and can't hold a ref or call a hook. Visually and
+  behaviorally identical to the plain `<video controls muted playsInline>`
+  Phase A originally shipped — this lot only adds the counting ref/effect
+  underneath it. This is what backs "la visionneuse plein écran" from the
+  brief: the Lot 5d fullscreen viewer (`PublicationViewerOverlay`) renders
+  `PublicationPermalinkView` → `PublicationCard`, so the exact same player
+  (and therefore the exact same counting hook) is what's on screen
+  whether reached via a direct permalink page load or the intercepted-
+  route modal — there was never a second, separate "viewer" video element
+  to wire up.
+
+**Badge UI** (`PublicationTile.tsx` only, per the brief — the in-feed/
+permalink player never shows a view count, matching the reference
+screenshot's own scope, which only overlays counts on grid tiles): a
+small dark pill (`bg-black/55`, matching the existing repost badge's own
+chip style, positioned bottom-left rather than that badge's top-right)
+holding a new **`EyeIcon`** (`src/components/ui/icons.tsx` — hand-made
+inline SVG, `currentColor`, same discipline as every other icon in that
+file; no active/inactive state, since a view count is purely informational,
+never a per-viewer toggle) followed by `formatVuesCount(effective.vuesCount,
+locale)`. Rendered **only** inside the `effective.videoUrl` branch — an
+image or text-only tile shows no badge at all, never a "0" (there's
+nothing to count for those types, and `vues_count` stays `0` forever for
+them by DB-level construction anyway, not just by this component
+choosing not to render it).
+
+### Testing
+
+Vitest: `src/lib/__tests__/formatCount.test.ts` — the raw-number/K/M
+boundaries, the truncate-not-round-up guarantee at `999,999`, the
+whole-number case dropping its decimal (`"5K"` not `"5.0K"`), both
+locales' decimal separators, and a negative/`NaN`/`Infinity` count
+treated as `0`. `src/lib/__tests__/videoViewTracking.test.ts` —
+`computeFurthestFraction` never regresses on a seek backward (the
+brief's own explicit test requirement), the zero/negative/non-finite
+duration no-op, and `shouldCountView`'s exact boundary (`false` just
+under `0.3`, `true` exactly at it and beyond). `route.test.ts`
+(`/api/publications/[id]/vue`) — succeeds identically for both a
+logged-out and an authenticated caller (the one route in this family
+that's genuinely reachable without a session), and surfaces a 400 when
+the RPC itself rejects. `publications.test.ts` — `PUBLICATIONS_SELECT`
+updated to include `vues_count`, confirming the query shape actually
+asks for it.
+
+`checklist_2_3.sql`: `incrementer_vue_publication()` increments a real
+video post's `vues_count` (reusing migration `0037`'s own public-video
+fixture) and silently no-ops for a text-only post with no `video_r2_key`
+at all, leaving `vues_count` at `0`; `vues_count` is exposed identically
+through `publications_visibles` and `publications_explorables` (proving
+the `select v.*` recreation actually picked up the new trailing column
+in the downstream view, not just the one it was directly added to); the
+full grant-audit pattern holds (`anon` **does** have `EXECUTE` on
+`incrementer_vue_publication` — the deliberate exception, confirmed via
+both a live call and `has_function_privilege` — and `authenticated`
+still does too); and `publications_accueil` is re-confirmed to have no
+`anon` `SELECT` after being recreated by this migration, guarding
+against exactly the kind of silent grant-widening regression migration
+`0037` already caught once for this same view.
+
+Verified visually end-to-end (same throwaway mock-Supabase/Playwright
+technique used throughout this file — a small Node mock of the
+REST surface seeded with two video publications, `92,600` and
+`19,800,000` views, plus one text-only post with no video, a real
+`next dev`, and a scripted Chromium session browsing `/explorer` with no
+session at all, matching the RPC's own anon-reachability): both video
+tiles show the correct abbreviated count with the correct locale decimal
+separator (`92,6K`/`19,8M` in `fr`, `92.6K`/`19.8M` in `/en/`); the
+text-only tile shows no eye icon and no badge at all; and the badge's
+own eye icon sits geometrically in the bottom-left quadrant of its tile
+(confirmed via real bounding-box coordinates, not just visual
+inspection — `PublicationContentLink`'s wrapping `<a>` renders with
+`display: contents` and has no box of its own, so the tile's own
+aspect-ratio wrapper `div` is what the icon's position was actually
+checked against). All of the above holds in both `fr` (light/dark) and
+`/en/` (light/dark).
+
 ## Admin dashboard reorganized into 4 top tabs (no migration)
 
 `/admin` had grown into 8 stacked sections with no grouping, all always
