@@ -313,4 +313,34 @@ describe("publierMessageSchema", () => {
       }).success,
     ).toBe(false);
   });
+
+  // Migration 0044 -- a créateur must be able to publish a photo or video
+  // with no caption at all. The pre-existing tests above always paired
+  // image/video with real contenu and never exercised this; these are
+  // the actual regression cases for that bug.
+  it("accepts an image-only publication with contenu omitted", () => {
+    expect(
+      publierMessageSchema.safeParse({ image_r2_key: "publications/u1/a.jpg" }).success,
+    ).toBe(true);
+  });
+
+  it("accepts an image-only publication with contenu explicitly null", () => {
+    expect(
+      publierMessageSchema.safeParse({ contenu: null, image_r2_key: "publications/u1/a.jpg" })
+        .success,
+    ).toBe(true);
+  });
+
+  it("accepts a video-only publication with contenu omitted", () => {
+    expect(
+      publierMessageSchema.safeParse({ video_r2_key: "publications/u1/a.mp4" }).success,
+    ).toBe(true);
+  });
+
+  // The real case that must still be blocked -- no text, no image, no
+  // video at all.
+  it("rejects a publication with neither contenu nor any media", () => {
+    expect(publierMessageSchema.safeParse({}).success).toBe(false);
+    expect(publierMessageSchema.safeParse({ contenu: null }).success).toBe(false);
+  });
 });

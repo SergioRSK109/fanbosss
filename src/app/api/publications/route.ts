@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
   }
 
   const { data, error } = await supabase.rpc("publier_message", {
-    p_contenu: parsed.data.contenu,
+    p_contenu: parsed.data.contenu ?? null,
     p_image_r2_key: parsed.data.image_r2_key ?? null,
     p_visibilite: parsed.data.visibilite ?? "public",
     p_autorise_repost: parsed.data.autorise_repost ?? "tous",

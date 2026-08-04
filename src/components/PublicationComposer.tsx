@@ -33,8 +33,11 @@ export function PublicationComposer() {
   const [fileInputKey, setFileInputKey] = useState(0);
 
   const trimmed = contenu.trim();
+  // A publication needs text OR a selected file, never text specifically
+  // (migration 0044) -- mirrors publications_contenu_coherent's own "at
+  // least one of contenu/image/video" rule.
   const canSubmit =
-    trimmed.length > 0 &&
+    (trimmed.length > 0 || file !== null) &&
     trimmed.length <= PUBLICATION_CONTENU_MAX_LENGTH &&
     status !== "saving" &&
     status !== "checking";
@@ -115,7 +118,7 @@ export function PublicationComposer() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          contenu: trimmed,
+          contenu: trimmed || null,
           image_r2_key: imageR2Key,
           video_r2_key: videoR2Key,
           visibilite,

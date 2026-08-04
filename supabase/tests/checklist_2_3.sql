@@ -6738,6 +6738,150 @@ begin
   raise notice 'PASS: has_function_privilege confirms authenticated holds EXECUTE on livrer_produit';
 end $$;
 
+-- =======================================================================
+-- Publications: image/video-only publications (migration 0044). Real,
+-- confirmed bug: a créateur could never publish a photo or video with no
+-- caption at all -- publications_contenu_coherent (migration 0031)
+-- unconditionally required 1-2000 chars of contenu for any non-repost
+-- row, and publier_message() enforced the identical all-or-nothing rule
+-- on top. New rule: a plain (non-repost) publication needs at least one
+-- of contenu/image_r2_key/video_r2_key, not contenu specifically.
+--
+-- Fixture: créateur L (verified).
+-- =======================================================================
+insert into users (id, createur_verifie, est_admin) values
+  ('b0440001-0000-0000-0000-000000000001', true, false);
+
+-- Raw constraint level first, same "prove the constraint itself, not
+-- just an RPC's refusal to attempt it" discipline as
+-- publications_media_exclusif above: an image-only and a video-only row
+-- (superuser, bypassing publier_message() entirely) must now succeed,
+-- and a row with neither text nor media must still be rejected.
+do $$
+begin
+  insert into publications (auteur_id, type, contenu, image_r2_key, visibilite)
+    values ('b0440001-0000-0000-0000-000000000001', 'createur', null,
+            'publications/b0440001/image-only.jpg', 'public');
+  raise notice 'PASS: publications_contenu_coherent accepts a raw image-only row (contenu null)';
+exception when check_violation then
+  raise exception 'TEST FAILED: publications_contenu_coherent rejected a valid image-only row';
+end $$;
+
+do $$
+begin
+  insert into publications (auteur_id, type, contenu, video_r2_key, visibilite)
+    values ('b0440001-0000-0000-0000-000000000001', 'createur', null,
+            'publications/b0440001/video-only.mp4', 'public');
+  raise notice 'PASS: publications_contenu_coherent accepts a raw video-only row (contenu null)';
+exception when check_violation then
+  raise exception 'TEST FAILED: publications_contenu_coherent rejected a valid video-only row';
+end $$;
+
+do $$
+begin
+  begin
+    insert into publications (auteur_id, type, contenu, visibilite)
+      values ('b0440001-0000-0000-0000-000000000001', 'createur', null, 'public');
+    raise exception 'TEST FAILED: publications_contenu_coherent accepted a row with no contenu and no media at all';
+  exception when check_violation then
+    raise notice 'PASS: publications_contenu_coherent still rejects a plain post with neither text nor media';
+  end;
+end $$;
+
+-- Repost shape is untouched: repost_de_id set + contenu null still
+-- required, exactly as migration 0031 defined it -- a repost row can
+-- never carry contenu even though a plain post's own rule just loosened.
+do $$
+declare
+  v_original_id uuid;
+begin
+  select id into v_original_id from publications
+    where auteur_id = 'b0440001-0000-0000-0000-000000000001'
+      and image_r2_key = 'publications/b0440001/image-only.jpg';
+
+  begin
+    insert into publications (auteur_id, type, contenu, repost_de_id, visibilite)
+      values ('b0440001-0000-0000-0000-000000000001', 'createur', 'not allowed on a repost',
+              v_original_id, 'public');
+    raise exception 'TEST FAILED: publications_contenu_coherent accepted a repost row with non-null contenu';
+  exception when check_violation then
+    raise notice 'PASS: publications_contenu_coherent still requires contenu is null for a repost row, unchanged';
+  end;
+end $$;
+
+-- publier_message() itself: image-only and video-only calls (p_contenu
+-- omitted entirely, relying on its new default null) must now succeed,
+-- and a call with no contenu/image/video at all must still be rejected
+-- with a clear error, never silently.
+select set_config('app.current_user_id', 'b0440001-0000-0000-0000-000000000001', false);
+set role authenticated;
+select publier_message(p_image_r2_key := 'publications/b0440001/rpc-image-only.jpg');
+select publier_message(p_video_r2_key := 'publications/b0440001/rpc-video-only.mp4');
+reset role;
+
+do $$
+declare
+  v_id uuid;
+  v_contenu text;
+begin
+  select id, contenu into v_id, v_contenu from publications
+    where image_r2_key = 'publications/b0440001/rpc-image-only.jpg';
+  if v_id is null then
+    raise exception 'TEST FAILED: publier_message() did not create the image-only publication';
+  end if;
+  if v_contenu is not null then
+    raise exception 'TEST FAILED: expected a null contenu on an image-only publication, got %', v_contenu;
+  end if;
+  raise notice 'PASS: publier_message() accepts an image-only publication with contenu omitted';
+end $$;
+
+do $$
+declare
+  v_id uuid;
+begin
+  select id into v_id from publications
+    where video_r2_key = 'publications/b0440001/rpc-video-only.mp4';
+  if v_id is null then
+    raise exception 'TEST FAILED: publier_message() did not create the video-only publication';
+  end if;
+  raise notice 'PASS: publier_message() accepts a video-only publication with contenu omitted';
+end $$;
+
+select set_config('app.current_user_id', 'b0440001-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform publier_message();
+    raise exception 'TEST FAILED: publier_message() accepted a call with no contenu, image, or video at all';
+  exception when others then
+    if sqlerrm not like '%contenu, image_r2_key ou video_r2_key requis%' then
+      raise exception 'TEST FAILED: unexpected error for a fully empty publier_message() call: %', sqlerrm;
+    end if;
+    raise notice 'PASS: publier_message() still rejects a call with no text and no media at all';
+  end;
+end $$;
+reset role;
+
+-- A whitespace-only p_contenu with no media is still exactly the empty
+-- case -- normalized to null before the presence check, not treated as
+-- "has text".
+select set_config('app.current_user_id', 'b0440001-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform publier_message(p_contenu := '   ');
+    raise exception 'TEST FAILED: publier_message() accepted whitespace-only contenu with no media';
+  exception when others then
+    if sqlerrm not like '%contenu, image_r2_key ou video_r2_key requis%' then
+      raise exception 'TEST FAILED: unexpected error for a whitespace-only publier_message() call: %', sqlerrm;
+    end if;
+    raise notice 'PASS: publier_message() treats whitespace-only contenu as empty, still rejected without media';
+  end;
+end $$;
+reset role;
+
 do $$
 begin
   raise notice 'ALL SQL CHECKLIST TESTS PASSED';
