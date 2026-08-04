@@ -1,10 +1,13 @@
 "use client";
 
+import { useLocale } from "next-intl";
 import { useEffect, useRef } from "react";
 import { PublicationContentLink } from "@/components/PublicationContentLink";
-import { RepostIcon } from "@/components/ui/icons";
+import { EyeIcon, RepostIcon } from "@/components/ui/icons";
+import { formatVuesCount } from "@/lib/formatCount";
 import { publicationPermalinkHref } from "@/lib/publicationLinks";
 import type { Publication } from "@/lib/publications";
+import { useVideoViewCounter } from "@/lib/useVideoViewCounter";
 
 // Matches the spec's "~50% visibility" autoplay trigger -- a tile only
 // starts playing once at least half of it is actually on screen, and
@@ -32,8 +35,15 @@ export function PublicationTile({ publication }: { publication: Publication }) {
   const effective = publication.repostDe ?? publication;
   const href = publicationPermalinkHref(effective);
   const isRepost = publication.repostDe !== null;
+  const locale = useLocale();
 
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  // Counted against the EFFECTIVE (original) publication's own id -- a
+  // repost row has no video_r2_key of its own (publications_media_exclusif),
+  // so incrementer_vue_publication() would silently no-op if given the
+  // repost's id instead; the original is genuinely what's playing here.
+  useVideoViewCounter(videoRef, effective.id);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -73,15 +83,29 @@ export function PublicationTile({ publication }: { publication: Publication }) {
         )}
 
         {effective.videoUrl ? (
-          <video
-            ref={videoRef}
-            src={effective.videoUrl}
-            muted
-            loop
-            playsInline
-            preload="metadata"
-            className="h-full w-full object-cover"
-          />
+          <>
+            <video
+              ref={videoRef}
+              src={effective.videoUrl}
+              muted
+              loop
+              playsInline
+              preload="metadata"
+              className="h-full w-full object-cover"
+            />
+            {/* View-count overlay -- video tiles only, per the brief;
+                an image/text tile has no view count to show at all
+                (vuesCount stays 0 forever for those, enforced at the DB
+                level by incrementer_vue_publication's own WHERE clause,
+                not just by this component choosing not to render it). */}
+            <div
+              aria-hidden
+              className="absolute bottom-1.5 left-1.5 z-10 flex items-center gap-1 rounded-full bg-black/55 px-2 py-1 text-xs font-semibold text-white"
+            >
+              <EyeIcon className="h-3.5 w-3.5" />
+              {formatVuesCount(effective.vuesCount, locale)}
+            </div>
+          </>
         ) : effective.imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={effective.imageUrl} alt="" className="h-full w-full object-cover" />

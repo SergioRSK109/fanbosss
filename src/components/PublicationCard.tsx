@@ -2,6 +2,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { PublicationActions } from "@/components/PublicationActions";
 import { PublicationContentLink } from "@/components/PublicationContentLink";
 import { PublicationTeaser } from "@/components/PublicationTeaser";
+import { PublicationVideoPlayer } from "@/components/PublicationVideoPlayer";
 import { RepostIcon } from "@/components/ui/icons";
 import { Link } from "@/i18n/navigation";
 import { publicationPermalinkHref } from "@/lib/publicationLinks";
@@ -66,11 +67,9 @@ function PublicationBody({
           fullscreen viewer, no Explorer integration yet -- those are
           phases B/C, once this is verified. */}
       {publication.videoUrl && (
-        <video
-          src={publication.videoUrl}
-          controls
-          muted
-          playsInline
+        <PublicationVideoPlayer
+          videoUrl={publication.videoUrl}
+          publicationId={publication.id}
           className="max-h-96 w-full rounded-2xl bg-black object-contain"
         />
       )}

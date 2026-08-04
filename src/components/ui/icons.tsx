@@ -113,3 +113,25 @@ export function MenuIcon({ className }: { className?: string }) {
     </svg>
   );
 }
+
+// Migration 0043: the Explorer grid's view-count overlay. Classic
+// almond-eye outline + a solid pupil -- purely informational (a raw
+// public metric, not a per-viewer toggle), so unlike Heart/Repost/Share
+// above it has no active/inactive state at all.
+export function EyeIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" />
+      <circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}

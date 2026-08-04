@@ -51,6 +51,14 @@ export interface Publication {
   // this server-side regardless, same "never trust the client alone"
   // discipline as everywhere else in this project.
   viewerARepost: boolean;
+  // Migration 0043 -- a raw view counter, never a per-viewer flag (there
+  // is no "viewer has viewed" the way there's a viewer_a_aime -- see
+  // that migration for why: no per-visitor dedup table, same reasoning
+  // as likes/partages before it). Meaningful only when videoUrl is set;
+  // stays 0 forever for an image/text post (incrementer_vue_publication's
+  // own WHERE clause guarantees this at the DB level, not just by
+  // convention).
+  vuesCount: number;
   // Set only when this row is itself a repost (repost_de_id not null on
   // the underlying table) -- the referenced original, teaser-shaped for
   // the CURRENT viewer exactly like any other publication (a
@@ -93,6 +101,7 @@ type PublicationVisibleRow = {
   viewer_a_aime: boolean;
   viewer_a_partage: boolean;
   viewer_a_reposte: boolean;
+  vues_count: number;
 };
 
 const MEDIA_SIGNED_URL_EXPIRY_SECONDS = 60 * 60; // 1h -- a soutiens-only
@@ -233,6 +242,7 @@ async function hydratePublications(
         viewerAAime: row.viewer_a_aime,
         viewerAPartage: row.viewer_a_partage,
         viewerARepost: row.viewer_a_reposte,
+        vuesCount: row.vues_count,
         repostDe: row.repost_de_id ? (originalsById.get(row.repost_de_id) ?? null) : null,
       };
     }),
@@ -240,7 +250,7 @@ async function hydratePublications(
 }
 
 const PUBLICATIONS_SELECT =
-  "id, auteur_id, type, contenu, image_r2_key, video_r2_key, visibilite, created_at, contenu_complet, repost_de_id, autorise_repost, likes_count, partages_count, reposts_count, viewer_a_aime, viewer_a_partage, viewer_a_reposte";
+  "id, auteur_id, type, contenu, image_r2_key, video_r2_key, visibilite, created_at, contenu_complet, repost_de_id, autorise_repost, likes_count, partages_count, reposts_count, viewer_a_aime, viewer_a_partage, viewer_a_reposte, vues_count";
 
 // Backs the /[handle] and /createur/[id] profile pages' "Publications"
 // tab -- every one of this créateur's own publications, teaser-shaped per
