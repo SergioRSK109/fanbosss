@@ -89,13 +89,20 @@ export default async function AdminPage() {
     // admin already resolved (migration 0026) -- without it, a resolved
     // dispute would stay listed forever, since resolving one never
     // changes confirmation_fan away from 'conteste' for the faveur_fan
-    // branch (see resoudre_litige()).
+    // branch (see resoudre_litige()). Ordered by conteste_at (migration
+    // 0042), the actual dispute date, not created_at (the payment date)
+    // -- the SLA in the CGU (article 6.3) runs from the dispute, so the
+    // longest-*disputed* litige is the one that needs to surface first,
+    // not the one whose underlying transaction is oldest. `nullsFirst:
+    // false` pushes a pre-migration litige with no known conteste_at to
+    // the end rather than (wrongly) treating an unknown age as the most
+    // urgent.
     serviceSupabase
       .from("transactions")
-      .select("id, montant, created_at, createur_id, fan_id, offres(type)")
+      .select("id, montant, created_at, conteste_at, createur_id, fan_id, offres(type)")
       .eq("confirmation_fan", "conteste")
       .is("litige_resolu_at", null)
-      .order("created_at", { ascending: true }),
+      .order("conteste_at", { ascending: true, nullsFirst: false }),
     // Lot 2b: withdrawal requests awaiting an admin decision (migration
     // 0027) -- oldest first, same operational-queue principle as the
     // manual-refunds/litiges worklists above.
@@ -184,6 +191,7 @@ export default async function AdminPage() {
       montant: Number(row.montant),
       offreType: (offre?.type ?? "video") as OffreType,
       createdAt: row.created_at,
+      contesteAt: row.conteste_at,
       createurLabel: userLabelById.get(row.createur_id) ?? t("deletedUser"),
       fanLabel: userLabelById.get(row.fan_id) ?? t("deletedUser"),
     };

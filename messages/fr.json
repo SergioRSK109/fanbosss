@@ -548,7 +548,13 @@
       "empty": "Aucun litige en attente.",
       "trancherCreateur": "Trancher en faveur du créateur",
       "trancherFan": "Trancher en faveur du fan",
-      "notePlaceholder": "Note (optionnelle)"
+      "notePlaceholder": "Note (optionnelle)",
+      "urgence": {
+        "normal": "Normal",
+        "attention": "Attention",
+        "retard": "En retard"
+      },
+      "joursOuvrablesEcoules": "{jours, plural, one {# jour ouvrable écoulé} other {# jours ouvrables écoulés}}"
     },
     "retraitsHeading": "Demandes de retrait en attente",
     "retraitsIntro": "Demandes de retrait du solde wallet d'un créateur (minimum 25$). «Marquer traité» signifie qu'un virement manuel réel a déjà été effectué en dehors de l'application -- aucun paiement automatique n'existe encore dans ce projet.",
