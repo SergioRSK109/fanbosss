@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import { getTranslations } from "next-intl/server";
 import { redirect } from "@/i18n/navigation";
 import { BadgesFideliteCard } from "@/components/BadgesFideliteCard";
@@ -5,6 +6,7 @@ import { ClassementProgresCard } from "@/components/ClassementProgresCard";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { LogoutButton } from "@/components/LogoutButton";
 import { ParametresForm } from "@/components/ParametresForm";
+import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { RankBadge } from "@/components/ui/RankBadge";
 import { VerificationForm } from "@/components/VerificationForm";
 import { computePremieresTransactionsParPartenaire } from "@/lib/badgesFidelite";
@@ -12,6 +14,7 @@ import type { ProgresClassement } from "@/lib/classementProgres";
 import { resolveDisplayName } from "@/lib/profil";
 import { getSignedDownloadUrl } from "@/lib/r2";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { parseTheme, THEME_COOKIE_NAME } from "@/lib/theme";
 import { pseudoLockedUntil } from "@/lib/validation";
 import type { PlateformeVerification } from "@/lib/verification";
 
@@ -30,6 +33,8 @@ export default async function ParametresPage({
   // not a new concern needing a new namespace.
   const tDashboard = await getTranslations({ locale, namespace: "Dashboard" });
   const tRanks = await getTranslations({ locale, namespace: "CreateurProfile" });
+  const cookieStore = await cookies();
+  const theme = parseTheme(cookieStore.get(THEME_COOKIE_NAME)?.value);
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
@@ -187,6 +192,14 @@ export default async function ParametresPage({
       <div className="mb-6 flex items-center justify-between">
         <span className="text-sm font-medium text-foreground-muted">{t("languageLabel")}</span>
         <LanguageSwitcher />
+      </div>
+      {/* Same "next to the language selector" placement, per the brief --
+          theme itself lives in a cookie (never a users column, see
+          CLAUDE.md), so the resolved value comes from this page's own
+          cookie read above, not a DB query. */}
+      <div className="mb-6 flex items-center justify-between">
+        <span className="text-sm font-medium text-foreground-muted">{t("themeLabel")}</span>
+        <ThemeSwitcher theme={theme} />
       </div>
       <ParametresForm
         nomAffichage={profil?.nom_affichage ?? null}

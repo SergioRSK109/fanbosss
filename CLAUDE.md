@@ -5708,6 +5708,169 @@ nom_affichage/checkboxes/photo — unlike pseudo/bio they have no
 lock/unlock UX, nothing accidental to protect against for a plain
 optional URL field.
 
+## Theme switcher — Clair/Sombre/Système (no migration)
+
+A three-position theme preference, placed in `/parametres` next to
+`LanguageSwitcher`. **Cookie-based, deliberately not a `users` column** —
+this is a device/browser preference, not account data (matches how
+`NEXT_LOCALE` already works for language). Read server-side on every
+request and baked into `<html data-theme>` before the first byte of HTML
+is sent — **no client-side script, no flash of the wrong theme**, which
+is the whole point: a `localStorage`-based approach would need a
+blocking inline script in `<head>` to avoid a flash, since `localStorage`
+isn't available until JS runs; a server-read cookie has no such gap.
+
+**`src/lib/theme.ts`** — `Theme = "light" | "dark" | "system"`,
+`THEME_COOKIE_NAME`, `THEME_COOKIE_MAX_AGE_SECONDS` (1 year — long enough
+that "persists after closing/reopening the browser," the brief's own
+explicit requirement, holds in practice indefinitely; this is not a
+session cookie), and `parseTheme(value)` — never trusts a raw cookie
+value directly (client-writable, ordinary cookie data, not a security
+boundary), falling back to `"system"` for anything malformed/missing/
+tampered. Shared, with no server-only imports, by both the root layout
+(Server Component) and `/api/theme` (Route Handler) so the two can never
+parse a cookie value two different ways.
+
+**`POST /api/theme`** — thin route setting the cookie, **no auth
+required** (same "not sensitive account data" reasoning as the cookie
+itself; a logged-out visitor browsing a public profile must be able to
+toggle theme too). `[locale]/layout.tsx` reads the cookie via
+`cookies()` on every request and spreads `{ "data-theme": theme }` onto
+`<html>` — but **only when the resolved theme isn't `"system"`**;
+Système is the *absence* of the attribute, which is what lets it fall
+through to the OS-driven CSS below with zero server-side computation.
+
+### globals.css — two genuinely different mechanisms, not one
+
+**This is the one thing to understand before ever touching this file's
+color rules again**: the app's dark-mode support has always had two
+independent parts, and this feature had to extend *both* the same way or
+risk a real, silent inconsistency (base colors flip with an explicit
+choice, but ~40 pre-existing `dark:bg-white/10`-style one-off utility
+classes across 24 components keep following the OS regardless).
+
+**1. CSS custom properties** (`--background`, `--surface`,
+`--foreground`, `--border`, `--brand-500`, `--brand-600`) — previously a
+plain `@media (prefers-color-scheme: dark) { :root { ... } }` override
+block. Replaced with the CSS `light-dark()` function driven by the
+`color-scheme` property, which needs **zero value duplication**:
+
+```css
+:root {
+  color-scheme: light dark; /* "both" = Système: browser resolves live from the OS */
+  --background: light-dark(#fffcf8, #171225);
+  ...
+}
+:root[data-theme="dark"] { color-scheme: dark; } /* forces the 2nd value, any OS */
+:root[data-theme="light"] { color-scheme: light; } /* forces the 1st value, any OS */
+```
+
+`:root[data-theme=...]` wins over the plain `:root` block purely on
+**specificity** (an attribute selector is (0,2,0) vs. `:root` alone at
+(0,1,0)) — regardless of source order, so there's no `!important`
+anywhere in this file. There is deliberately no `[data-theme="system"]`
+rule at all: Système is the attribute's *absence*, and adding a rule for
+the literal string would just dead-code the `light-dark()` resolution.
+**Verified in the actual compiled CSS, not assumed**: Tailwind v4 (via
+its bundled Lightning CSS transformer) doesn't even emit a literal
+`light-dark()` call — it polyfills it into a "space-toggle" pair of
+guaranteed-invalid/empty custom properties
+(`--lightningcss-light`/`--lightningcss-dark`) that `var()`'s own
+fallback semantics resolve to exactly one side or the other. This means
+the mechanism doesn't depend on a browser's own native `light-dark()`
+support at all — confirmed by reading the real compiled `.css` output
+during verification, not by trusting the source alone.
+
+**2. Tailwind's `dark:` utility variant** (`dark:bg-white/10`,
+`dark:text-brand-300`, ~40 usages across 24 components for one-off
+tweaks) — `light-dark()`/`color-scheme` only affects CSS *custom
+property values*, it has no bearing on which whole utility-class *rules*
+Tailwind emits, so this needed its own, independent redefinition via
+`@custom-variant`:
+
+```css
+@custom-variant dark {
+  @media (prefers-color-scheme: dark) {
+    &:where(:not([data-theme="light"], [data-theme="light"] *)) { @slot; }
+  }
+  &:where([data-theme="dark"], [data-theme="dark"] *) { @slot; }
+}
+```
+
+**The `:not([data-theme="light"])` guard nested *inside* the media query
+is the one non-obvious detail that makes this correct, not just plausible
+CSS.** Without it, an explicit Clair choice on a device whose OS prefers
+dark would fail to override any `dark:` utility class: a media query
+can't "know about" an attribute on its own, so a plain
+`@media (prefers-color-scheme: dark) { &:where(...) { @slot } }` branch
+would keep applying regardless of `data-theme="light"`, while only the
+*separate* CSS-custom-property mechanism above would have actually
+flipped. Nesting the guard inside the media query is what suppresses that
+branch specifically when Clair is explicitly chosen, giving Clair a
+**total** override — exactly like Sombre's own unconditional branch below
+it, just mirrored for the opposite case. `@custom-variant`'s
+comma-separated-conditions shorthand (`@custom-variant dark (&:where(...),
+@media (...))`) genuinely cannot express this nesting — hence the full
+body form (`@custom-variant dark { ... @slot ... }`) instead.
+
+**Verified empirically, not assumed correct from reading the code — the
+brief's own explicit instruction, and this project's standing discipline
+for any non-obvious CSS/Postgres mechanism**: a real `next dev` server,
+driven with Playwright across 3 theme positions × 2 emulated OS
+preferences (6 combinations), asserting real `getComputedStyle` values
+(both `body`'s `background-color`, driven by `light-dark()`, and
+TopNav's `/classement` link's `color`, driven by `dark:text-brand-300`)
+— not just that the `data-theme` attribute was present. Confirmed
+directly: Système's computed styles differ between OS-light and OS-dark
+for *both* mechanisms; Sombre's computed styles are identical regardless
+of OS and match Système's own OS-dark rendering; and — the case that
+actually proves the `:not()` guard works — **Clair's computed styles on
+a simulated OS-dark device are identical to Clair's on OS-light, and
+match Système's own OS-light rendering**, meaning the `dark:` utility
+classes genuinely stop applying, not just the CSS variables.
+
+### Testing
+
+`src/lib/__tests__/theme.test.ts` — `parseTheme` at every input shape:
+valid `light`/`dark`, explicit `system`, missing (`undefined`/`null`),
+and malformed/tampered (`""`, wrong case, injected characters) all
+falling back to `system`. `route.test.ts`
+(`/api/theme`) — a valid theme is set on the cookie with the correct
+`path`/`maxAge`; an invalid or missing body both resolve to `system`
+rather than trusting the client's raw input.
+
+The CSS mechanism itself has no vitest coverage (there's no jsdom in
+this project, and the interesting part is real browser cascade/
+specificity behavior a DOM-less test couldn't exercise anyway) — it's
+covered entirely by the empirical Playwright pass described above, which
+also verified, as real assertions rather than visual spot-checks:
+
+- **No flash on reload, fr + en, Clair and Sombre**: fetched the raw
+  HTML response text directly (never executing JS) for a request
+  carrying the theme cookie, confirming `<html data-theme="...">` is
+  already present in the very first response body — proving no
+  client-side correction ever has to happen, the actual guarantee "no
+  flash" depends on, not merely a fast one.
+- **Système tracks the OS live, no reload**: loaded a page once, then
+  flipped the emulated OS color scheme with no navigation at all —
+  `body`'s background and the `dark:`-driven link color both updated
+  within the same page load, confirming the browser's own native media-
+  query re-evaluation is doing the work, not a mechanism that only
+  resolves once at load time.
+- **Cookie persists across a simulated browser restart**: set the theme
+  via the real `/api/theme` route in one browser context, captured its
+  `storageState`, confirmed the cookie's real `expires` timestamp is
+  ~1 year out (not a session cookie), then opened a genuinely new
+  browser context seeded with that state and confirmed it still renders
+  the persisted theme on first load.
+- **The real `/parametres` UI, fr + en**: logged in, clicked "Sombre"/
+  "Dark" in the segmented control, confirmed both the `data-theme`
+  attribute *and* the actual rendered background changed (not just the
+  attribute), then reloaded the same page and confirmed it came back
+  dark from the cookie alone — proving the click's effect is real
+  server-side persistence, not client-only state that a refresh would
+  lose. Screenshots taken at Sombre and Système in both `fr` and `/en/`.
+
 ## Logo
 
 Two separate artifacts, deliberately not the same thing:

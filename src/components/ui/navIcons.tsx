@@ -182,6 +182,83 @@ export function BackIcon({ className }: { className?: string }) {
   );
 }
 
+// Theme switcher (Clair/Sombre/Système, /parametres) -- same three-icon
+// segmented control shape as everywhere else in this file: outline at
+// rest, filled/heavier once selected. Sun: circle + 8 rays, rays only
+// drawn when active (a bare stroked circle alone reads ambiguously as
+// "light" at rest, but the full sun glyph is unambiguous once selected,
+// same "fill only communicates the active state" idea as HomeIcon).
+export function SunIcon({ className, active }: TabIconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={active ? 2.2 : 1.8}
+      strokeLinecap="round"
+      aria-hidden
+    >
+      <circle cx="12" cy="12" r="4.2" fill={active ? "currentColor" : "none"} />
+      <line x1="12" y1="2.5" x2="12" y2="5" />
+      <line x1="12" y1="19" x2="12" y2="21.5" />
+      <line x1="2.5" y1="12" x2="5" y2="12" />
+      <line x1="19" y1="12" x2="21.5" y2="12" />
+      <line x1="4.9" y1="4.9" x2="6.6" y2="6.6" />
+      <line x1="17.4" y1="17.4" x2="19.1" y2="19.1" />
+      <line x1="4.9" y1="19.1" x2="6.6" y2="17.4" />
+      <line x1="17.4" y1="6.6" x2="19.1" y2="4.9" />
+    </svg>
+  );
+}
+
+// Crescent moon -- a circle with a second, offset circle subtracted via
+// even-odd fill, the standard crescent construction; filled solid once
+// active, same convention as every other icon in this file.
+export function MoonIcon({ className, active }: TabIconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={className}
+      fill={active ? "currentColor" : "none"}
+      stroke="currentColor"
+      strokeWidth={active ? 0 : 1.8}
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5Z" />
+    </svg>
+  );
+}
+
+// Monitor/display -- screen rectangle on a small stand, the standard
+// "match system" glyph used across virtually every OS-level theme picker.
+export function SystemIcon({ className, active }: TabIconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={active ? 2.2 : 1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <rect
+        x="3.5"
+        y="4.5"
+        width="17"
+        height="12"
+        rx="1.5"
+        fill={active ? "currentColor" : "none"}
+      />
+      <line x1="8.5" y1="20" x2="15.5" y2="20" />
+      <line x1="12" y1="16.5" x2="12" y2="20" />
+    </svg>
+  );
+}
+
 export function LeaderboardIcon({ className }: { className?: string }) {
   return (
     <svg
