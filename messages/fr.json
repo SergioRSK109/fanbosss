@@ -437,7 +437,16 @@
     "confirmPasswordPlaceholder": "Confirmer le nouveau mot de passe",
     "passwordMismatch": "Les mots de passe ne correspondent pas.",
     "passwordSavedNotice": "Mot de passe modifié.",
-    "languageLabel": "Langue"
+    "languageLabel": "Langue",
+    "themeLabel": "Thème",
+    "theme": {
+      "light": "Clair",
+      "dark": "Sombre",
+      "system": "Système",
+      "lightAriaLabel": "Thème clair",
+      "darkAriaLabel": "Thème sombre",
+      "systemAriaLabel": "Thème système"
+    }
   },
   "PhotoCropper": {
     "tooLarge": "Cette image est trop volumineuse. Choisis une photo plus légère.",

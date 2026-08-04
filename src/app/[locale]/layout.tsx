@@ -2,12 +2,14 @@ import type { Metadata, Viewport } from "next";
 import { hasLocale } from "next-intl";
 import { NextIntlClientProvider } from "next-intl";
 import { getTranslations } from "next-intl/server";
+import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { Poppins } from "next/font/google";
 import { routing } from "@/i18n/routing";
 import { ServiceWorkerRegistration } from "@/components/ServiceWorkerRegistration";
 import { TopNav } from "@/components/TopNav";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { parseTheme, THEME_COOKIE_NAME } from "@/lib/theme";
 import "./globals.css";
 
 // Rounded, friendly geometric sans -- matches the brief's "moderne,
@@ -71,8 +73,23 @@ export default async function LocaleLayout({
     data: { user },
   } = await supabase.auth.getUser();
 
+  // Read server-side, on every request, so the resolved theme is already
+  // in the very first byte of HTML -- this is what makes the no-flash
+  // guarantee possible without a client-side blocking script (see
+  // CLAUDE.md's "Theme switcher" section). "system" deliberately sets NO
+  // attribute at all: globals.css's light-dark()/@custom-variant
+  // mechanism already treats the absence of data-theme as "follow the
+  // OS", so there's nothing for this layout to compute or resolve itself.
+  const cookieStore = await cookies();
+  const theme = parseTheme(cookieStore.get(THEME_COOKIE_NAME)?.value);
+  const htmlThemeProps = theme === "system" ? {} : { "data-theme": theme };
+
   return (
-    <html lang={locale} className={`${poppins.variable} h-full antialiased`}>
+    <html
+      lang={locale}
+      className={`${poppins.variable} h-full antialiased`}
+      {...htmlThemeProps}
+    >
       <body className="min-h-full flex flex-col font-sans">
         <NextIntlClientProvider>
           <ServiceWorkerRegistration />

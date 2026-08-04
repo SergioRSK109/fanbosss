@@ -4,22 +4,33 @@
    the existing manifest icons), coral is the one secondary accent used
    sparingly for energy -- badges, highlights, gradients. Deliberately not
    red/black: this app is shared by both public creators and things like
-   church donation pages, per the design brief's "stay neutral" guard-rail. */
+   church donation pages, per the design brief's "stay neutral" guard-rail.
+   See "Theme switcher" in CLAUDE.md before touching anything below this
+   comment -- the light/dark mechanism has two genuinely different parts
+   (CSS custom properties vs. Tailwind's `dark:` utility variant) and it's
+   easy to "fix" one without realizing the other needs the same treatment. */
 :root {
-  --background: #fffcf8;
-  --surface: #ffffff;
-  --surface-muted: #f6f1ff;
-  --foreground: #211a35;
-  --foreground-muted: #6b6280;
-  --border: #ece3fb;
+  /* "light dark" (both) is the unset/System state -- the browser resolves
+     every light-dark() value below from the OS's own prefers-color-scheme,
+     live, no JS/media query needed on our side. :root[data-theme=...]
+     further down narrows this to a single value, which is what makes an
+     explicit choice override the OS regardless of what it prefers. */
+  color-scheme: light dark;
+
+  --background: light-dark(#fffcf8, #171225);
+  --surface: light-dark(#ffffff, #201933);
+  --surface-muted: light-dark(#f6f1ff, #251d3a);
+  --foreground: light-dark(#211a35, #f5f2fc);
+  --foreground-muted: light-dark(#6b6280, #b6accf);
+  --border: light-dark(#ece3fb, #362a52);
 
   --brand-50: #f5f0ff;
   --brand-100: #ebe0ff;
   --brand-200: #d7c4ff;
   --brand-300: #b393ff;
   --brand-400: #9868ff;
-  --brand-500: #7c3aed;
-  --brand-600: #6a26d9;
+  --brand-500: light-dark(#7c3aed, #9868ff);
+  --brand-600: light-dark(#6a26d9, #ad84ff);
   --brand-700: #551db0;
 
   --accent-300: #ffbb99;
@@ -31,6 +42,51 @@
   --success-600: #16a34a;
   --danger-500: #f4335e;
   --danger-600: #d81f49;
+}
+
+/* Explicit override: an admin/créateur picked Clair/Sombre in
+   /parametres, a server-read cookie set this attribute on <html> before
+   the first byte of HTML was ever sent (see [locale]/layout.tsx) -- no
+   client script, no flash. Specificity alone (0,2,0 beats :root's 0,1,0)
+   is what makes this win over the plain :root block above regardless of
+   source order, so there's no !important anywhere in this file. Système
+   is the ABSENCE of this attribute -- there is no `[data-theme=system]`
+   rule anywhere on purpose, it would just dead code the light-dark()
+   resolution above. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+/* Redefines what `dark:` means for Tailwind's own utility classes
+   (`dark:bg-white/10`, `dark:text-brand-300`, ~40 usages across this
+   codebase) -- light-dark()/color-scheme above only affects CSS CUSTOM
+   PROPERTIES, it has no bearing on which whole utility-class RULES
+   Tailwind emits, so these need their own, independent mechanism that
+   resolves to the exact same three states:
+     - Système (no data-theme attribute) + OS dark -> dark: applies.
+     - Système + OS light -> dark: does not apply.
+     - Sombre (data-theme=dark) -> dark: always applies, any OS.
+     - Clair (data-theme=light) -> dark: never applies, any OS -- this is
+       the one branch that needs real care: without the
+       :not([data-theme=light]) guard on the media-query branch below, an
+       explicit Clair choice would fail to override dark: utilities on a
+       device whose OS prefers dark (the media query doesn't know or care
+       about the attribute on its own; only nesting the guard *inside* it
+       makes the override actually total). Verified empirically in a real
+       browser across all three states before trusting this, not assumed
+       correct from reading the code -- see CLAUDE.md. */
+@custom-variant dark {
+  @media (prefers-color-scheme: dark) {
+    &:where(:not([data-theme="light"], [data-theme="light"] *)) {
+      @slot;
+    }
+  }
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
 }
 
 @theme inline {
@@ -61,20 +117,6 @@
   --color-danger-600: var(--danger-600);
 
   --font-sans: var(--font-poppins);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #171225;
-    --surface: #201933;
-    --surface-muted: #251d3a;
-    --foreground: #f5f2fc;
-    --foreground-muted: #b6accf;
-    --border: #362a52;
-
-    --brand-500: #9868ff;
-    --brand-600: #ad84ff;
-  }
 }
 
 body {
