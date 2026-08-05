@@ -292,7 +292,13 @@ export const demandeVerificationSchema = z
 // the caller's own est_admin/createur_verifie, never from client input.
 export const publierMessageSchema = z
   .object({
-    contenu: z.string().trim().min(1).max(PUBLICATION_CONTENU_MAX_LENGTH),
+    // Nullable/optional since migration 0044 -- a publication carried
+    // entirely by an image/video needs no text at all. Still enforces the
+    // same 1-2000 char bound as publications_contenu_coherent whenever a
+    // non-null value is actually given; the "at least one of
+    // contenu/image/video" requirement is the .refine() below, mirroring
+    // the DB constraint's own two-part shape.
+    contenu: z.string().trim().min(1).max(PUBLICATION_CONTENU_MAX_LENGTH).nullable().optional(),
     image_r2_key: z.string().nullable().optional(),
     // Video support, additive alongside image_r2_key (migration 0037) --
     // never both on the same publication. publications_media_exclusif is
@@ -313,4 +319,8 @@ export const publierMessageSchema = z
   .refine((body) => !(body.image_r2_key && body.video_r2_key), {
     message: "une publication ne peut avoir à la fois une image et une vidéo",
     path: ["video_r2_key"],
+  })
+  .refine((body) => Boolean(body.contenu || body.image_r2_key || body.video_r2_key), {
+    message: "une publication doit contenir du texte, une image ou une vidéo",
+    path: ["contenu"],
   });

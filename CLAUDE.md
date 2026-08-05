@@ -3735,6 +3735,96 @@ aspect-ratio wrapper `div` is what the icon's position was actually
 checked against). All of the above holds in both `fr` (light/dark) and
 `/en/` (light/dark).
 
+## Publications: image/video-only posts, no caption required (migration `0044`)
+
+Real, confirmed bug: a créateur could never publish a photo or video with
+no caption at all. Fixed at every layer that enforced the old
+all-or-nothing rule — the DB constraint, the RPC, the zod schema, and
+the composer's own submit button — since fixing only one would still
+have left the other three rejecting a genuinely valid post.
+
+**`publications_contenu_coherent`** (migration `0031`) previously
+required `char_length(contenu) between 1 and 2000` unconditionally for
+any non-repost row, regardless of whether an image/video was attached.
+Dropped and redefined: a plain (non-repost) publication now needs at
+least one of `contenu`/`image_r2_key`/`video_r2_key`, not `contenu`
+specifically — `contenu`, when present, still has to fall in the same
+1–2000 range as before. The repost branch (`repost_de_id is not null and
+contenu is null`) is completely untouched, exactly as migration `0031`
+defined it — a repost still can never carry its own `contenu`.
+
+**`publier_message()`** (`create or replace`, identical 5-param
+signature — same "leaves the existing `authenticated`-only EXECUTE grant
+untouched" precedent as every earlier redefinition of this function
+since migration `0031`) gained `p_contenu text default null`, matching
+`p_image_r2_key`/`p_video_r2_key`'s own shape — a direct RPC call can now
+omit it entirely for an image/video-only post. The old unconditional
+`if p_contenu is null or char_length(trim(p_contenu)) = 0 then raise` is
+gone; whitespace-only `p_contenu` is instead normalized to `null` first
+(same "never store a visually-empty-but-technically-non-null contenu"
+reasoning as everywhere else in this file), and the actual rejection now
+only fires when `p_contenu is null and p_image_r2_key is null and
+p_video_r2_key is null` — text and image and video all absent at once,
+not `contenu` in isolation.
+
+**`publierMessageSchema`** (`src/lib/validation.ts`) had its own,
+undocumented instance of the identical bug — not flagged in the original
+report, found by reading the schema: `contenu:
+z.string().trim().min(1).max(...)` unconditionally required non-empty
+text at the API-route boundary, which would have 400'd an image-only
+request before it ever reached the fixed RPC. `contenu` is now
+`.nullable().optional()` (still enforcing the same 1–2000 bound whenever
+a non-null value is actually given), plus a second `.refine()` mirroring
+the DB constraint's own "at least one of the three" rule
+(`Boolean(body.contenu || body.image_r2_key || body.video_r2_key)`,
+chained alongside the pre-existing image+video-exclusivity refine — zod
+supports multiple chained refines on one schema). `/api/publications`
+sends `p_contenu: parsed.data.contenu ?? null` rather than the value
+verbatim, matching the pattern `image_r2_key`/`video_r2_key` already
+used in that same RPC call.
+
+**`PublicationComposer.tsx`**: `canSubmit` used to require
+`trimmed.length > 0` unconditionally — now `(trimmed.length > 0 || file
+!== null)`, so selecting an image or video alone enables "Publier" with
+the text field genuinely empty. The submit body's `contenu` field
+changed from always sending `trimmed` (which for an empty field is `""`,
+a value the new DB constraint and schema both still correctly reject —
+`char_length("") = 0` satisfies neither the "is null" nor the "1–2000"
+branch) to `trimmed || null` — this is what actually makes the enabled
+button's submit succeed, not just look enabled; without this companion
+fix the button would enable but every image-only submit would still
+fail with a raw empty-string rejection.
+
+Tested end-to-end in `checklist_2_3.sql`, not just described: the raw
+`publications_contenu_coherent` constraint accepts an image-only row and
+a video-only row (both with `contenu` null) and still rejects a row with
+neither text nor media at all; a repost row with a non-null `contenu`
+is still rejected exactly as before (unchanged by this migration);
+`publier_message()` itself accepts an image-only call and a video-only
+call with `p_contenu` omitted entirely, persisting a genuinely null
+`contenu`; a call with no text, image, or video at all is still rejected
+with the same clear error; and a whitespace-only `p_contenu` with no
+media is confirmed to still be treated as empty (normalized to null
+before the presence check), not accepted as "has text". Vitest
+(`validation.test.ts`) covers the schema directly: an image-only
+publication with `contenu` omitted and with `contenu: null` both accepted,
+a video-only publication with `contenu` omitted accepted, and a
+publication with neither `contenu` nor any media rejected (`{}` and
+`{contenu: null}` both).
+
+Verified visually end-to-end (throwaway mock-Supabase/Playwright
+technique used throughout this file — a small Node mock of the
+Auth/PostgREST/RPC surface, a real `next dev`, and a scripted Chromium
+session logging in as a real fixture créateur on `/home`): with nothing
+typed and nothing selected, "Publier"/"Post" is disabled; selecting an
+image with the text field left genuinely empty enables the button
+immediately (confirmed via the button's own `disabled` DOM property, not
+just visually); clicking it drives the real upload-url → R2 PUT →
+`POST /api/publications` → `publier_message` RPC round trip through to a
+successful post with no error shown, the textarea reset, and the new
+image-only publication appearing in the feed with no caption text. All
+of the above confirmed in both `fr` and `/en/`.
+
 ## Admin dashboard reorganized into 4 top tabs (no migration)
 
 `/admin` had grown into 8 stacked sections with no grouping, all always
