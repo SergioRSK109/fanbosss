@@ -9,12 +9,29 @@ import { buttonClass } from "@/components/ui/button-styles";
 // exact anchor and hands it to the platform's native share sheet where
 // available (mobile), falling back to copying to the clipboard
 // (desktop) rather than assuming navigator.share always exists.
-export function ShareCampagneButton({ campagneId }: { campagneId: string }) {
+//
+// Also reused as-is by the /concours/[id] public page (migration 0045):
+// that call site passes neither prop at all, since a concours has no
+// anchor to point at -- it *is* the whole page -- so this falls back to
+// the current page's own full URL (window.location.href) instead of
+// building a campagne anchor. The campagne-anchor path is unchanged for
+// every existing call site.
+export function ShareCampagneButton({
+  campagneId,
+  url: explicitUrl,
+}: {
+  campagneId?: string;
+  url?: string;
+}) {
   const t = useTranslations("CreateurProfile");
   const [copied, setCopied] = useState(false);
 
   async function handleShare() {
-    const url = `${window.location.origin}${window.location.pathname}#campagne-${campagneId}`;
+    const url =
+      explicitUrl ??
+      (campagneId
+        ? `${window.location.origin}${window.location.pathname}#campagne-${campagneId}`
+        : window.location.href);
 
     if (navigator.share) {
       try {

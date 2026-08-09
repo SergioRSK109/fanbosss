@@ -259,6 +259,15 @@
     "anonymous": "FanBoss créateur",
     "rank": "#{rank}"
   },
+  "Concours": {
+    "termine": "Contest ended",
+    "compteAReboursAvecJours": "{jours}d {heures}:{minutes}:{secondes}",
+    "compteARebours": "{heures}:{minutes}:{secondes}",
+    "badgeEnTete": "🔥 Leading",
+    "badgeVainqueur": "🏆 Winner",
+    "createurAnonyme": "FanBoss créateur",
+    "montantCollecte": "${montant} raised"
+  },
   "Metadata": {
     "description": "Monetize your relationship with your fans: custom videos, tips, WhatsApp."
   },
