@@ -4656,6 +4656,246 @@ so the dashboard's numbers can never disagree with what a fan sees) as
 an extra optional field on the `Offre` type passed into `OffresManager`,
 meaningful only for `campagne` rows.
 
+## Creator contests (`concours`, Phase 1: mode `entre_createurs` only, migration 0045)
+
+Inspired by the money contests créateurs already run on TikTok live
+streams, but **FanBoss never tries to replicate the live video itself**
+— a créateur invites other créateurs into a shared, time-limited
+contest, each participant keeps their own pre-existing `campagne` offre
+exactly as before, and the money still flows straight to each of them
+through the normal CinetPay/campagne circuit. The contest is purely a
+display/aggregation layer on top — **no new money-movement mechanism is
+introduced by this feature at all**, consistent with this project's
+standing rule that a fan's payment always goes directly to the créateur
+they chose to support, never redistributed by contest outcome and never
+moved wallet-to-wallet internally (there is no wallet-to-wallet transfer
+mechanism anywhere in this codebase, on purpose — see "Automatic
+CinetPay refunds" for the only other place money movement is even
+discussed, and that's refunds, not redistribution). A "winner" is a
+purely cosmetic badge; no money is tied to it in this lot.
+
+**Two modes were specified, only one is built here.** `concours.mode
+text not null default 'entre_createurs' check (mode in
+('entre_createurs', 'maitre_du_jeu'))` — the column exists from day one
+specifically to avoid a painful later migration, but **`'maitre_du_jeu'`
+(Phase 2: an external organizer skimming a configurable percentage via a
+3-way split transaction — FanBoss / Maître du jeu / créateur — on every
+contribution) is NOT implemented anywhere in this codebase.** No RPC in
+this migration can ever produce that value — `creer_concours()` hardcodes
+`mode := 'entre_createurs'` in its own `INSERT`, full stop, with no
+parameter anywhere that lets a caller request the other mode. Don't
+build UI or logic elsewhere in the app that assumes `maitre_du_jeu` is
+reachable; it isn't, until a real Phase 2 lot defines and builds the
+3-way split.
+
+### Schema
+
+`concours` (`id, nom, mode, organisateur_id, date_fin, created_at`) and
+`concours_participants` (`concours_id, createur_id, campagne_id,
+invite_statut, invite_at`, composite PK `(concours_id, createur_id)`,
+`invite_statut check (... in ('invite', 'accepte', 'refuse'))`). Each
+participant's `campagne_id` points at their own pre-existing `campagne`
+offre (migration 0017) — nothing about that offer type changed, and a
+créateur's same campagne can legitimately be linked into more than one
+concours at once (no uniqueness constraint on `campagne_id` alone, only
+the composite PK). Both tables have RLS enabled with **zero** policies
+for `authenticated` — same "state machine only via a vetted RPC" shape
+as `transactions`/`publications`/`demandes_verification`; every write
+goes through one of the four RPCs below, and public reads go through
+`concours_publics`, never these raw tables (which would otherwise leak
+`invite_statut = 'invite'`/`'refuse'` rows to anyone).
+
+### RPCs — same `SECURITY DEFINER` + `revoke/grant` discipline as every write RPC since migration 0020
+
+- **`creer_concours(p_nom, p_date_fin, p_campagne_id)`** — the caller
+  becomes `organisateur_id`, and in the same call is inserted into
+  `concours_participants` already `invite_statut = 'accepte'` with the
+  passed `p_campagne_id` — there's no meaningful "organizer invites
+  themselves and waits" step. Rejects a `p_campagne_id` that isn't
+  `type = 'campagne'`, and rejects one that isn't owned by the caller
+  (`createur_id is distinct from auth.uid()`).
+- **`inviter_participant_concours(p_concours_id, p_createur_id,
+  p_campagne_id)`** — organizer-only (`concours.organisateur_id =
+  auth.uid()`). **The ownership check on `p_campagne_id` is the one
+  real security hole this lot was built to close explicitly**: without
+  it, the organizer could link *any* créateur's campagne to a
+  *different* invitee, corrupting the contest's own display data
+  (someone else's collected total attributed to the wrong participant).
+  The check is against the **invited** créateur
+  (`offre.createur_id is distinct from p_createur_id`), not the caller.
+- **`accepter_invitation_concours(p_concours_id)`** /
+  **`refuser_invitation_concours(p_concours_id)`** — both take only a
+  concours id, never a target créateur id, so "can't act on someone
+  else's invitation" is structural, not just checked: the function can
+  only ever touch the caller's own `(concours_id, auth.uid())` row.
+  Each distinguishes "no invitation at all for you" (`'invitation not
+  found'`) from "already resolved" (`'invitation already resolved'`,
+  when `invite_statut != 'invite'`) rather than silently no-op'ing
+  either way — a second accept/refuse attempt on an already-resolved row
+  is rejected, never re-applied.
+
+### `concours_publics` — the public view
+
+One row per **accepted** participant only — the join condition itself
+(`cp.invite_statut = 'accepte'`) excludes `'invite'`/`'refuse'` rows
+entirely, not just a hidden column, so those statuses can structurally
+never leak through this view regardless of what a caller selects.
+`montant_collecte` is read straight from `campagnes_montant_collecte`
+(migration 0017) via a `left join` — **never recomputed here**, per
+explicit instruction: this view calls/references that existing live
+aggregate rather than duplicating the sum logic a second way, the same
+"one source of truth" discipline `classement_volume`/`badges_fidelite_publics`
+already established for their own aggregates. Display columns
+(`pseudo`, `nom_affichage`, `photo_r2_key`) are joined straight from
+`users` (view-owner bypassrls, same mechanism as
+`classement_volume`/`profils_explorables`), exposing only the same
+public-safe subset `profils_publics` itself already exposes. Granted to
+`authenticated, anon` — a shared concours link has to work for a
+logged-out visitor, same as every other public discovery view in this
+project.
+
+### `/concours/[id]` — the public page
+
+No auth required (consistent with this product's growth model — a
+shared link must work for a visitor who's never logged in), reads only
+`concours_publics`. `getConcoursPublicData()` (`src/lib/concoursPublic.ts`)
+is a thin data-fetching layer: since `creer_concours()` always
+auto-accepts the organizer's own participation in the same call, a real
+concours can never have zero rows in `concours_publics` — there is no
+"exists but empty" case to distinguish from "not found", so a
+zero-row result is treated as `notFound()`.
+
+**The pure helpers live in `src/lib/concours.ts`, deliberately with no
+server-only imports** — same "DOM/database-free, unit-tested, safely
+importable from a client component" discipline as
+`campagnes.ts`/`classementProgres.ts`/`produits.ts`. `computeLeaderIds()`
+returns whoever currently has the highest `montant_collecte` (ties all
+included), but only once at least one contribution has actually landed
+— with every participant still at 0, highlighting an arbitrary one as
+"leading" would be misleading. **The "Vainqueur" badge reuses this exact
+same function** rather than a separately computed notion — a winner is
+simply "whoever is leading once the contest has ended"
+(`isConcoursEnded(dateFin)`, a plain `now >= date_fin` check), computed
+server-side at request time from the participant amounts
+`concours_publics` already returns. `computeEqualSharePercent(n)` is the
+shared-screen split (`100/n`) — 2 participants = half each, 3 = a third
+each, N = 1/N each, per the brief exactly; the page applies it as an
+explicit `flexBasis` per participant card in a `flex-wrap` row, so it
+genuinely drives the layout rather than just being computed and ignored.
+
+**Winner determination relies entirely on the pre-existing
+`close_expired_campagnes()` (migration 0017) to close the underlying
+campagnes — no new closing mechanism was built for the concours itself,
+per explicit instruction.** The concours' own `date_fin` and each
+participant's individual campagne's own `config.date_fin` are two
+genuinely separate fields — nothing in this lot syncs them — so for a
+concours' underlying campagnes to actually stop accepting contributions
+once the concours ends, each participant's own campagne needs its own
+matching `date_fin` set (a créateur/product-flow concern, not something
+this backend enforces or assumes). Once the campagnes are closed (by the
+existing hourly cron calling `close_expired_campagnes()`, exactly as it
+already does for every other campagne), `concours_publics` simply keeps
+reading the same live `campagnes_montant_collecte` figures — which don't
+change once nothing more can be contributed — so the winner reads
+correctly with zero concours-specific code needed to "freeze" anything.
+
+**`ConcoursCountdown.tsx`** (client) ticks every second via
+`computeCountdownParts()`/`isConcoursEnded()` from the same pure
+`concours.ts` module — purely visual, it never re-fetches or re-renders
+the participant list; the server-computed `ended` flag (and therefore
+the winner badge) only updates on the next navigation/reload. The
+`setState`-in-effect lint rule required the same `setTimeout(fn, 0)`
+workaround already established elsewhere in this codebase
+(`ParametresForm`'s pseudo check, `ProduitCheckoutContent`'s mount
+effect) for the countdown's initial tick.
+
+**`ShareCampagneButton.tsx` was generalized, not duplicated**, per
+explicit instruction to reuse/adapt rather than write a new component:
+it now accepts an optional `url` prop; when neither `url` nor
+`campagneId` is given (the concours page's own call site), it falls back
+to `window.location.href` instead of building a campagne anchor — every
+existing call site (the campagne cards' own anchor-based share) is
+completely unaffected.
+
+### Reserved pseudo
+
+`'concours'` added to both `users_pseudo_not_reserved` (DB) and
+`PSEUDO_MOTS_RESERVES` (`src/lib/validation.ts`) — same two-places
+discipline as every previous route addition.
+
+### Testing
+
+`checklist_2_3.sql`: `creer_concours()` rejects a non-campagne
+`p_campagne_id` and one not owned by the caller, then a real success
+auto-accepts the organizer with `mode = 'entre_createurs'` always;
+`inviter_participant_concours()` rejects a campagne not owned by the
+*invited* créateur (the exact hole this lot closes) and a non-organizer
+caller; `accepter_invitation_concours()`/`refuser_invitation_concours()`
+reject a caller with no invitation at all and a second attempt on an
+already-resolved one; `concours_publics` is proven to show only accepted
+participants — a refused or still-pending (never resolved) invitation is
+explicitly confirmed absent, not assumed; `montant_collecte` is compared
+directly against `campagnes_montant_collecte` rather than asserting a
+hardcoded number twice; the accepted-participant count is verified
+correct for 2, 3, and an arbitrary 5 participants; winner determination
+is proven end-to-end (dedicated backdated campagnes, `close_expired_campagnes()`
+actually called, then the higher-funded participant confirmed as the
+leader); and the full `0020`/`0021` grant-audit pattern holds across all
+four RPCs (`anon` has no `EXECUTE`, `authenticated` with a `NULL
+auth.uid()` is rejected by each function's own check, none of the
+rejected attempts left a trace, `authenticated` still holds `EXECUTE`,
+and `anon` **does** correctly have `SELECT` on `concours_publics`).
+Vitest (`src/lib/__tests__/concours.test.ts`): `computeLeaderIds` (empty
+list, all-zero, a single leader, a tie), `isConcoursEnded`'s boundary
+(exactly at `date_fin` counts as ended), `computeEqualSharePercent` at
+1/2/3/7/0/negative participants, and `computeCountdownParts`'s
+day/hour/minute/second breakdown including the zero-clamp once
+`date_fin` has passed.
+
+Verified visually end-to-end (same throwaway mock-Supabase/Playwright
+technique used throughout this file — a small Node mock of just the
+`concours_publics` REST endpoint plus a 401 stub for `/auth/v1/user`,
+since this page needs no session and no other endpoint at all, a real
+`next dev`, and a scripted Chromium session): an active 3-participant
+concours renders 3 cards sorted by amount, the highest one bordered with
+a "🔥 En tête" badge, and the live countdown ticking down in the
+`{jours}j HH:MM:SS` format; a participant with no `pseudo` set falls
+back to the generic "Créateur FanBoss" label rather than showing
+nothing; an already-ended concours shows "Concours terminé" in place of
+the countdown and a "🏆 Vainqueur" badge on the higher-funded
+participant; clicking "Partager cette campagne" (no `navigator.share` in
+this headless Chromium build, so the clipboard-fallback path) copies
+exactly the page's own URL and flips the button to "Lien copié !"; an
+unknown concours id renders a real 404; and all of the above holds in
+both `fr` (light/dark) and `/en/` (light/dark), zero console errors —
+confirmed only after fixing the harness's own French Accept-Language
+default (Chromium's default locale is English, which silently serves
+English content on the default, unprefixed French route unless the
+browser context's own `locale` is set explicitly — the exact same
+gotcha already documented in this file's "Full i18n coverage extension"
+section, re-encountered and re-confirmed here, not a new finding).
+
+### What Phase 1 deliberately doesn't build (scope, stated explicitly)
+
+- **Mode `maitre_du_jeu`** (see above) — schema column only, no RPC path
+  reaches it, no 3-way split transaction exists anywhere in this
+  codebase.
+- No créateur-facing UI to create/manage a concours from `/offres` or
+  anywhere else — this lot is schema + RPCs + the public page only, per
+  the brief's own explicit phase scope. A concours today can only be
+  created/managed via direct RPC calls (or a future UI lot).
+- No notification wiring (migration 0034's `creer_notification()`) for
+  concours invitations — an invited créateur has no in-app bell alert
+  telling them they've been invited. Not requested by this lot's brief;
+  flagged here rather than silently added, since the notification system
+  already exists and it would be easy to assume this was wired in when
+  it wasn't.
+- No automatic closing/expiry of the concours row itself once `date_fin`
+  passes — only the underlying campagnes close (via the pre-existing
+  `close_expired_campagnes()`), exactly as instructed. The `concours` row
+  and its `concours_participants` rows live forever, same "no delete
+  path" posture as the rest of this schema.
+
 ## CinetPay webhook (`src/app/api/webhooks/cinetpay/route.ts`)
 
 - Verifies the `x-token` header via real HMAC-SHA256

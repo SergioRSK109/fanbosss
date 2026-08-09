@@ -215,6 +215,7 @@ export const PSEUDO_MOTS_RESERVES = [
   "finance",
   "offres",
   "home",
+  "concours",
 ];
 
 // Shared by the /@pseudo lookup and the /explorer search box: ILIKE
