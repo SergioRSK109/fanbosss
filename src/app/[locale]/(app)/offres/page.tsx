@@ -1,10 +1,12 @@
 import { getTranslations } from "next-intl/server";
 import { redirect } from "@/i18n/navigation";
 import { CommandesAExpedier } from "@/components/CommandesAExpedier";
+import { ConcoursManager } from "@/components/ConcoursManager";
 import { DemandesEnAttente } from "@/components/DemandesEnAttente";
 import { LivraisonsEnAttente } from "@/components/LivraisonsEnAttente";
 import { OffresManager } from "@/components/OffresManager";
 import { OffresTabs } from "@/components/OffresTabs";
+import { getConcoursGereesEtInvitations } from "@/lib/concoursPublic";
 import type { OffreType } from "@/lib/validation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -50,7 +52,7 @@ export default async function OffresPage({
     return;
   }
 
-  const [{ data: offres }, { data: demandes }, { data: profil }, { data: validees }] =
+  const [{ data: offres }, { data: demandes }, { data: profil }, { data: validees }, concoursData] =
     await Promise.all([
       supabase
         .from("offres")
@@ -78,6 +80,12 @@ export default async function OffresPage({
         .eq("createur_id", user.id)
         .eq("statut", "validee")
         .order("deadline_livraison", { ascending: true }),
+      // Phase 1-bis: concours the créateur organizes/has accepted, plus
+      // invitations still awaiting a decision -- see
+      // getConcoursGereesEtInvitations()'s own comment for why this
+      // reads concours_participants (self-only, migration 0046) then
+      // concours_publics, never a new table policy on `concours` itself.
+      getConcoursGereesEtInvitations(user.id),
     ]);
 
   // Montant collecté per campagne, computed live via
@@ -202,10 +210,31 @@ export default async function OffresPage({
     </div>
   );
 
+  // The créateur's own active campagnes -- used both by "Créer un
+  // concours" (which campagne to launch it with) and "Invitations en
+  // attente" (which campagne to accept with). Derived from the same
+  // `offres` query every other tab already reads, not a new fetch.
+  const mesCampagnesActives = offresNormalisees
+    .filter((offre) => offre.type === "campagne" && offre.actif)
+    .map((offre) => ({ id: offre.id, libelle: offre.libelle }));
+
+  const concoursContent = (
+    <ConcoursManager
+      viewerId={user.id}
+      mesConcours={concoursData.mesConcours}
+      invitations={concoursData.invitations}
+      mesCampagnes={mesCampagnesActives}
+    />
+  );
+
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-8 p-5 sm:p-6">
       <h1 className="text-2xl font-bold">{tOffres("heading")}</h1>
-      <OffresTabs serviceContent={serviceContent} produitContent={produitContent} />
+      <OffresTabs
+        serviceContent={serviceContent}
+        produitContent={produitContent}
+        concoursContent={concoursContent}
+      />
     </main>
   );
 }

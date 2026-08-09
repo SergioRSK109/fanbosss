@@ -6883,21 +6883,36 @@ end $$;
 reset role;
 
 -- ---------------------------------------------------------------------
--- Concours entre créateurs, Phase 1 (migration 0045): creer_concours()/
+-- Concours entre créateurs, Phase 1 (migration 0045) + Phase 1-bis
+-- invitation-flow correction (migration 0046): creer_concours()/
 -- inviter_participant_concours()/accepter_invitation_concours()/
 -- refuser_invitation_concours(), concours_publics. mode is always
 -- 'entre_createurs' in this lot -- there is no code path here that can
 -- ever produce 'maitre_du_jeu' (Phase 2, not built).
 --
+-- Phase 1-bis rewrote invitation into two genuinely separate steps: the
+-- organizer invites by IDENTITY only (inviter_participant_concours() no
+-- longer touches a campagne_id at all -- nobody but the invitee can know
+-- which of their own campagnes, if any, they'd want linked), and the
+-- invited créateur supplies their OWN campagne_id atomically at the
+-- moment they accept (accepter_invitation_concours() gained a
+-- p_campagne_id parameter, verified via the same shared
+-- verifier_campagne_du_createur() helper creer_concours() itself uses --
+-- reused, not duplicated). The tests below reflect this corrected flow;
+-- the original Phase 1 tests that asserted inviter_participant_concours()
+-- itself rejected a mismatched campagne_id have been replaced with the
+-- equivalent assertion on accepter_invitation_concours() instead, since
+-- that check moved there.
+--
 -- Fixture: organisateur (c0450001), participant B (c0450002, invited
--- then accepts), participant C (c0450003, invited then refuses),
--- participant D (c0450004, invited and left pending forever -- proves
--- an unresolved invitation never leaks either), a stranger créateur
--- (c0450006) with their own unrelated campagne (used to prove
--- inviter_participant_concours() can't be tricked into linking someone
--- else's campaign to a different invitee, and never invited to the main
--- concours themselves), and a fan (c0450005) to fund contributions for
--- the montant_collecte/winner tests.
+-- then accepts with their own campagne), participant C (c0450003,
+-- invited then refuses), participant D (c0450004, invited and left
+-- pending forever -- proves an unresolved invitation never leaks
+-- either), a stranger créateur (c0450006) with their own unrelated
+-- campagne (used to prove accepter_invitation_concours() can't be
+-- tricked into accepting with someone else's campagne, and never
+-- invited to the main concours themselves), and a fan (c0450005) to
+-- fund contributions for the montant_collecte/winner tests.
 -- ---------------------------------------------------------------------
 insert into users (id, telephone, pays) values
   ('c0450001-0000-0000-0000-000000000001', '+243900000301', 'RDC'),
@@ -6913,7 +6928,7 @@ insert into offres (id, createur_id, type, libelle, config, actif) values
   ('c0451003-0000-0000-0000-000000000003', 'c0450003-0000-0000-0000-000000000003', 'campagne', 'Campagne C', jsonb_build_object('description', 'x', 'objectif', 1000), true),
   ('c0451004-0000-0000-0000-000000000004', 'c0450004-0000-0000-0000-000000000004', 'campagne', 'Campagne D', jsonb_build_object('description', 'x', 'objectif', 1000), true),
   ('c0451006-0000-0000-0000-000000000006', 'c0450006-0000-0000-0000-000000000006', 'campagne', 'Campagne étrangère', jsonb_build_object('description', 'x', 'objectif', 1000), true),
-  -- Non-campagne offre -- proves creer_concours() rejects a p_campagne_id that isn't type='campagne'.
+  -- Non-campagne offre -- proves creer_concours()/accepter_invitation_concours() reject a p_campagne_id that isn't type='campagne'.
   ('c0451009-0000-0000-0000-000000000009', 'c0450001-0000-0000-0000-000000000001', 'don', null, '{}', true);
 
 -- creer_concours() rejects a p_campagne_id that isn't a campagne offre.
@@ -6973,6 +6988,7 @@ declare
   v_count integer;
   v_statut text;
   v_mode text;
+  v_campagne_id uuid;
 begin
   select count(*) into v_count from concours_participants
     where concours_id = current_setting('app.concours_duo_id')::uuid;
@@ -6980,11 +6996,14 @@ begin
     raise exception 'TEST FAILED: creer_concours() should have inserted exactly 1 participant row, got %', v_count;
   end if;
 
-  select invite_statut into v_statut from concours_participants
+  select invite_statut, campagne_id into v_statut, v_campagne_id from concours_participants
     where concours_id = current_setting('app.concours_duo_id')::uuid
       and createur_id = 'c0450001-0000-0000-0000-000000000001';
   if v_statut != 'accepte' then
     raise exception 'TEST FAILED: the organisateur should be auto-accepted, got statut=%', v_statut;
+  end if;
+  if v_campagne_id != 'c0451001-0000-0000-0000-000000000001' then
+    raise exception 'TEST FAILED: the organisateur''s own campagne_id should be recorded immediately, got %', v_campagne_id;
   end if;
 
   select mode into v_mode from concours where id = current_setting('app.concours_duo_id')::uuid;
@@ -6992,33 +7011,8 @@ begin
     raise exception 'TEST FAILED: creer_concours() should always produce mode=entre_createurs, got %', v_mode;
   end if;
 
-  raise notice 'PASS: creer_concours() creates the concours and auto-accepts the organisateur as its first participant, mode=entre_createurs';
+  raise notice 'PASS: creer_concours() creates the concours and auto-accepts the organisateur (with their own campagne_id already set) as its first participant, mode=entre_createurs';
 end $$;
-
--- inviter_participant_concours(): organizer tries to link the STRANGER's
--- campagne to a different invitee (participant B) -- must be rejected.
--- This is the exact hole the brief calls out explicitly: without this
--- check, the organizer could attribute someone else's collected total to
--- the wrong participant.
-select set_config('app.current_user_id', 'c0450001-0000-0000-0000-000000000001', false);
-set role authenticated;
-do $$
-begin
-  begin
-    perform inviter_participant_concours(
-      current_setting('app.concours_duo_id')::uuid,
-      'c0450002-0000-0000-0000-000000000002',
-      'c0451006-0000-0000-0000-000000000006'
-    );
-    raise exception 'TEST FAILED: inviter_participant_concours() linked a campagne not owned by the invited créateur';
-  exception when others then
-    if sqlerrm != 'not authorized: this campaign does not belong to the invited créateur' then
-      raise exception 'TEST FAILED: unexpected error for the campagne-ownership violation: %', sqlerrm;
-    end if;
-    raise notice 'PASS: inviter_participant_concours() rejects a p_campagne_id that does not belong to the invited créateur';
-  end;
-end $$;
-reset role;
 
 -- A non-organizer cannot invite anyone.
 select set_config('app.current_user_id', 'c0450002-0000-0000-0000-000000000002', false);
@@ -7028,8 +7022,7 @@ begin
   begin
     perform inviter_participant_concours(
       current_setting('app.concours_duo_id')::uuid,
-      'c0450003-0000-0000-0000-000000000003',
-      'c0451003-0000-0000-0000-000000000003'
+      'c0450003-0000-0000-0000-000000000003'
     );
     raise exception 'TEST FAILED: a non-organizer was able to invite a participant';
   exception when others then
@@ -7041,50 +7034,132 @@ begin
 end $$;
 reset role;
 
--- Real invites: B, C, D, each with their own real campagne.
+-- Real invites: B, C, D -- identity only, no campagne_id involved at
+-- all. Verified directly (as the superuser, which bypasses RLS
+-- regardless -- same technique this file already uses elsewhere) that
+-- the resulting rows are genuinely campagne_id IS NULL, not just
+-- "whatever the caller happened to pass" -- proving the two-temps split
+-- is real, not cosmetic.
 select set_config('app.current_user_id', 'c0450001-0000-0000-0000-000000000001', false);
 set role authenticated;
-select inviter_participant_concours(current_setting('app.concours_duo_id')::uuid, 'c0450002-0000-0000-0000-000000000002', 'c0451002-0000-0000-0000-000000000002');
-select inviter_participant_concours(current_setting('app.concours_duo_id')::uuid, 'c0450003-0000-0000-0000-000000000003', 'c0451003-0000-0000-0000-000000000003');
-select inviter_participant_concours(current_setting('app.concours_duo_id')::uuid, 'c0450004-0000-0000-0000-000000000004', 'c0451004-0000-0000-0000-000000000004');
+select inviter_participant_concours(current_setting('app.concours_duo_id')::uuid, 'c0450002-0000-0000-0000-000000000002');
+select inviter_participant_concours(current_setting('app.concours_duo_id')::uuid, 'c0450003-0000-0000-0000-000000000003');
+select inviter_participant_concours(current_setting('app.concours_duo_id')::uuid, 'c0450004-0000-0000-0000-000000000004');
 reset role;
 
--- accepter_invitation_concours()/refuser_invitation_concours() only ever
--- act on the CALLER's own row (no target-createur parameter exists at
--- all) -- so "can't act on someone else's invitation" is structural, not
--- merely checked. What's actually testable: a caller with no invitation
--- at all for this concours gets a clear "invitation not found", not a
--- silent no-op or someone else's row being touched.
+do $$
+declare
+  v_campagne_b uuid;
+  v_statut_b text;
+begin
+  select campagne_id, invite_statut into v_campagne_b, v_statut_b from concours_participants
+    where concours_id = current_setting('app.concours_duo_id')::uuid
+      and createur_id = 'c0450002-0000-0000-0000-000000000002';
+  if v_statut_b != 'invite' then
+    raise exception 'TEST FAILED: participant B should be at invite_statut=invite right after being invited, got %', v_statut_b;
+  end if;
+  if v_campagne_b is not null then
+    raise exception 'TEST FAILED: campagne_id should be NULL right after inviting (before accepting), got %', v_campagne_b;
+  end if;
+  raise notice 'PASS: inviter_participant_concours() records the invitation with campagne_id genuinely NULL -- the campagne is supplied later, by the invitee, not at invite time';
+end $$;
+
+-- accepter_invitation_concours() only ever acts on the CALLER's own row
+-- (no target-createur parameter exists at all) -- so "can't act on
+-- someone else's invitation" is structural, not merely checked. What's
+-- actually testable: a caller with no invitation at all for this
+-- concours gets a clear "invitation not found", not a silent no-op or
+-- someone else's row being touched -- even when they supply a
+-- perfectly real p_campagne_id, proving eligibility is checked BEFORE
+-- the campagne is ever looked at.
 select set_config('app.current_user_id', 'c0450005-0000-0000-0000-000000000005', false);
 set role authenticated;
 do $$
 begin
   begin
-    perform accepter_invitation_concours(current_setting('app.concours_duo_id')::uuid);
+    perform accepter_invitation_concours(current_setting('app.concours_duo_id')::uuid, 'c0451006-0000-0000-0000-000000000006');
     raise exception 'TEST FAILED: accepter_invitation_concours() succeeded for a créateur who was never invited';
   exception when others then
     if sqlerrm != 'invitation not found' then
       raise exception 'TEST FAILED: unexpected error for a non-existent invitation: %', sqlerrm;
     end if;
-    raise notice 'PASS: accepter_invitation_concours() rejects a caller with no invitation at all ("invitation not found")';
+    raise notice 'PASS: accepter_invitation_concours() rejects a caller with no invitation at all ("invitation not found"), even with a real p_campagne_id supplied';
   end;
 end $$;
 reset role;
 
--- Participant B accepts their own real invitation.
-select set_config('app.current_user_id', 'c0450002-0000-0000-0000-000000000002', false);
-set role authenticated;
-select accepter_invitation_concours(current_setting('app.concours_duo_id')::uuid);
-reset role;
-
--- A second accept attempt on the same, already-resolved invitation is
--- rejected, not silently re-applied.
+-- The key correction this lot makes: it is still impossible to accept
+-- with someone ELSE's campagne -- participant B, genuinely invited,
+-- tries to accept using the STRANGER's campagne_id.
 select set_config('app.current_user_id', 'c0450002-0000-0000-0000-000000000002', false);
 set role authenticated;
 do $$
 begin
   begin
-    perform accepter_invitation_concours(current_setting('app.concours_duo_id')::uuid);
+    perform accepter_invitation_concours(current_setting('app.concours_duo_id')::uuid, 'c0451006-0000-0000-0000-000000000006');
+    raise exception 'TEST FAILED: accepter_invitation_concours() accepted with a campagne belonging to someone else';
+  exception when others then
+    if sqlerrm != 'not authorized: you can only use your own campaign' then
+      raise exception 'TEST FAILED: unexpected error accepting with someone else''s campagne: %', sqlerrm;
+    end if;
+    raise notice 'PASS: accepter_invitation_concours() rejects a p_campagne_id that does not belong to the accepting créateur (reusing the same check as creer_concours())';
+  end;
+end $$;
+reset role;
+
+-- ... and also the organisateur's own campagne, not just a stranger's --
+-- confirms the check is a genuine ownership check, not merely "is this
+-- id known to the concours at all".
+select set_config('app.current_user_id', 'c0450002-0000-0000-0000-000000000002', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform accepter_invitation_concours(current_setting('app.concours_duo_id')::uuid, 'c0451001-0000-0000-0000-000000000001');
+    raise exception 'TEST FAILED: accepter_invitation_concours() accepted with the organisateur''s own campagne';
+  exception when others then
+    if sqlerrm != 'not authorized: you can only use your own campaign' then
+      raise exception 'TEST FAILED: unexpected error accepting with the organisateur''s campagne: %', sqlerrm;
+    end if;
+    raise notice 'PASS: accepter_invitation_concours() rejects the organisateur''s own campagne_id too when the caller is a different créateur';
+  end;
+end $$;
+reset role;
+
+-- Participant B accepts with their OWN real campagne -- the real,
+-- correct end-to-end two-temps flow: invite (no campagne_id) -> accept
+-- (own campagne_id) -> visible in concours_publics.
+select set_config('app.current_user_id', 'c0450002-0000-0000-0000-000000000002', false);
+set role authenticated;
+select accepter_invitation_concours(current_setting('app.concours_duo_id')::uuid, 'c0451002-0000-0000-0000-000000000002');
+reset role;
+
+do $$
+declare
+  v_campagne_b uuid;
+  v_statut_b text;
+begin
+  select campagne_id, invite_statut into v_campagne_b, v_statut_b from concours_participants
+    where concours_id = current_setting('app.concours_duo_id')::uuid
+      and createur_id = 'c0450002-0000-0000-0000-000000000002';
+  if v_statut_b != 'accepte' then
+    raise exception 'TEST FAILED: participant B should be accepte after accepting, got %', v_statut_b;
+  end if;
+  if v_campagne_b != 'c0451002-0000-0000-0000-000000000002' then
+    raise exception 'TEST FAILED: participant B''s own campagne_id should be recorded on accept, got %', v_campagne_b;
+  end if;
+  raise notice 'PASS: the two-temps flow works end-to-end: invited with no campagne_id, accepted with their own real campagne_id, both set atomically';
+end $$;
+
+-- A second accept attempt on the same, already-resolved invitation is
+-- rejected, not silently re-applied (still checked before the campagne
+-- is looked at -- an arbitrary p_campagne_id is enough to prove this).
+select set_config('app.current_user_id', 'c0450002-0000-0000-0000-000000000002', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform accepter_invitation_concours(current_setting('app.concours_duo_id')::uuid, 'c0451002-0000-0000-0000-000000000002');
     raise exception 'TEST FAILED: accepter_invitation_concours() re-applied on an already-accepted invitation';
   exception when others then
     if sqlerrm != 'invitation already resolved' then
@@ -7095,7 +7170,8 @@ begin
 end $$;
 reset role;
 
--- Participant C refuses their own real invitation.
+-- Participant C refuses their own real invitation -- refuser_invitation_concours()'s
+-- signature is completely unchanged by this lot.
 select set_config('app.current_user_id', 'c0450003-0000-0000-0000-000000000003', false);
 set role authenticated;
 select refuser_invitation_concours(current_setting('app.concours_duo_id')::uuid);
@@ -7125,11 +7201,16 @@ reset role;
 -- ---------------------------------------------------------------------
 -- concours_publics: exactly the accepted rows, nothing else -- explicit
 -- test, not assumed. Concours Duo now has: organisateur (accepte),
--- B (accepte), C (refuse), D (still invite). Only 2 rows expected.
+-- B (accepte), C (refuse), D (still invite). Only 2 rows expected, and
+-- -- the point Phase 1-bis's schema change makes newly relevant --
+-- neither of those 2 rows may ever have a NULL campagne_id, since
+-- campagne_id is only ever populated at the exact moment invite_statut
+-- becomes 'accepte'.
 -- ---------------------------------------------------------------------
 do $$
 declare
   v_count integer;
+  v_null_campagne_count integer;
   v_has_c boolean;
   v_has_d boolean;
 begin
@@ -7137,6 +7218,12 @@ begin
     where concours_id = current_setting('app.concours_duo_id')::uuid;
   if v_count != 2 then
     raise exception 'TEST FAILED: concours_publics should show exactly 2 accepted participants, got %', v_count;
+  end if;
+
+  select count(*) into v_null_campagne_count from concours_publics
+    where concours_id = current_setting('app.concours_duo_id')::uuid and campagne_id is null;
+  if v_null_campagne_count != 0 then
+    raise exception 'TEST FAILED: concours_publics has a row with a NULL campagne_id -- an accepted row must always have one';
   end if;
 
   select exists(
@@ -7157,7 +7244,7 @@ begin
     raise exception 'TEST FAILED: a still-INVITED (never resolved) participant (D) leaked into concours_publics';
   end if;
 
-  raise notice 'PASS: concours_publics shows only accepted participants -- a refused or still-pending invitation never appears';
+  raise notice 'PASS: concours_publics shows only accepted participants, each with a real campagne_id -- a refused or still-pending invitation never appears, and no accepted row is ever missing its campagne';
 end $$;
 
 -- ---------------------------------------------------------------------
@@ -7210,7 +7297,8 @@ end $$;
 -- the screen against -- Concours Duo above already covers N=2. This
 -- covers N=3 and an arbitrary N=5, reusing the same créateurs' existing
 -- campagnes (nothing prevents the same campagne_id from being linked
--- into more than one concours).
+-- into more than one concours) -- each invite/accept pair now goes
+-- through the full two-temps flow.
 -- ---------------------------------------------------------------------
 select set_config('app.current_user_id', 'c0450001-0000-0000-0000-000000000001', false);
 set role authenticated;
@@ -7219,16 +7307,16 @@ select set_config(
   (select creer_concours('Concours Trio', now() + interval '10 days', 'c0451001-0000-0000-0000-000000000001'))::text,
   false
 );
-select inviter_participant_concours(current_setting('app.concours_trio_id')::uuid, 'c0450002-0000-0000-0000-000000000002', 'c0451002-0000-0000-0000-000000000002');
-select inviter_participant_concours(current_setting('app.concours_trio_id')::uuid, 'c0450003-0000-0000-0000-000000000003', 'c0451003-0000-0000-0000-000000000003');
+select inviter_participant_concours(current_setting('app.concours_trio_id')::uuid, 'c0450002-0000-0000-0000-000000000002');
+select inviter_participant_concours(current_setting('app.concours_trio_id')::uuid, 'c0450003-0000-0000-0000-000000000003');
 reset role;
 select set_config('app.current_user_id', 'c0450002-0000-0000-0000-000000000002', false);
 set role authenticated;
-select accepter_invitation_concours(current_setting('app.concours_trio_id')::uuid);
+select accepter_invitation_concours(current_setting('app.concours_trio_id')::uuid, 'c0451002-0000-0000-0000-000000000002');
 reset role;
 select set_config('app.current_user_id', 'c0450003-0000-0000-0000-000000000003', false);
 set role authenticated;
-select accepter_invitation_concours(current_setting('app.concours_trio_id')::uuid);
+select accepter_invitation_concours(current_setting('app.concours_trio_id')::uuid, 'c0451003-0000-0000-0000-000000000003');
 reset role;
 
 do $$
@@ -7249,26 +7337,26 @@ select set_config(
   (select creer_concours('Concours Quintet', now() + interval '10 days', 'c0451001-0000-0000-0000-000000000001'))::text,
   false
 );
-select inviter_participant_concours(current_setting('app.concours_quintet_id')::uuid, 'c0450002-0000-0000-0000-000000000002', 'c0451002-0000-0000-0000-000000000002');
-select inviter_participant_concours(current_setting('app.concours_quintet_id')::uuid, 'c0450003-0000-0000-0000-000000000003', 'c0451003-0000-0000-0000-000000000003');
-select inviter_participant_concours(current_setting('app.concours_quintet_id')::uuid, 'c0450004-0000-0000-0000-000000000004', 'c0451004-0000-0000-0000-000000000004');
-select inviter_participant_concours(current_setting('app.concours_quintet_id')::uuid, 'c0450006-0000-0000-0000-000000000006', 'c0451006-0000-0000-0000-000000000006');
+select inviter_participant_concours(current_setting('app.concours_quintet_id')::uuid, 'c0450002-0000-0000-0000-000000000002');
+select inviter_participant_concours(current_setting('app.concours_quintet_id')::uuid, 'c0450003-0000-0000-0000-000000000003');
+select inviter_participant_concours(current_setting('app.concours_quintet_id')::uuid, 'c0450004-0000-0000-0000-000000000004');
+select inviter_participant_concours(current_setting('app.concours_quintet_id')::uuid, 'c0450006-0000-0000-0000-000000000006');
 reset role;
 select set_config('app.current_user_id', 'c0450002-0000-0000-0000-000000000002', false);
 set role authenticated;
-select accepter_invitation_concours(current_setting('app.concours_quintet_id')::uuid);
+select accepter_invitation_concours(current_setting('app.concours_quintet_id')::uuid, 'c0451002-0000-0000-0000-000000000002');
 reset role;
 select set_config('app.current_user_id', 'c0450003-0000-0000-0000-000000000003', false);
 set role authenticated;
-select accepter_invitation_concours(current_setting('app.concours_quintet_id')::uuid);
+select accepter_invitation_concours(current_setting('app.concours_quintet_id')::uuid, 'c0451003-0000-0000-0000-000000000003');
 reset role;
 select set_config('app.current_user_id', 'c0450004-0000-0000-0000-000000000004', false);
 set role authenticated;
-select accepter_invitation_concours(current_setting('app.concours_quintet_id')::uuid);
+select accepter_invitation_concours(current_setting('app.concours_quintet_id')::uuid, 'c0451004-0000-0000-0000-000000000004');
 reset role;
 select set_config('app.current_user_id', 'c0450006-0000-0000-0000-000000000006', false);
 set role authenticated;
-select accepter_invitation_concours(current_setting('app.concours_quintet_id')::uuid);
+select accepter_invitation_concours(current_setting('app.concours_quintet_id')::uuid, 'c0451006-0000-0000-0000-000000000006');
 reset role;
 
 do $$
@@ -7310,11 +7398,11 @@ select set_config(
   (select creer_concours('Concours Clos', now() - interval '1 day', 'c0451101-0000-0000-0000-000000000001'))::text,
   false
 );
-select inviter_participant_concours(current_setting('app.concours_clos_id')::uuid, 'c0450002-0000-0000-0000-000000000002', 'c0451102-0000-0000-0000-000000000002');
+select inviter_participant_concours(current_setting('app.concours_clos_id')::uuid, 'c0450002-0000-0000-0000-000000000002');
 reset role;
 select set_config('app.current_user_id', 'c0450002-0000-0000-0000-000000000002', false);
 set role authenticated;
-select accepter_invitation_concours(current_setting('app.concours_clos_id')::uuid);
+select accepter_invitation_concours(current_setting('app.concours_clos_id')::uuid, 'c0451102-0000-0000-0000-000000000002');
 reset role;
 
 -- Close the underlying campagnes via the pre-existing sweep -- the exact
@@ -7348,12 +7436,44 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------
+-- The old, pre-Phase-1-bis function signatures are confirmed gone
+-- outright -- undefined_function, not merely inaccessible -- same
+-- discipline already established for reposter_publication() ->
+-- toggler_repost_publication() (migration 0032).
+-- ---------------------------------------------------------------------
+select set_config('app.current_user_id', 'c0450001-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform inviter_participant_concours(
+      current_setting('app.concours_duo_id')::uuid,
+      'c0450005-0000-0000-0000-000000000005',
+      'c0451001-0000-0000-0000-000000000001'
+    );
+    raise exception 'TEST FAILED: the old 3-arg inviter_participant_concours() signature is still callable';
+  exception when undefined_function then
+    raise notice 'PASS: the old 3-arg inviter_participant_concours(uuid, uuid, uuid) signature is gone outright (undefined_function)';
+  end;
+end $$;
+do $$
+begin
+  begin
+    perform accepter_invitation_concours(current_setting('app.concours_duo_id')::uuid);
+    raise exception 'TEST FAILED: the old 1-arg accepter_invitation_concours() signature is still callable';
+  exception when undefined_function then
+    raise notice 'PASS: the old 1-arg accepter_invitation_concours(uuid) signature is gone outright (undefined_function)';
+  end;
+end $$;
+reset role;
+
+-- ---------------------------------------------------------------------
 -- Security: same grant-audit discipline as every write RPC since
 -- migration 0020 -- anon has no EXECUTE at all on any of the 4 new
--- functions, and authenticated with a genuinely NULL auth.uid() is
--- rejected by each function's own internal check. Positive check:
--- anon DOES have SELECT on concours_publics -- a shared concours link
--- must work for a logged-out visitor.
+-- functions (current signatures), and authenticated with a genuinely
+-- NULL auth.uid() is rejected by each function's own internal check.
+-- Positive check: anon DOES have SELECT on concours_publics -- a shared
+-- concours link must work for a logged-out visitor.
 -- ---------------------------------------------------------------------
 select set_config('app.current_user_id', '', false);
 set role anon;
@@ -7369,7 +7489,7 @@ end $$;
 do $$
 begin
   begin
-    perform inviter_participant_concours(current_setting('app.concours_duo_id')::uuid, 'c0450005-0000-0000-0000-000000000005', 'c0451001-0000-0000-0000-000000000001');
+    perform inviter_participant_concours(current_setting('app.concours_duo_id')::uuid, 'c0450005-0000-0000-0000-000000000005');
     raise exception 'TEST FAILED: anon was able to call inviter_participant_concours() at all';
   exception when insufficient_privilege then
     raise notice 'PASS: anon has no EXECUTE privilege on inviter_participant_concours()';
@@ -7378,7 +7498,7 @@ end $$;
 do $$
 begin
   begin
-    perform accepter_invitation_concours(current_setting('app.concours_duo_id')::uuid);
+    perform accepter_invitation_concours(current_setting('app.concours_duo_id')::uuid, 'c0451001-0000-0000-0000-000000000001');
     raise exception 'TEST FAILED: anon was able to call accepter_invitation_concours() at all';
   exception when insufficient_privilege then
     raise notice 'PASS: anon has no EXECUTE privilege on accepter_invitation_concours()';
@@ -7427,7 +7547,7 @@ end $$;
 do $$
 begin
   begin
-    perform inviter_participant_concours(current_setting('app.concours_duo_id')::uuid, 'c0450005-0000-0000-0000-000000000005', 'c0451001-0000-0000-0000-000000000001');
+    perform inviter_participant_concours(current_setting('app.concours_duo_id')::uuid, 'c0450005-0000-0000-0000-000000000005');
     raise exception 'TEST FAILED: inviter_participant_concours() succeeded with auth.uid() IS NULL';
   exception when others then
     if sqlerrm != 'not authenticated' then
@@ -7439,7 +7559,7 @@ end $$;
 do $$
 begin
   begin
-    perform accepter_invitation_concours(current_setting('app.concours_duo_id')::uuid);
+    perform accepter_invitation_concours(current_setting('app.concours_duo_id')::uuid, 'c0451001-0000-0000-0000-000000000001');
     raise exception 'TEST FAILED: accepter_invitation_concours() succeeded with auth.uid() IS NULL';
   exception when others then
     if sqlerrm != 'not authenticated' then
@@ -7475,23 +7595,42 @@ begin
 end $$;
 
 -- Positive check: authenticated still holds EXECUTE on all 4 (the
--- revoke didn't overreach).
+-- revoke didn't overreach), against their CURRENT signatures.
 do $$
 begin
   if not has_function_privilege('authenticated', 'creer_concours(text, timestamptz, uuid)', 'EXECUTE') then
     raise exception 'TEST FAILED: authenticated lost EXECUTE on creer_concours()';
   end if;
-  if not has_function_privilege('authenticated', 'inviter_participant_concours(uuid, uuid, uuid)', 'EXECUTE') then
+  if not has_function_privilege('authenticated', 'inviter_participant_concours(uuid, uuid)', 'EXECUTE') then
     raise exception 'TEST FAILED: authenticated lost EXECUTE on inviter_participant_concours()';
   end if;
-  if not has_function_privilege('authenticated', 'accepter_invitation_concours(uuid)', 'EXECUTE') then
+  if not has_function_privilege('authenticated', 'accepter_invitation_concours(uuid, uuid)', 'EXECUTE') then
     raise exception 'TEST FAILED: authenticated lost EXECUTE on accepter_invitation_concours()';
   end if;
   if not has_function_privilege('authenticated', 'refuser_invitation_concours(uuid)', 'EXECUTE') then
     raise exception 'TEST FAILED: authenticated lost EXECUTE on refuser_invitation_concours()';
   end if;
-  raise notice 'PASS: authenticated still holds EXECUTE on all 4 concours RPCs';
+  raise notice 'PASS: authenticated still holds EXECUTE on all 4 concours RPCs (current signatures)';
 end $$;
+
+-- ---------------------------------------------------------------------
+-- verifier_campagne_du_createur() itself (migration 0046) -- purely
+-- internal, no grant to anyone at all, not even authenticated. A direct
+-- call from an authenticated caller must be rejected the same way as any
+-- other un-granted function.
+-- ---------------------------------------------------------------------
+select set_config('app.current_user_id', 'c0450001-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform verifier_campagne_du_createur('c0451001-0000-0000-0000-000000000001', 'c0450001-0000-0000-0000-000000000001');
+    raise exception 'TEST FAILED: authenticated was able to call verifier_campagne_du_createur() directly';
+  exception when insufficient_privilege then
+    raise notice 'PASS: verifier_campagne_du_createur() has no EXECUTE grant for authenticated -- purely internal, called only from inside other SECURITY DEFINER functions';
+  end;
+end $$;
+reset role;
 
 -- ---------------------------------------------------------------------
 -- Reserved pseudo: 'concours' (new /concours/[id] route, migration

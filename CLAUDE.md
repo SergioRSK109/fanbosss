@@ -4656,7 +4656,7 @@ so the dashboard's numbers can never disagree with what a fan sees) as
 an extra optional field on the `Offre` type passed into `OffresManager`,
 meaningful only for `campagne` rows.
 
-## Creator contests (`concours`, Phase 1: mode `entre_createurs` only, migration 0045)
+## Creator contests (`concours`, Phase 1: mode `entre_createurs` only, migrations 0045-0046)
 
 Inspired by the money contests créateurs already run on TikTok live
 streams, but **FanBoss never tries to replicate the live video itself**
@@ -4714,25 +4714,34 @@ goes through one of the four RPCs below, and public reads go through
   themselves and waits" step. Rejects a `p_campagne_id` that isn't
   `type = 'campagne'`, and rejects one that isn't owned by the caller
   (`createur_id is distinct from auth.uid()`).
-- **`inviter_participant_concours(p_concours_id, p_createur_id,
-  p_campagne_id)`** — organizer-only (`concours.organisateur_id =
-  auth.uid()`). **The ownership check on `p_campagne_id` is the one
-  real security hole this lot was built to close explicitly**: without
-  it, the organizer could link *any* créateur's campagne to a
-  *different* invitee, corrupting the contest's own display data
-  (someone else's collected total attributed to the wrong participant).
-  The check is against the **invited** créateur
-  (`offre.createur_id is distinct from p_createur_id`), not the caller.
-- **`accepter_invitation_concours(p_concours_id)`** /
+- **`inviter_participant_concours(p_concours_id, p_createur_id)`** —
+  organizer-only (`concours.organisateur_id = auth.uid()`).
+  > **Revised by Phase 1-bis (migration 0046) — corrected in place here
+  > per this file's own "the code is correct, update the doc" rule.**
+  > This originally took a third parameter, `p_campagne_id`, with the
+  > organizer expected to supply the invited créateur's own campagne up
+  > front. That was never actually usable: **an organizer has no way to
+  > know someone else's internal offre id** — pseudo is the only handle
+  > they have on another créateur at all — and even resolving "their
+  > campagne" by pseudo would still be guessing at which of the
+  > invitee's several campagnes (if any) they'd actually want linked.
+  > The signature is now identity-only; see "Phase 1-bis" below for the
+  > corrected two-step flow and where the campagne ownership check
+  > actually moved to.
+- **`accepter_invitation_concours(p_concours_id, p_campagne_id)`** /
   **`refuser_invitation_concours(p_concours_id)`** — both take only a
-  concours id, never a target créateur id, so "can't act on someone
-  else's invitation" is structural, not just checked: the function can
-  only ever touch the caller's own `(concours_id, auth.uid())` row.
-  Each distinguishes "no invitation at all for you" (`'invitation not
+  concours id (plus, since Phase 1-bis, the accepting créateur's own
+  `p_campagne_id` for `accepter_invitation_concours` specifically),
+  never a target créateur id, so "can't act on someone else's
+  invitation" is structural, not just checked: the function can only
+  ever touch the caller's own `(concours_id, auth.uid())` row. Each
+  distinguishes "no invitation at all for you" (`'invitation not
   found'`) from "already resolved" (`'invitation already resolved'`,
   when `invite_statut != 'invite'`) rather than silently no-op'ing
   either way — a second accept/refuse attempt on an already-resolved row
-  is rejected, never re-applied.
+  is rejected, never re-applied. Eligibility is always checked *before*
+  the campagne — so a caller who was never invited gets `'invitation not
+  found'` even if they also supplied a real, valid `p_campagne_id`.
 
 ### `concours_publics` — the public view
 
@@ -4817,6 +4826,111 @@ to `window.location.href` instead of building a campagne anchor — every
 existing call site (the campagne cards' own anchor-based share) is
 completely unaffected.
 
+### Phase 1-bis: two-step invitation + créateur-facing UI (migration 0046)
+
+Follow-up to Phase 1 above, addressing two real gaps in the same
+sitting: the invitation flow's own design flaw (see the
+`inviter_participant_concours()`/`accepter_invitation_concours()` entry
+above) and the complete absence of any créateur-facing UI (Phase 1
+shipped schema + RPCs + the public page only, by explicit scope).
+
+**The invitation flow is now genuinely two separate steps, not one.**
+`concours_participants.campagne_id` is nullable (`alter table
+concours_participants alter column campagne_id drop not null`) —
+`null` while `invite_statut = 'invite'`, always set the instant it
+becomes `'accepte'`, never in between. Step 1:
+`inviter_participant_concours(p_concours_id, p_createur_id)` — the
+organizer invites by identity only, inserting a row with
+`campagne_id = null`. Step 2:
+`accepter_invitation_concours(p_concours_id, p_campagne_id)` — the
+*invited* créateur supplies their *own* campagne at the moment they
+accept, and `invite_statut`/`campagne_id` are set together in the same
+`UPDATE`. **`concours_publics` itself needed no change at all** — it
+already filtered to `invite_statut = 'accepte'` only, and since
+`campagne_id` is now only ever populated in the exact same statement
+that sets `invite_statut = 'accepte'`, no publicly-visible row can ever
+have a null `campagne_id` — verified directly in `checklist_2_3.sql`,
+not just inferred from the schema.
+
+**`verifier_campagne_du_createur(p_campagne_id, p_createur_id)`** is the
+ownership+type check (`campagne not found` / `not authorized: p_campagne_id
+must reference a campagne offre` / `not authorized: you can only use
+your own campaign`) extracted out of `creer_concours()`'s own inline
+logic and shared with `accepter_invitation_concours()` — reused, not
+duplicated, per explicit instruction. Deliberately **not** `SECURITY
+DEFINER` itself: called only from within another `SECURITY DEFINER`
+function's body, it inherits that function's already-elevated execution
+context the same way `soutient_createur()` (a plain function) does when
+called from inside `peut_voir_publication_complete()` (migration 0029)
+— no grant is needed for this to work, and none is given: `revoke all
+... from public`, no `grant` statement at all. This is a purely internal
+helper, never meant to be called directly by any role — verified
+directly (`checklist_2_3.sql`): a genuinely authenticated caller gets a
+real `insufficient_privilege` trying to call it themselves.
+
+**`concours_participants` gained one new RLS policy**,
+`concours_participants_select_own` (`createur_id = auth.uid()`) — before
+this, a créateur had no way to read even their *own* pending invitation
+back (the table had zero SELECT policies at all, public reads only ever
+went through `concours_publics`, which deliberately never shows a
+non-accepted row to anyone). Same exact precedent as
+`reservations_stock_select_own` (physical products, migration 0039): a
+self-only SELECT policy added specifically so the legitimate owner can
+read their own row through the normal authenticated client, without
+opening anything up publicly. `concours` itself needed no equivalent new
+policy — since `creer_concours()` always auto-accepts the organizer in
+the same transaction, `concours_publics` already has at least the
+organizer's own row for any concours that exists, including one the
+caller has only been invited to, so `nom`/`date_fin`/`organisateur_id`
+are readable from there for both "mes concours" and "invitations en
+attente" without touching the raw `concours` table at all.
+
+**Créateur-facing UI, new: a third `/offres` tab, "Concours"** —
+`ConcoursManager.tsx`, wired into `OffresTabs.tsx` exactly like
+"Produit physique" was (same pre-built-content-as-props, client-only-
+toggles-visibility pattern; `OffresTabs` just gained a third slot).
+Three sections, per the brief: **"Mes concours en cours"** (concours the
+créateur organizes or has already accepted — each card lists every
+accepted participant with their live `montant_collecte`, and shows an
+inline "Inviter quelqu'un" form only when the viewer is the
+`organisateur_id`); **"Invitations en attente"** (rows where
+`createur_id = moi` and `invite_statut = 'invite'`, each with an
+Accepter/Refuser pair — Accepter shows a `<select>` of the créateur's
+own *active* campagnes, or a plain message inviting them to create one
+first if they have none at all, never a disabled dead-end); **"Créer un
+concours"** (nom / date de fin / a `<select>` of the créateur's own
+active campagnes). `getConcoursGereesEtInvitations(userId)`
+(`src/lib/concoursPublic.ts`) is the one function backing all of this —
+reads `concours_participants` (self policy) then cross-references
+`concours_publics`, exactly as described above.
+
+**Inviting is by pseudo, resolved server-side** — the organizer never
+sees or handles a raw id. `POST /api/concours/[id]/inviter` reuses the
+*exact same* `escapeIlike()` + `profils_publics` `ilike` lookup
+`src/app/[locale]/[handle]/page.tsx` already uses to resolve `/@pseudo`,
+rather than inventing a second resolution mechanism — per explicit
+instruction to reuse an existing one where available. A pseudo that
+resolves to nobody is a clean 404, never an ambiguous 400; nothing
+sensitive leaks either way, since `pseudo` is already public via
+`profils_publics`/`/@pseudo` — confirming a handle exists and resolving
+it is no more than a visitor could already learn by loading `/@<pseudo>`
+directly. Three more thin RPC wrapper routes (`/api/concours` — create,
+`/api/concours/[id]/accepter`, `/api/concours/[id]/refuser`), same shape
+as every other RPC wrapper in this project — none of the real
+authorization/eligibility logic lives in application code, all of it
+stays in the RPCs.
+
+**A real hydration bug was caught (and fixed) during visual
+verification, not assumed away**: `ConcoursOrganiseCard`/`InvitationRow`
+originally called `new Date(...).toLocaleDateString()` with no explicit
+locale argument — which resolves from the *server's* runtime default at
+SSR time and the *browser's* own locale at hydration time, and those
+disagreed in the verification harness (`"16/08/2026"` server-rendered vs
+`"8/16/2026"` client-rendered), a real, reproducible React hydration
+mismatch. Fixed the same way `RemboursementsManuelsManager` already
+does it: a local `formatDate(iso, locale)` helper fed `useLocale()`'s
+value explicitly, so server and client always agree.
+
 ### Reserved pseudo
 
 `'concours'` added to both `users_pseudo_not_reserved` (DB) and
@@ -4827,30 +4941,53 @@ discipline as every previous route addition.
 
 `checklist_2_3.sql`: `creer_concours()` rejects a non-campagne
 `p_campagne_id` and one not owned by the caller, then a real success
-auto-accepts the organizer with `mode = 'entre_createurs'` always;
-`inviter_participant_concours()` rejects a campagne not owned by the
-*invited* créateur (the exact hole this lot closes) and a non-organizer
-caller; `accepter_invitation_concours()`/`refuser_invitation_concours()`
-reject a caller with no invitation at all and a second attempt on an
-already-resolved one; `concours_publics` is proven to show only accepted
-participants — a refused or still-pending (never resolved) invitation is
-explicitly confirmed absent, not assumed; `montant_collecte` is compared
-directly against `campagnes_montant_collecte` rather than asserting a
-hardcoded number twice; the accepted-participant count is verified
-correct for 2, 3, and an arbitrary 5 participants; winner determination
-is proven end-to-end (dedicated backdated campagnes, `close_expired_campagnes()`
-actually called, then the higher-funded participant confirmed as the
-leader); and the full `0020`/`0021` grant-audit pattern holds across all
-four RPCs (`anon` has no `EXECUTE`, `authenticated` with a `NULL
-auth.uid()` is rejected by each function's own check, none of the
-rejected attempts left a trace, `authenticated` still holds `EXECUTE`,
-and `anon` **does** correctly have `SELECT` on `concours_publics`).
+auto-accepts the organizer with `mode = 'entre_createurs'` always (and
+their own `campagne_id` already set); `inviter_participant_concours()`
+rejects a non-organizer caller and records the invitation with
+`campagne_id` genuinely `NULL` (verified directly, not assumed) —
+proving the two-temps split is real, not cosmetic;
+`accepter_invitation_concours()` rejects a caller with no invitation at
+all (even with a real `p_campagne_id` supplied, proving eligibility is
+checked *before* the campagne), rejects accepting with **someone else's**
+campagne — both a stranger's and the organizer's own — reusing the exact
+same `'not authorized: you can only use your own campaign'` check
+`creer_concours()` itself raises, and a second accept/refuse attempt on
+an already-resolved row is rejected; the full two-temps flow is proven
+end-to-end (invite with no campagne → accept with the invitee's own real
+campagne → both `invite_statut`/`campagne_id` correctly set together);
+`refuser_invitation_concours()`'s own rejection paths are unchanged and
+re-verified; the old 3-arg `inviter_participant_concours`/1-arg
+`accepter_invitation_concours` signatures are confirmed gone outright
+(`undefined_function`, not merely inaccessible — same discipline as
+`toggler_repost_publication()`'s own rename test, migration 0032);
+`concours_publics` is proven to show only accepted participants, each
+with a real (never null) `campagne_id` — a refused or still-pending
+(never resolved) invitation is explicitly confirmed absent, not assumed;
+`montant_collecte` is compared directly against
+`campagnes_montant_collecte` rather than asserting a hardcoded number
+twice; the accepted-participant count is verified correct for 2, 3, and
+an arbitrary 5 participants; winner determination is proven end-to-end
+(dedicated backdated campagnes, `close_expired_campagnes()` actually
+called, then the higher-funded participant confirmed as the leader);
+`verifier_campagne_du_createur()` is confirmed to have no `EXECUTE`
+grant for `authenticated` at all; and the full `0020`/`0021` grant-audit
+pattern holds across all four RPCs at their *current* signatures (`anon`
+has no `EXECUTE`, `authenticated` with a `NULL auth.uid()` is rejected
+by each function's own check, none of the rejected attempts left a
+trace, `authenticated` still holds `EXECUTE`, and `anon` **does**
+correctly have `SELECT` on `concours_publics`).
 Vitest (`src/lib/__tests__/concours.test.ts`): `computeLeaderIds` (empty
 list, all-zero, a single leader, a tie), `isConcoursEnded`'s boundary
 (exactly at `date_fin` counts as ended), `computeEqualSharePercent` at
 1/2/3/7/0/negative participants, and `computeCountdownParts`'s
 day/hour/minute/second breakdown including the zero-clamp once
-`date_fin` has passed.
+`date_fin` has passed. Plus, for Phase 1-bis, route tests for all four
+`/api/concours*` endpoints (`src/app/api/concours/**/__tests__/route.test.ts`)
+— auth required on every one, a malformed body rejected with 400 *before*
+the RPC is ever called, the RPC's own rejection surfaced verbatim, and —
+for the invite route specifically — an unresolvable pseudo returns a
+clean 404 without ever reaching `inviter_participant_concours()`, and a
+leading `@` resolves exactly like a plain pseudo.
 
 Verified visually end-to-end (same throwaway mock-Supabase/Playwright
 technique used throughout this file — a small Node mock of just the
@@ -4875,15 +5012,36 @@ browser context's own `locale` is set explicitly — the exact same
 gotcha already documented in this file's "Full i18n coverage extension"
 section, re-encountered and re-confirmed here, not a new finding).
 
+**Phase 1-bis's own créateur-facing UI was verified the same way**, with
+a stateful mock (real in-memory fixture arrays the mocked RPC endpoints
+actually mutate, not static canned responses) so a full, real click-
+through could be proven end-to-end rather than just individual screens:
+logged in as a créateur organizing one concours (with a pending
+invitation to a second and third, from a different créateur) — the
+"Concours" tab renders "Mes concours en cours" (own concours + accepted
+participants and live montants), "Invitations en attente" (two pending
+rows, each with an Accepter dropdown populated from the viewer's own
+active campagnes, and a Refuser button), and "Créer un concours"; clicking
+Accepter on one invitation moves it into "Mes concours en cours" (now
+showing both participants) and out of "Invitations en attente" in the
+same `router.refresh()`; clicking Refuser on the other removes it too,
+leaving the empty-state message; inviting a third créateur by pseudo
+shows "Invitation envoyée !"; submitting "Créer un concours" adds a new
+card with its own "Inviter quelqu'un" form. Zero console errors
+throughout — confirmed in both `fr` (light) and `/en/` (dark). This same
+pass is what caught the `toLocaleDateString()` hydration bug documented
+above; the fix was re-verified the same way afterward, not assumed
+correct from the diff alone.
+
 ### What Phase 1 deliberately doesn't build (scope, stated explicitly)
 
 - **Mode `maitre_du_jeu`** (see above) — schema column only, no RPC path
   reaches it, no 3-way split transaction exists anywhere in this
   codebase.
-- No créateur-facing UI to create/manage a concours from `/offres` or
-  anywhere else — this lot is schema + RPCs + the public page only, per
-  the brief's own explicit phase scope. A concours today can only be
-  created/managed via direct RPC calls (or a future UI lot).
+- ~~No créateur-facing UI~~ — **built in Phase 1-bis** (migration 0046,
+  see above): a third `/offres` tab, `ConcoursManager.tsx`. This bullet
+  is kept, struck through, so nobody re-reads Phase 1's original scope
+  note and assumes the UI still doesn't exist.
 - No notification wiring (migration 0034's `creer_notification()`) for
   concours invitations — an invited créateur has no in-app bell alert
   telling them they've been invited. Not requested by this lot's brief;

@@ -325,3 +325,32 @@ export const publierMessageSchema = z
     message: "une publication doit contenir du texte, une image ou une vidéo",
     path: ["contenu"],
   });
+
+// Concours entre créateurs, Phase 1 (migration 0045) + the Phase 1-bis
+// two-temps invitation flow (migration 0046). Mirrors each RPC's own
+// signature -- the RPC is still the real guarantee (ownership/type
+// checks, mode always forced to 'entre_createurs' server-side), these
+// are just the usual "clean 400 instead of a raw Postgres error" layer.
+export const creerConcoursSchema = z
+  .object({
+    nom: z.string().trim().min(1).max(100),
+    dateFin: z.string().trim().min(1),
+    campagneId: z.string().uuid(),
+  })
+  .strict();
+
+// Invitation is by identity only since migration 0046 -- no campagne_id
+// here at all, deliberately: nobody but the invited créateur can know
+// which of their own campagnes (if any) they'd want linked, so that
+// choice moves to accepterConcoursSchema below, at accept time.
+export const inviterConcoursSchema = z
+  .object({
+    pseudo: z.string().trim().min(1),
+  })
+  .strict();
+
+export const accepterConcoursSchema = z
+  .object({
+    campagneId: z.string().uuid(),
+  })
+  .strict();

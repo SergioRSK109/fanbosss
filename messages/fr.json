@@ -84,7 +84,8 @@
     "heading": "Offres",
     "tabs": {
       "service": "Service",
-      "produit": "Produit physique"
+      "produit": "Produit physique",
+      "concours": "Concours"
     }
   },
   "Explorer": {
@@ -267,6 +268,40 @@
     "badgeVainqueur": "🏆 Vainqueur",
     "createurAnonyme": "Créateur FanBoss",
     "montantCollecte": "{montant}$ collectés"
+  },
+  "ConcoursManager": {
+    "mesConcours": {
+      "heading": "Mes concours en cours",
+      "empty": "Tu n'organises ou ne participes à aucun concours pour l'instant.",
+      "createurAnonyme": "Créateur FanBoss",
+      "inviterHeading": "Inviter quelqu'un"
+    },
+    "invitations": {
+      "heading": "Invitations en attente",
+      "empty": "Aucune invitation en attente.",
+      "invitePar": "Invité·e par {organisateur}",
+      "createurAnonyme": "Créateur FanBoss",
+      "campagneLabel": "Ta campagne à lier",
+      "aucuneCampagne": "Tu n'as aucune campagne active -- crée-en une d'abord dans l'onglet Service pour pouvoir accepter.",
+      "accepter": "Accepter",
+      "refuser": "Refuser",
+      "echec": "Échec de l'action, réessaie."
+    },
+    "creer": {
+      "heading": "Créer un concours",
+      "nomLabel": "Nom du concours",
+      "dateFinLabel": "Date de fin",
+      "campagneLabel": "Campagne à utiliser",
+      "aucuneCampagne": "Crée d'abord une campagne de collecte de fonds (onglet Service) pour pouvoir lancer un concours.",
+      "submit": "Créer le concours",
+      "echec": "Échec de la création, réessaie."
+    },
+    "inviter": {
+      "pseudoPlaceholder": "Pseudo du créateur à inviter",
+      "submit": "Inviter",
+      "succes": "Invitation envoyée !",
+      "echec": "Échec de l'invitation, vérifie le pseudo."
+    }
   },
   "Metadata": {
     "description": "Monétisez votre relation avec vos fans : vidéos personnalisées, dons, WhatsApp."

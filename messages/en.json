@@ -84,7 +84,8 @@
     "heading": "Offers",
     "tabs": {
       "service": "Service",
-      "produit": "Physical product"
+      "produit": "Physical product",
+      "concours": "Contests"
     }
   },
   "Explorer": {
@@ -267,6 +268,40 @@
     "badgeVainqueur": "🏆 Winner",
     "createurAnonyme": "FanBoss créateur",
     "montantCollecte": "${montant} raised"
+  },
+  "ConcoursManager": {
+    "mesConcours": {
+      "heading": "My ongoing contests",
+      "empty": "You're not organizing or taking part in any contest yet.",
+      "createurAnonyme": "FanBoss créateur",
+      "inviterHeading": "Invite someone"
+    },
+    "invitations": {
+      "heading": "Pending invitations",
+      "empty": "No pending invitations.",
+      "invitePar": "Invited by {organisateur}",
+      "createurAnonyme": "FanBoss créateur",
+      "campagneLabel": "Your campaign to link",
+      "aucuneCampagne": "You have no active campaign -- create one first in the Service tab to be able to accept.",
+      "accepter": "Accept",
+      "refuser": "Decline",
+      "echec": "Action failed, try again."
+    },
+    "creer": {
+      "heading": "Create a contest",
+      "nomLabel": "Contest name",
+      "dateFinLabel": "End date",
+      "campagneLabel": "Campaign to use",
+      "aucuneCampagne": "Create a fundraising campaign first (Service tab) to be able to launch a contest.",
+      "submit": "Create the contest",
+      "echec": "Creation failed, try again."
+    },
+    "inviter": {
+      "pseudoPlaceholder": "Pseudo of the créateur to invite",
+      "submit": "Invite",
+      "succes": "Invitation sent!",
+      "echec": "Invitation failed, check the pseudo."
+    }
   },
   "Metadata": {
     "description": "Monetize your relationship with your fans: custom videos, tips, WhatsApp."
