@@ -13,11 +13,26 @@ export const COMMISSION_PLATEFORME_TAUX = 0.15;
 export const FRAIS_AGREGATEUR_TAUX = 0.03;
 export const TVA_TAUX = 0.16;
 
-export function calculerRepartitionPaiement(montant: number) {
+// pourcentageMaitreJeu (migration 0047, concours Phase 2) mirrors
+// create_paiement_on_validation()'s own optional 3-way split exactly:
+// omitted/null/undefined reproduces the pre-0047 two-way formula
+// byte-for-byte (montantMaitreJeu: null, montantNetCreateur unchanged),
+// a real percentage computes the Maître du jeu's cut off the
+// net-of-commission total and deducts it from the créateur's share --
+// never a separate transfer, the same atomic split the SQL trigger
+// performs. See CLAUDE.md's "Atomic 3-way payment split" section.
+export function calculerRepartitionPaiement(montant: number, pourcentageMaitreJeu?: number | null) {
   const commissionPlateforme = round2(montant * COMMISSION_PLATEFORME_TAUX);
   const fraisAgregateur = round2(montant * FRAIS_AGREGATEUR_TAUX);
   const tva = round2(commissionPlateforme * TVA_TAUX);
-  const montantNetCreateur = round2(montant - commissionPlateforme - tva);
+  const montantNetTotal = round2(montant - commissionPlateforme - tva);
+
+  const montantMaitreJeu =
+    pourcentageMaitreJeu === null || pourcentageMaitreJeu === undefined
+      ? null
+      : round2(montantNetTotal * (pourcentageMaitreJeu / 100));
+  const montantNetCreateur =
+    montantMaitreJeu === null ? montantNetTotal : round2(montantNetTotal - montantMaitreJeu);
 
   return {
     montantBrut: montant,
@@ -25,6 +40,7 @@ export function calculerRepartitionPaiement(montant: number) {
     fraisAgregateur,
     tva,
     montantNetCreateur,
+    montantMaitreJeu,
   };
 }
 

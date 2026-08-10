@@ -192,7 +192,8 @@
       "joursRestants": "{jours} jours restants",
       "dernierJour": "Dernier jour",
       "share": "Partager cette campagne",
-      "shareCopied": "Lien copié !"
+      "shareCopied": "Lien copié !",
+      "faitPartieDuTournoi": "🏆 Fait partie du tournoi {nom}"
     },
     "badgeFidelite": {
       "supportersHeading": "Supporters",
@@ -267,14 +268,18 @@
     "badgeEnTete": "🔥 En tête",
     "badgeVainqueur": "🏆 Vainqueur",
     "createurAnonyme": "Créateur FanBoss",
-    "montantCollecte": "{montant}$ collectés"
+    "montantCollecte": "{montant}$ collectés",
+    "tropheeAlt": "Trophée du concours",
+    "aucunParticipant": "Personne n'a encore rejoint ce concours."
   },
   "ConcoursManager": {
     "mesConcours": {
       "heading": "Mes concours en cours",
       "empty": "Tu n'organises ou ne participes à aucun concours pour l'instant.",
       "createurAnonyme": "Créateur FanBoss",
-      "inviterHeading": "Inviter quelqu'un"
+      "inviterHeading": "Inviter quelqu'un",
+      "aucunParticipant": "Personne n'a encore rejoint ce concours.",
+      "modeMaitreJeuBadge": "Maître du jeu · {pourcentage}%"
     },
     "invitations": {
       "heading": "Invitations en attente",
@@ -285,7 +290,11 @@
       "aucuneCampagne": "Tu n'as aucune campagne active -- crée-en une d'abord dans l'onglet Service pour pouvoir accepter.",
       "accepter": "Accepter",
       "refuser": "Refuser",
-      "echec": "Échec de l'action, réessaie."
+      "echec": "Échec de l'action, réessaie.",
+      "consentement": {
+        "repartition": "{pourcentageCreateur}% pour toi, {pourcentageOrganisateur}% pour {organisateur}",
+        "checkbox": "J'accepte que {pourcentage}% de mes gains sur ce concours soient reversés à {organisateur}."
+      }
     },
     "creer": {
       "heading": "Créer un concours",
@@ -295,6 +304,16 @@
       "aucuneCampagne": "Crée d'abord une campagne de collecte de fonds (onglet Service) pour pouvoir lancer un concours.",
       "submit": "Créer le concours",
       "echec": "Échec de la création, réessaie."
+    },
+    "creerMaitreJeu": {
+      "heading": "Créer un concours (Maître du jeu)",
+      "nomLabel": "Nom du concours",
+      "dateFinLabel": "Date de fin",
+      "pourcentageLabel": "Pourcentage reversé au Maître du jeu (%)",
+      "photoLabel": "Photo du trophée (optionnel)",
+      "submit": "Créer le concours",
+      "echec": "Échec de la création, réessaie.",
+      "uploadImpossible": "Échec de l'envoi de la photo."
     },
     "inviter": {
       "pseudoPlaceholder": "Pseudo du créateur à inviter",

@@ -349,8 +349,33 @@ export const inviterConcoursSchema = z
   })
   .strict();
 
+// conditionsAcceptees is only ever meaningful for a mode='maitre_du_jeu'
+// concours -- accepter_invitation_concours() (migration 0047) ignores it
+// entirely for entre_createurs, and rejects a maitre_du_jeu accept
+// outright unless it's explicitly true. Optional here (defaults to
+// false server-side, same as the RPC's own default) so an
+// entre_createurs accept never has to send it at all.
 export const accepterConcoursSchema = z
   .object({
     campagneId: z.string().uuid(),
+    conditionsAcceptees: z.boolean().optional(),
+  })
+  .strict();
+
+// Concours Phase 2, mode 'maitre_du_jeu' (migration 0047). Mirrors
+// creer_concours_maitre_jeu()'s own signature -- the RPC is still the
+// real guarantee (0-100 bound, mode always forced server-side), this is
+// just the usual clean-400-instead-of-a-raw-Postgres-error layer.
+export const creerConcoursMaitreJeuSchema = z
+  .object({
+    nom: z.string().trim().min(1).max(100),
+    dateFin: z.string().trim().min(1),
+    pourcentageMaitreJeu: z.number().min(0).max(100),
+  })
+  .strict();
+
+export const definirTropheeConcoursSchema = z
+  .object({
+    r2Key: z.string().trim().min(1),
   })
   .strict();

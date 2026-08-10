@@ -1,5 +1,6 @@
 import { useLocale, useTranslations } from "next-intl";
 import { CheckoutButton } from "@/components/CheckoutButton";
+import { Link } from "@/i18n/navigation";
 import { ProduitCard } from "@/components/ProduitCard";
 import { ProfileTabs } from "@/components/ProfileTabs";
 import { PublicationsList } from "@/components/PublicationsList";
@@ -286,6 +287,15 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
                                   {campagne.description}
                                 </p>
                               )}
+                              {campagne.concours.map((concours) => (
+                                <Link
+                                  key={concours.concoursId}
+                                  href={`/concours/${concours.concoursId}`}
+                                  className="text-sm font-medium text-brand-600 hover:underline dark:text-brand-300"
+                                >
+                                  {t("campagnes.faitPartieDuTournoi", { nom: concours.nom })}
+                                </Link>
+                              ))}
                               {status === "active" && joursRestants !== null && (
                                 <p className="text-xs text-foreground-muted">
                                   {joursRestants > 0

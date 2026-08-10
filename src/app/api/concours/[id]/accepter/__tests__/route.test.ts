@@ -86,4 +86,41 @@ describe("POST /api/concours/[id]/accepter", () => {
 
     expect(response.status).toBe(200);
   });
+
+  // Migration 0047: p_conditions_acceptees defaults to false when the
+  // entre_createurs flow never sends it, and is threaded through
+  // verbatim when the maitre_du_jeu consent screen does.
+  it("passes p_conditions_acceptees=false by default (entre_createurs never sends it)", async () => {
+    const supabase = buildSupabase({ id: "u1" }, null);
+    const rpcSpy = vi.spyOn(supabase, "rpc");
+    vi.mocked(createSupabaseServerClient).mockResolvedValue(
+      supabase as unknown as Awaited<ReturnType<typeof createSupabaseServerClient>>,
+    );
+
+    const { POST } = await import("@/app/api/concours/[id]/accepter/route");
+    const { request, params } = buildRequest("c1", VALID_BODY);
+    await POST(request as never, { params });
+
+    expect(rpcSpy).toHaveBeenCalledWith(
+      "accepter_invitation_concours",
+      expect.objectContaining({ p_conditions_acceptees: false }),
+    );
+  });
+
+  it("passes p_conditions_acceptees=true when the consent screen sent it", async () => {
+    const supabase = buildSupabase({ id: "u1" }, null);
+    const rpcSpy = vi.spyOn(supabase, "rpc");
+    vi.mocked(createSupabaseServerClient).mockResolvedValue(
+      supabase as unknown as Awaited<ReturnType<typeof createSupabaseServerClient>>,
+    );
+
+    const { POST } = await import("@/app/api/concours/[id]/accepter/route");
+    const { request, params } = buildRequest("c1", { ...VALID_BODY, conditionsAcceptees: true });
+    await POST(request as never, { params });
+
+    expect(rpcSpy).toHaveBeenCalledWith(
+      "accepter_invitation_concours",
+      expect.objectContaining({ p_conditions_acceptees: true }),
+    );
+  });
 });

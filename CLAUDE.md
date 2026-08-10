@@ -5035,9 +5035,12 @@ correct from the diff alone.
 
 ### What Phase 1 deliberately doesn't build (scope, stated explicitly)
 
-- **Mode `maitre_du_jeu`** (see above) — schema column only, no RPC path
-  reaches it, no 3-way split transaction exists anywhere in this
-  codebase.
+- ~~**Mode `maitre_du_jeu`**~~ — **built in Phase 2** (migration 0047, see
+  "Creator contests, Phase 2" below): the 3-way payment split, the
+  explicit créateur consent gate, the Maître du jeu's own wallet, and the
+  créateur-facing consent screen + creation form. Kept struck through so
+  nobody re-reads Phase 1's original scope note and assumes this mode is
+  still unreachable.
 - ~~No créateur-facing UI~~ — **built in Phase 1-bis** (migration 0046,
   see above): a third `/offres` tab, `ConcoursManager.tsx`. This bullet
   is kept, struck through, so nobody re-reads Phase 1's original scope
@@ -5053,6 +5056,398 @@ correct from the diff alone.
   `close_expired_campagnes()`), exactly as instructed. The `concours` row
   and its `concours_participants` rows live forever, same "no delete
   path" posture as the rest of this schema.
+
+## Creator contests, Phase 2: mode `maitre_du_jeu` (migration `0047`)
+
+Follow-up to Phase 1/1-bis (migrations 0045/0046, mode `entre_createurs`
+only, above). An external organizer — a "Maître du jeu," not necessarily
+themselves a créateur — puts up several créateurs against each other and
+skims a configurable percentage off every contribution, planned once at
+concours creation time. Mechanically this reuses the exact same
+`campagne` payment circuit `entre_createurs` already does — the fan still
+pays the créateur's real offer price via a single CinetPay transaction —
+with one addition: the payout formula gains a third, optional line.
+
+### Atomic 3-way payment split — the non-negotiable principle behind this whole lot
+
+**A fan's payment always goes directly to the créateur they chose to
+support, in a single real CinetPay transaction. The Maître du jeu's cut
+is never a separate transfer after the fact, and never a wallet-to-wallet
+transfer between two accounts — it's a third split line computed
+atomically, at payment time, exactly the way the platform's own
+commission already is.** This is a direct extension of a decision already
+made elsewhere in this project: an internal value-transfer between two
+accounts, outside the CinetPay circuit, was explicitly ruled out for
+créateur-to-créateur donations, precisely because it starts to look like
+e-money to the DRC regulator (BCC) the moment FanBoss itself becomes the
+thing moving value between two private accounts rather than a payment
+processor forwarding a single, real transaction. `create_paiement_on_validation()`
+(below) is what makes this concrete: the Maître du jeu's
+`montant_maitre_jeu` is written to the **same** `paiements` row, in the
+**same** trigger execution, as the créateur's own `montant_net_createur`
+— there is no second `INSERT`, no queued job, no follow-up RPC that
+"then" pays the organizer. If a future session is ever tempted to add a
+real payout mechanism for the Maître du jeu (or anything else) that looks
+like "credit account A, debit account B" outside of CinetPay itself, this
+is the principle that mechanism would violate — re-read this section
+first.
+
+**Second settled principle: the fan never sees the Maître du jeu's exact
+percentage before paying** — only a context mention ("Fait partie du
+tournoi [nom]," see below), never a financial disclosure. The fan always
+pays exactly the créateur's displayed offer price; the split happens
+behind the scenes, out of the créateur's revenue, never as a visible
+surcharge. This is why `pourcentage_maitre_jeu` is deliberately **not**
+exposed through `concours_publics` (the public view) at all — see that
+section below.
+
+### Schema
+
+```sql
+alter table concours add column pourcentage_maitre_jeu numeric check (pourcentage_maitre_jeu between 0 and 100);
+alter table concours add column photo_trophee_r2_key text;
+alter table concours_participants add column conditions_acceptees boolean not null default false;
+alter table paiements add column montant_maitre_jeu_id uuid references users(id);
+alter table paiements add column montant_maitre_jeu numeric;
+```
+
+`conditions_acceptees` is the **only** trigger for the 3-way split —
+never an implicit state inferred from anything else (merely being linked
+to a `maitre_du_jeu` concours, or `invite_statut = 'accepte'` alone,
+is not enough). It's set exclusively by `accepter_invitation_concours()`
+(below), and only ever to `true` for a genuinely consenting accept.
+
+### `create_paiement_on_validation()` — extended, the actual technical core of this lot
+
+The existing 15% HT + TVA (16%) formula (migration `0024`) is unchanged.
+On top of it, when the offre being paid is linked — via an **accepted**
+`concours_participants` row with `conditions_acceptees = true` — to a
+concours in `mode = 'maitre_du_jeu'`, a third line is computed off the
+créateur's net-of-commission total:
+
+```
+net_total            = montant − commission_ht − tva          (unchanged, 0024)
+montant_maitre_jeu    = round(net_total × (pourcentage_maitre_jeu / 100), 2)
+montant_net_createur  = net_total − montant_maitre_jeu
+montant_maitre_jeu_id = concours.organisateur_id
+```
+
+In every other case — no concours link at all, a concours link in
+`entre_createurs` mode, or a `maitre_du_jeu` link whose consent flag
+isn't `true` yet — `montant_net_createur` is exactly the migration
+`0024` formula, `montant_maitre_jeu`/`montant_maitre_jeu_id` are both
+`null`. **This is the single most important regression guarantee in this
+lot** (the brief's own words) — verified empirically against a throwaway
+database before being trusted, then locked into `checklist_2_3.sql`: a
+real $60 contribution to a créateur who's a genuinely accepted
+`entre_createurs` participant (reusing Phase 1's own "Concours Duo"
+fixture) still produces exactly 49.56 net (60 − 9 − 1.44), with
+`montant_maitre_jeu` staying `null` throughout.
+
+A campagne could in principle be linked (accepted, consented) to more
+than one `maitre_du_jeu` concours at once — `concours_participants` has
+no uniqueness constraint on `campagne_id` alone (see "Creator contests,
+Phase 1" above). The brief never addressed this edge case; the tie-break
+chosen here — the most recently created concours wins
+(`order by c.created_at desc limit 1`) — is a deliberate, documented
+product judgment call, not an oversight, flagged in the migration's own
+comment for a future session that might want a different rule (e.g.
+rejecting a second `maitre_du_jeu` link outright at accept time) once
+this scenario actually matters in practice.
+
+Verified with the exact worked example from the brief: $100 at 20% →
+`commission_plateforme = 15`, `frais_agregateur = 3`, `tva = 2.4`,
+`montant_maitre_jeu = 16.52`, `montant_net_createur = 66.08`. Both the
+SQL formula and its JS mirror (`calculerRepartitionPaiement()`,
+`src/lib/transactions.ts`, which gained an optional
+`pourcentageMaitreJeu` second parameter reproducing this exact math) were
+updated together, same "never drift from the real DB formula" discipline
+as every earlier commission-rate change in this project.
+
+### `solde_wallet_createur()` — extended for the Maître du jeu's own wallet
+
+Per instruction, each of the three existing buckets
+(`en_attente_livraison`/`en_litige`/`net_a_retirer`) now also sums
+whatever the calling user has earned as a Maître du jeu organizer
+(`paiements.montant_maitre_jeu_id = auth.uid()`), **added alongside**
+their own créateur earnings, never replacing them — the same person can
+hold both roles at once, exactly as this app already has no fan/créateur
+role split. Same `statut_paiement`/`confirmation_fan`/litige conditions
+as the créateur side, just keyed on `montant_maitre_jeu_id` instead of
+`t.createur_id` and summing `montant_maitre_jeu` instead of
+`montant_net_createur` — a Maître du jeu's cut is frozen/unfrozen by the
+exact same underlying transaction state as the créateur's own share,
+since both numbers live on the same `paiements` row. Retirable exactly
+like any other gain, through the existing `demander_retrait()`/
+`traiter_retrait()` mechanism — **no new withdrawal path was built for
+this**, per instruction. Same signature as before (`create or replace`,
+no drop), so the existing `authenticated`-only `EXECUTE` grant (migration
+`0027`) needed no restatement.
+
+### `creer_concours_maitre_jeu(p_nom, p_date_fin, p_pourcentage_maitre_jeu)` — new RPC
+
+Distinct from `creer_concours()` (Phase 1): the organizer isn't
+necessarily a créateur with a campagne to link at all, so there's no
+`p_campagne_id` and — the real behavioral difference —
+**no auto-accepted participant row is ever inserted**. Validates
+`0 <= p_pourcentage_maitre_jeu <= 100` explicitly (a clean RPC-level
+error) on top of the table's own identical `CHECK` constraint (the real
+guarantee) — same defense-in-depth discipline as the whatsapp price
+floor/age gate. Same `SECURITY DEFINER` + `auth.uid()`-required +
+`revoke`/`grant` discipline as every write RPC since migration `0020`.
+
+### `concours_publics` — restructured from `INNER` to `LEFT JOIN`
+
+**A real, necessary behavioral change, not a refactor for its own
+sake.** Under the old `INNER JOIN` (Phase 1), a concours with zero
+accepted participants had zero rows in this view at all. That was never
+reachable in practice for `entre_createurs` (`creer_concours()` always
+auto-accepts the organizer in the same call) — but `creer_concours_maitre_jeu()`
+above never does that, so a freshly-created `maitre_du_jeu` concours
+would have been invisible everywhere: the public page would 404
+(`getConcoursPublicData()` treats zero rows as "not found"), and the
+organizer's own "mes concours" listing (which, before this migration,
+only ever discovered a concours through the caller's own
+`concours_participants` row) would never show it either — an organizer
+would have had no way to see, manage, invite anyone into, or even view
+the trophy photo on their own just-created tournament.
+
+Fixed by making `concours` itself the driving table (`left join
+concours_participants ... left join users ... left join
+campagnes_montant_collecte ...`): every concours now has **at least one
+row** — a real "phantom" row (`nom`/`date_fin`/`organisateur_id`/
+`photo_trophee_r2_key` populated, `createur_id`/`campagne_id`/`pseudo`/
+etc. all `NULL`) once nobody has accepted yet. Verified this doesn't
+change any existing count-based assertion for `entre_createurs`: a
+`LEFT JOIN` only ever adds an extra row when there are **zero** matches
+for that concours, and every `entre_createurs` fixture already has ≥1
+accepted participant. `photo_trophee_r2_key` is appended as a **trailing**
+column (same "can append, can't reorder/insert among existing columns"
+`CREATE OR REPLACE VIEW` constraint documented elsewhere in this file) —
+no grant restatement needed, since this view has been granted to
+`authenticated, anon` since its own creation and never had that
+narrowed.
+
+**`pourcentage_maitre_jeu` is deliberately never exposed through this
+view** — unlike the trophy photo, which is meant to be public. This view
+is granted to `anon` (a shared concours link must work logged out); if
+the percentage were selectable here, a curious fan could just query the
+public REST endpoint directly and see it, defeating the
+fan-never-sees-the-percentage principle above regardless of what the UI
+itself shows. Verified at the `information_schema.columns` level, not
+just by reading the view's own definition.
+
+### `concours_select_involved` — new RLS policy on the raw `concours` table
+
+The raw `concours` table has had zero `SELECT` policies since its own
+creation (Phase 1: "public reads go through `concours_publics`, never
+these raw tables"). That's still true for an uninvolved caller, but this
+lot needs two legitimate, self-scoped reads `concours_publics` can't
+safely serve (since it never exposes `pourcentage_maitre_jeu` at all):
+the organizer managing their own concours, and an invited-or-accepted
+créateur reading the exact split they're being asked to agree to (the
+consent screen, below). Same "self-only `SELECT` on an otherwise
+RPC-only table" precedent already established twice for this exact
+feature (`concours_participants_select_own`, migration `0046`) and
+elsewhere (`reservations_stock_select_own`, migration `0039`):
+
+```sql
+create policy concours_select_involved on concours
+  for select using (
+    organisateur_id = auth.uid()
+    or exists (
+      select 1 from concours_participants
+      where concours_participants.concours_id = concours.id
+        and concours_participants.createur_id = auth.uid()
+    )
+  );
+```
+
+**Note on scope, same as `demandes_retrait_select_own`'s own note
+elsewhere in this file**: this policy is not exercised in
+`checklist_2_3.sql` via a direct `SELECT` — the checklist runs as the
+Postgres superuser (bypasses RLS unconditionally) and this local
+`stub_auth.sql` harness never grants `authenticated`/`anon` any
+table-level privilege at all (only a real Supabase project provisions
+that automatically). Verified manually against a real throwaway database
+with a temporary grant before writing the migration: the organizer saw
+all of their own concours, an invited/accepted créateur saw only the
+concours they're actually involved in, and an uninvolved authenticated
+user saw none.
+
+### `accepter_invitation_concours()` — extended with the consent flag
+
+Dropped and recreated with a third parameter,
+`p_conditions_acceptees boolean default false` — same no-overload
+discipline as every earlier signature change in this codebase. Every
+existing 2-arg call site (the app's own accept route, every pre-existing
+`entre_createurs` test in `checklist_2_3.sql`) keeps working unchanged:
+Postgres resolves a call with fewer arguments than declared against a
+defaulted trailing parameter, so those callers transparently get
+`p_conditions_acceptees = false` — exactly the "simply ignored, never
+required" behavior the brief specifies for `entre_createurs`.
+
+For a concours in `mode = 'maitre_du_jeu'`: `p_conditions_acceptees`
+must be explicitly `true`, or the call is rejected outright — **not**
+silently treated as a no-op accept, tested explicitly including the
+2-arg (default-`false`) call form on a `maitre_du_jeu` concours.
+Eligibility (own row, still `'invite'`) is still checked first, exactly
+as migration `0046` established, then the mode/consent check, then
+`verifier_campagne_du_createur()` (unchanged, reused). This is the
+**only** place `conditions_acceptees` is ever set to `true` —
+`create_paiement_on_validation()` above trusts this flag completely
+rather than re-deriving consent from anything else.
+
+### `definir_photo_trophee_concours(p_concours_id, p_r2_key)` — new RPC
+
+Organizer-only, same `SECURITY DEFINER` + `auth.uid()`-required +
+`revoke`/`grant` discipline as every write RPC since migration `0020`.
+`concours` has no `UPDATE` policy for `authenticated` at all (same
+"state machine only via a vetted RPC" shape as every write path on this
+table), so this is the only way to set `photo_trophee_r2_key`. The R2
+upload route (`POST /api/concours/[id]/trophee-upload-url`, reusing the
+exact `checkUploadSize`/`getSignedUploadUrl` pipeline every image-upload
+route in this project already shares, same 10MB cap) already verifies
+ownership before minting a presigned URL — via `concours_select_involved`
+above, reading the raw `concours` table with the authenticated client —
+but this RPC re-verifies it again independently rather than trusting
+that prior check, same defense-in-depth discipline as every other
+ownership-gated RPC here. `PATCH /api/concours/[id]/trophee` is the thin
+wrapper that calls it, completing the same "create/upload URL → PUT to
+R2 → PATCH the resulting key" flow `ProduitRow`'s own `image_r2_key`
+already established (`OffresManager.tsx`).
+
+### Application layer (`src/lib/concoursPublic.ts`)
+
+`getConcoursPublicData()` filters the LEFT JOIN's phantom rows
+(`createur_id`/`campagne_id` both null) out of `participants` before
+returning, and now also returns `mode` and a signed `trophyPhotoUrl`
+(same 24h expiry as every other public-profile photo in this project).
+
+`getConcoursGereesEtInvitations()` was substantially rewritten: "concours
+I organize" is now resolved directly against the raw `concours` table
+(`organisateur_id = userId`, permitted by `concours_select_involved`)
+instead of only ever being discovered through the caller's own
+`concours_participants` row — the old approach silently depended on the
+organizer always being an accepted participant themselves, never true
+for `maitre_du_jeu`. This same raw-table read is also the only
+legitimate path to `pourcentageMaitreJeu`, threaded onto both
+`ConcoursOrganise` (the organizer's own reference) and
+`InvitationConcours` (the consent screen's actual numbers). The
+organizer's display name for an invitation row is now resolved
+independently via `profils_publics` rather than searched for among
+`concours_publics`' own accepted-participant rows — the old approach
+depended on the organizer always being an accepted participant too, same
+gap.
+
+### UI — consent screen, Maître du jeu creation, trophy display, fan context mention
+
+**`ConcoursManager.tsx`**, reusing the existing `/offres` "Concours" tab
+per explicit instruction rather than building a new one:
+
+- `InvitationRow` renders an explicit consent block — the percentage
+  breakdown (`"{pourcentageCreateur}% pour toi, {pourcentageOrganisateur}%
+  pour {organisateur}"`) and a **required, unchecked-by-default**
+  checkbox — only when `invitation.mode === "maitre_du_jeu"`. "Accepter"
+  stays `disabled` until the checkbox is checked (on top of the existing
+  "has a campagne to link" gate) — client-side convenience only, the RPC
+  re-checks consent regardless. `entre_createurs` invitations render
+  exactly as before, no consent block at all.
+- `CreerConcoursMaitreJeuForm` — a new, separate creation form (nom /
+  date de fin / pourcentage / an optional trophy photo), with **no
+  campagne dependency** at all, unlike `CreerConcoursForm`. Same two-step
+  "create the record, then upload, then PATCH the resulting key" flow as
+  `ProduitRow`.
+- `ConcoursOrganiseCard` gained a `mode`/`pourcentageMaitreJeu` badge
+  (shown only for `maitre_du_jeu`) and an empty-state message for zero
+  accepted participants — a real, legitimate state now that the
+  organizer isn't auto-accepted.
+
+**`/concours/[id]` (the public page)** renders the trophy photo, when
+present, above the heading — the one piece of Maître du jeu data that
+**is** meant to be fully public. Also gained an empty-state message for
+zero participants (a freshly-created `maitre_du_jeu` concours the public
+page can now legitimately reach, per the `concours_publics` restructure
+above).
+
+**The fan-facing context mention** ("Fait partie du tournoi [nom]," per
+the brief's explicit "jamais le pourcentage" instruction) renders on
+`CreateurProfileView`'s campagne cards, for **any** concours the
+campagne is an accepted participant in, regardless of mode.
+`getCreateurProfileData()` (`src/lib/profil.ts`) gained a new query
+against `concours_publics` (`campagne_id in (campagneIds)`), batched
+the same way `campagnes_montant_collecte` already is — each campagne's
+`concours` array is `{concoursId, nom}[]` only, never the percentage
+(which `concours_publics` doesn't expose at all). This is deliberately
+the **only** place the brief's "sur la page/offre de paiement de chaque
+créateur" requirement is implemented — this app has no separate
+checkout page for a campagne contribution (`CheckoutButton` triggers
+CinetPay directly from the profile card itself), so the campagne card
+*is* that page.
+
+### Testing
+
+`checklist_2_3.sql` covers, against a real fixture (a Maître du jeu
+organisateur deliberately **not** a créateur with any campagne of their
+own — proving the whole flow works without one — plus two invited
+créateurs and a fan): `creer_concours_maitre_jeu()`'s `NULL auth.uid()`
+rejection, both bounds violations (negative and >100) leaving no trace,
+and a real success producing `mode = 'maitre_du_jeu'` with **zero**
+auto-accepted participants; the `concours_publics` LEFT JOIN producing
+exactly one phantom row (never zero) for a participant-less concours,
+with `pourcentage_maitre_jeu` confirmed absent from the view's own
+`information_schema.columns`; the consent gate rejecting both an
+explicit `p_conditions_acceptees=false` and the 2-arg (default-false)
+call form on a `maitre_du_jeu` concours, with the invitation confirmed
+genuinely untouched afterward (not corrupted into a partial accept);
+`definir_photo_trophee_concours()`'s `NULL auth.uid()` and non-organizer
+rejections, and the real trophy photo becoming visible through
+`concours_publics` once set; **the actual 3-way split on real dollar
+amounts** — $100 at 20% producing `commission=15`, `frais=3`, `tva=2.4`,
+`montant_maitre_jeu=16.52`, `montant_net_createur=66.08` — verified
+against the real trigger, not read from its source; the `entre_createurs`
+non-regression case (a real, accepted concours link in that mode still
+produces the exact pre-0047 formula, `montant_maitre_jeu` staying
+`null`) — **the most important non-regression proof in this lot**; both
+wallets (créateur and Maître du jeu organizer) checked at both stages
+(`en_attente_livraison` before delivery, `net_a_retirer` after); and the
+full `0020`/`0021` grant-audit pattern for both new RPCs. Vitest
+(`transactions.test.ts`) covers `calculerRepartitionPaiement()`'s new
+optional parameter directly — the same $100/20% worked example, the
+no-parameter/`null`/`undefined` cases all reproducing the pre-0047
+formula byte-for-byte, and a `0%` split returning a real (non-null) zero
+rather than being indistinguishable from "no concours link at all."
+Route tests cover all three new/changed endpoints
+(`/api/concours/maitre-jeu`, `/api/concours/[id]/trophee-upload-url`,
+`/api/concours/[id]/trophee`, and `/api/concours/[id]/accepter`'s
+`p_conditions_acceptees` plumbing) with the same auth/validation/
+RPC-rejection-surfaced shape every other RPC wrapper route in this
+project already uses.
+
+Verified visually end-to-end (throwaway mock-Supabase/Playwright
+technique used throughout this file): the consent screen's percentage
+breakdown and checkbox render correctly and gate the Accepter button; the
+Maître du jeu creation form (including the optional trophy photo) submits
+successfully and the new "Créer un concours (Maître du jeu)" section
+sits below the existing `entre_createurs` one in the same tab; the
+uploaded trophy photo renders on the public `/concours/[id]` page; and
+the "Fait partie du tournoi" mention renders on a public profile's
+campagne card, linking to the concours — all confirmed in both `fr`
+(light/dark) and `/en/` (light/dark).
+
+### What Phase 2 deliberately doesn't build (scope, stated explicitly)
+
+- No notification wiring for a Maître du jeu invitation or for the
+  consent-gated acceptance itself — same gap already flagged for Phase 1
+  entre_createurs invitations, not newly introduced here.
+- No UI to edit `pourcentage_maitre_jeu` or the trophy photo after
+  creation (beyond the one-time upload at creation time) — a créateur
+  who's already accepted has consented to a specific number; changing it
+  after the fact would need its own product decision (re-consent? only
+  applies going forward?) this lot doesn't make.
+- Nothing about scheduling, player rankings beyond the existing
+  leader/winner badge, or any third mode — explicitly out of scope
+  (Phase 3, per the brief).
 
 ## CinetPay webhook (`src/app/api/webhooks/cinetpay/route.ts`)
 

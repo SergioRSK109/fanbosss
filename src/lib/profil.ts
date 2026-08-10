@@ -54,6 +54,11 @@ export interface CreateurProfileData {
     dateFin: string | null;
     montantCollecte: number;
     actif: boolean;
+    // Concours (either mode) this campagne is an accepted participant
+    // in (migration 0047) -- backs the "Fait partie du tournoi [nom]"
+    // context mention. Never includes the Maître du jeu percentage --
+    // concours_publics deliberately never exposes it.
+    concours: { concoursId: string; nom: string }[];
   }[];
   // `produit` (Phase 1: migration 0039, Phase 3: fan-facing UI, this
   // section) is kept out of `offres` above for the same reason
@@ -248,6 +253,28 @@ export async function getCreateurProfileData(
     (collecteRows ?? []).map((row) => [row.offre_id, row.montant_collecte]),
   );
 
+  // Which concours (either mode -- the brief's own "peu importe le
+  // mode") this campagne is an ACCEPTED participant in, straight from
+  // concours_publics (migration 0045/0047), which already filters to
+  // accepted-only. This is what backs the "Fait partie du tournoi [nom]"
+  // context mention on the public profile card -- never the
+  // pourcentage_maitre_jeu, which concours_publics deliberately never
+  // exposes at all (see migration 0047's own comment).
+  const { data: concoursLinkRows } =
+    campagneIds.length > 0
+      ? await supabase
+          .from("concours_publics")
+          .select("campagne_id, concours_id, nom")
+          .in("campagne_id", campagneIds)
+      : { data: [] as { campagne_id: string; concours_id: string; nom: string }[] };
+
+  const concoursParCampagne = new Map<string, { concoursId: string; nom: string }[]>();
+  for (const row of concoursLinkRows ?? []) {
+    const existing = concoursParCampagne.get(row.campagne_id) ?? [];
+    existing.push({ concoursId: row.concours_id, nom: row.nom });
+    concoursParCampagne.set(row.campagne_id, existing);
+  }
+
   // Most recent campaign first -- a créateur's history reads naturally
   // with their latest activity on top, matching how the créateur
   // dashboard's video-offres list already appends new entries.
@@ -277,6 +304,7 @@ export async function getCreateurProfileData(
         dateFin: typeof config.date_fin === "string" ? config.date_fin : null,
         montantCollecte: montantCollecteParOffre.get(row.id) ?? 0,
         actif: row.actif,
+        concours: concoursParCampagne.get(row.id) ?? [],
       };
     })
     .filter((c): c is NonNullable<typeof c> => c !== null);

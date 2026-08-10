@@ -38,11 +38,27 @@ export default async function ConcoursPage({
   return (
     <main className="mx-auto flex max-w-4xl flex-col gap-6 px-5 pt-4">
       <div>
+        {concours.trophyPhotoUrl && (
+          // Signed R2 URL, not a static/optimizable asset Next's Image
+          // can cache. Public per migration 0047 -- unlike
+          // pourcentageMaitreJeu, the trophy photo is meant to be shown
+          // on this exact page, to every visitor.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={concours.trophyPhotoUrl}
+            alt={t("tropheeAlt")}
+            className="mb-3 h-40 w-full rounded-2xl object-cover"
+          />
+        )}
         <h1 className="text-2xl font-bold">{concours.nom}</h1>
         <div className="mt-2">
           <ConcoursCountdown dateFin={concours.dateFin} />
         </div>
       </div>
+
+      {participants.length === 0 && (
+        <p className="text-sm text-foreground-muted">{t("aucunParticipant")}</p>
+      )}
 
       <div className="flex flex-wrap gap-4">
         {participants.map((participant) => {
