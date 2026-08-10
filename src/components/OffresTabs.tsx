@@ -3,25 +3,28 @@
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 
-// Same nested-tab pattern as ProfileTabs.tsx (Lot 5a): both tabs' content
+// Same nested-tab pattern as ProfileTabs.tsx (Lot 5a): all tabs' content
 // is already rendered server-side by OffresPage and just handed in here
 // as pre-built React nodes -- this component only toggles which one is
 // visible. "Service" is the default (it's every offer type that existed
-// before this lot; "Produit physique" is the new one).
+// before this lot; "Produit physique" and "Concours" were added later,
+// each on top of this exact same pattern, never a rewrite of it).
 export function OffresTabs({
   serviceContent,
   produitContent,
+  concoursContent,
 }: {
   serviceContent: React.ReactNode;
   produitContent: React.ReactNode;
+  concoursContent: React.ReactNode;
 }) {
   const t = useTranslations("OffresPage.tabs");
-  const [tab, setTab] = useState<"service" | "produit">("service");
+  const [tab, setTab] = useState<"service" | "produit" | "concours">("service");
 
   return (
     <div>
       <div className="mb-6 flex gap-2 border-b border-border">
-        {(["service", "produit"] as const).map((value) => (
+        {(["service", "produit", "concours"] as const).map((value) => (
           <button
             key={value}
             type="button"
@@ -39,6 +42,7 @@ export function OffresTabs({
       </div>
       <div className={tab === "service" ? "" : "hidden"}>{serviceContent}</div>
       <div className={tab === "produit" ? "" : "hidden"}>{produitContent}</div>
+      <div className={tab === "concours" ? "" : "hidden"}>{concoursContent}</div>
     </div>
   );
 }
