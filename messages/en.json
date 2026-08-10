@@ -268,7 +268,7 @@
     "badgeEnTete": "🔥 Leading",
     "badgeVainqueur": "🏆 Winner",
     "createurAnonyme": "FanBoss créateur",
-    "montantCollecte": "${montant} raised",
+    "montantCollecte": "{points} pts",
     "tropheeAlt": "Contest trophy",
     "aucunParticipant": "No one has joined this contest yet."
   },
