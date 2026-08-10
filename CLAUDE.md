@@ -5449,6 +5449,94 @@ campagne card, linking to the concours — all confirmed in both `fr`
   leader/winner badge, or any third mode — explicitly out of scope
   (Phase 3, per the brief).
 
+## Creator contests: broadcast screen (`/concours/[id]/ecran`, no migration)
+
+A second, purely visual public route — meant to be opened on a phone and
+filmed during a live contest, so it looks nothing like the rest of the
+app: fixed full-viewport black background (always dark, regardless of
+the visitor's own theme preference — a screen filmed through a camera
+needs consistent contrast, not whatever light/dark that particular phone
+happens to be in), huge typography, one big card per participant, the
+leader visually set apart (gold border + glow), and the trophy photo for
+a `maitre_du_jeu` concours. No schema change, no new data, no new query
+— reads the exact same `getConcoursPublicData()` (`concoursPublic.ts`)
+the normal `/concours/[id]` page already calls, same public/no-auth
+reasoning (a link handed to a second phone must work without a session).
+
+**No site chrome at all — `TopNav` is hidden specifically for this
+route.** Same mechanism already established for `/[handle]` (`/@pseudo`
+being a dynamic segment `TOP_NAV_HIDDEN_ROUTES`'s plain array can't
+match): `TopNav.tsx` gained a second dynamic check, a regex
+(`/^\/concours\/[^/]+\/ecran$/`) tested alongside the existing
+`startsWith("/@")` one. This route sits outside the `(app)` route group
+too, so `AppTabBar` was never rendered here to begin with — hiding
+`TopNav` is the only chrome this page needed to suppress.
+
+**Auto-refresh, every 10s, with no new realtime infrastructure** — per
+explicit instruction. `EcranAutoRefresh.tsx` is a tiny client component
+(`useEffect` + `setInterval`, cleaned up on unmount) that calls
+`router.refresh()` (`@/i18n/navigation`'s `useRouter`) every
+`ECRAN_REFRESH_INTERVAL_MS` (10 000ms). `router.refresh()` re-runs the
+page's own Server Component — the exact same `getConcoursPublicData()`
+call already made on first render — and patches the RSC payload in
+place; there is no second data-fetching path to keep in sync with the
+normal page, and no polling `fetch()`/API route of its own. Verified
+this is a real, working mechanism, not assumed from reading Next's own
+docs: driven against a throwaway mock backend whose fixture data was
+mutated *after* the page had already loaded (an HTTP `POST` from the
+test script itself, not a timer inside the mock), then waited past the
+10s interval with **no manual reload call anywhere in the test** — the
+new numbers appeared, a `window`-level marker set right after the
+initial load survived the update (proving no full navigation ever
+happened — a hard reload would have wiped it), and the URL stayed
+byte-identical throughout.
+
+**A real layout bug was caught by this same visual pass, not assumed
+correct from the JSX** — the first draft laid out each participant card
+as a 3-column row (photo · name · points), with the photo and the points
+figure both `shrink-0` (deliberately kept from shrinking, matching the
+normal page's own card). At a real 390px phone viewport, those two
+un-shrinking columns already exceeded the available width on their own,
+so the flexbox middle column (`flex-1`, starting from a `0%` basis) had
+*no* remaining space to grow into and rendered at genuine `0px` width —
+confirmed directly via `getBoundingClientRect()` in a throwaway
+reproduction, not guessed from the screenshot alone, which showed the
+créateur's name overlapping the points figure. Fixed by restructuring
+each card as a vertical stack (photo → name → badge → points, all
+centered) instead of a horizontal row — this removes the
+horizontal-space competition entirely, since nothing needs to shrink or
+share a row with anything else regardless of how long a name or how
+large a point count gets.
+
+**Link from the normal page**: a small "📺 Ouvrir l'écran de diffusion"
+button (`Concours.ouvrirEcran`) below the countdown on `/concours/[id]`
+itself, `target="_blank"` — the primary use is copying this exact URL
+onto a second phone, not navigating away from the page currently open,
+so opening in a new tab is the more useful default even on the same
+device. No dedicated "copy link" affordance was built on top of it — a
+real route's URL is already directly copiable from the browser's own
+address bar or share sheet, per this project's usual "don't build what
+the platform already gives you" restraint.
+
+**i18n**: entirely reuses the existing `Concours` namespace (`termine`,
+`badgeEnTete`/`badgeVainqueur`, `createurAnonyme`, `montantCollecte`,
+`tropheeAlt`, `aucunParticipant`) rather than a parallel set of strings
+for the same domain — the one new key, `Concours.ouvrirEcran`, lives on
+the normal page, not this one.
+
+Verified visually end-to-end (throwaway mock-backend/Playwright
+technique used throughout this file, this time at a real phone viewport,
+390×844): both `entre_createurs` and `maitre_du_jeu` fixtures render
+with zero TopNav elements present (`FanBoss` logo, the classement link —
+both asserted absent, not just visually unnoticed) and a genuinely black
+background (`rgb(0, 0, 0)`, read directly off the overlay element, not
+assumed from the class name) regardless of the browser context's own
+requested color scheme; the leader's card is visibly set apart; the
+trophy photo renders for the `maitre_du_jeu` fixture; the vertical-stack
+fix confirmed to leave no overlapping text at this exact viewport; the
+live auto-refresh proof described above; and all of the above holds in
+both `fr` (light) and `/en/` (dark), zero console errors throughout.
+
 ## CinetPay webhook (`src/app/api/webhooks/cinetpay/route.ts`)
 
 - Verifies the `x-token` header via real HMAC-SHA256

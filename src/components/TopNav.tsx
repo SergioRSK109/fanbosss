@@ -35,18 +35,29 @@ import { Logo } from "@/components/Logo";
 // (src/app/[locale]/[handle]/layout.tsx supplies the tab bar the same
 // way classement/explorer's own layouts do).
 //
+// The concours broadcast screen (/concours/[id]/ecran) is the same
+// dynamic-segment case again, one level deeper -- built to be filmed
+// full-screen (see that page's own comment), it can't have this bar (or
+// any other site chrome) visible at all. Same fix shape: a regex test
+// alongside the fixed-route list, since "/concours/<uuid>/ecran" can
+// never be a literal array entry either.
+const TOP_NAV_HIDDEN_ROUTES = ["/home", "/offres", "/finance", "/explorer", "/parametres", "/classement"];
+const ECRAN_ROUTE_PATTERN = /^\/concours\/[^/]+\/ecran$/;
+
 // This needed a client component (usePathname, same locale-stripped
 // pathname AppTabBar already relies on) because the root layout wraps
 // every page in this app, including these routes -- a plain Server
 // Component layout has no reliable way to know which route it's
 // currently rendering for.
-const TOP_NAV_HIDDEN_ROUTES = ["/home", "/offres", "/finance", "/explorer", "/parametres", "/classement"];
-
 export function TopNav({ isAuthenticated }: { isAuthenticated: boolean }) {
   const t = useTranslations("Nav");
   const pathname = usePathname();
 
-  if (TOP_NAV_HIDDEN_ROUTES.includes(pathname) || pathname.startsWith("/@")) {
+  if (
+    TOP_NAV_HIDDEN_ROUTES.includes(pathname) ||
+    pathname.startsWith("/@") ||
+    ECRAN_ROUTE_PATTERN.test(pathname)
+  ) {
     return null;
   }
 
