@@ -3,9 +3,8 @@ import { getTranslations } from "next-intl/server";
 import { Link } from "@/i18n/navigation";
 import { ConcoursCountdown } from "@/components/ConcoursCountdown";
 import { ShareCampagneButton } from "@/components/ShareCampagneButton";
-import { computeEqualSharePercent } from "@/lib/concours";
+import { computeEqualSharePercent, formatPoints } from "@/lib/concours";
 import { getConcoursPublicData } from "@/lib/concoursPublic";
-import { formatMontant } from "@/lib/campagnes";
 
 // Public, no-auth page (brief point 4: a shared link must work for a
 // visitor who's never logged in) -- reads concours_publics only, exactly
@@ -107,7 +106,7 @@ export default async function ConcoursPage({
               ) : null}
 
               <span className="text-xl font-bold">
-                {t("montantCollecte", { montant: formatMontant(participant.montantCollecte, locale) })}
+                {t("montantCollecte", { points: formatPoints(participant.montantCollecte, locale) })}
               </span>
             </div>
           );

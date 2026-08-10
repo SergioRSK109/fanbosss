@@ -3,6 +3,7 @@ import {
   computeCountdownParts,
   computeEqualSharePercent,
   computeLeaderIds,
+  formatPoints,
   isConcoursEnded,
 } from "@/lib/concours";
 
@@ -111,5 +112,30 @@ describe("computeCountdownParts", () => {
       minutes: 0,
       seconds: 0,
     });
+  });
+});
+
+// /concours/[id]'s "points" display (cosmetic only -- 1 USD = 1 point,
+// montantCollecte itself still measures real dollars raised, see that
+// page's own comment). Compared against the real Intl.NumberFormat
+// output rather than a hand-typed grouped string, same reasoning as
+// campagnes.test.ts's own formatMontant tests: fr-FR's grouping
+// separator is a narrow no-break space (U+202F), not a plain space, and
+// a naive literal would silently never match it.
+describe("formatPoints", () => {
+  it("groups a 4-digit total with the fr-FR thousands separator by default", () => {
+    expect(formatPoints(1205)).toBe(new Intl.NumberFormat("fr-FR").format(1205));
+  });
+
+  it("groups with the en-US thousands separator (comma) when that locale is passed", () => {
+    expect(formatPoints(1205, "en-US")).toBe("1,205");
+  });
+
+  it("leaves a sub-1000 total unchanged (no grouping needed)", () => {
+    expect(formatPoints(83)).toBe("83");
+  });
+
+  it("never appends a currency symbol -- this is a points count, not a monetary amount", () => {
+    expect(formatPoints(1205, "en-US")).not.toMatch(/[$€]/);
   });
 });

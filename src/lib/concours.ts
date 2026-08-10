@@ -46,6 +46,21 @@ export function computeEqualSharePercent(participantCount: number): number {
   return 100 / participantCount;
 }
 
+// Thousands-grouped display for the /concours/[id] leaderboard --
+// deliberately a separate function from campagnes.ts's formatMontant()
+// despite the identical math (Intl.NumberFormat grouping, no currency
+// symbol -- formatMontant never added one either, the "$" a fan used to
+// see came entirely from the Concours.montantCollecte message string,
+// not from that function). montantCollecte still measures real dollars
+// raised internally (nothing about the data changes, see CLAUDE.md) --
+// this page just displays that same number as a competitive "points"
+// score (1 USD = 1 point, purely cosmetic), which is a different enough
+// concept from a campaign's own monetary total that reusing
+// formatMontant here would misdescribe what's actually being shown.
+export function formatPoints(value: number, locale: string = "fr-FR"): string {
+  return new Intl.NumberFormat(locale).format(value);
+}
+
 export interface CountdownParts {
   days: number;
   hours: number;
