@@ -36,6 +36,37 @@ describe("calculerRepartitionPaiement (commission 15% HT + TVA répercutée sinc
       2,
     );
   });
+
+  it("leaves montantMaitreJeu null and montantNetCreateur unchanged when no pourcentageMaitreJeu is given (undefined or null)", () => {
+    const withoutArg = calculerRepartitionPaiement(100);
+    const withUndefined = calculerRepartitionPaiement(100, undefined);
+    const withNull = calculerRepartitionPaiement(100, null);
+
+    for (const result of [withoutArg, withUndefined, withNull]) {
+      expect(result.montantMaitreJeu).toBeNull();
+      expect(result.montantNetCreateur).toBeCloseTo(82.6, 2);
+    }
+  });
+
+  it("splits a 3-way Maître du jeu cut off the net-of-commission total, mirroring create_paiement_on_validation() exactly (migration 0047)", () => {
+    // $100, 20% -- the same worked example verified against the real SQL
+    // trigger in checklist_2_3.sql: net_total = 82.6, montant_maitre_jeu
+    // = round(82.6 * 0.20, 2) = 16.52, montant_net_createur = 66.08.
+    const result = calculerRepartitionPaiement(100, 20);
+
+    expect(result.commissionPlateforme).toBeCloseTo(15, 2);
+    expect(result.fraisAgregateur).toBeCloseTo(3, 2);
+    expect(result.tva).toBeCloseTo(2.4, 2);
+    expect(result.montantMaitreJeu).toBeCloseTo(16.52, 2);
+    expect(result.montantNetCreateur).toBeCloseTo(66.08, 2);
+  });
+
+  it("a 0% Maître du jeu split still returns a real (zero) montantMaitreJeu, not null -- distinct from 'no concours link at all'", () => {
+    const result = calculerRepartitionPaiement(100, 0);
+
+    expect(result.montantMaitreJeu).toBe(0);
+    expect(result.montantNetCreateur).toBeCloseTo(82.6, 2);
+  });
 });
 
 describe("describeTransactionStatutFan", () => {

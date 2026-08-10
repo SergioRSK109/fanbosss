@@ -192,7 +192,8 @@
       "joursRestants": "{jours} days left",
       "dernierJour": "Last day",
       "share": "Share this campaign",
-      "shareCopied": "Link copied!"
+      "shareCopied": "Link copied!",
+      "faitPartieDuTournoi": "🏆 Part of the {nom} contest"
     },
     "badgeFidelite": {
       "supportersHeading": "Supporters",
@@ -267,14 +268,18 @@
     "badgeEnTete": "🔥 Leading",
     "badgeVainqueur": "🏆 Winner",
     "createurAnonyme": "FanBoss créateur",
-    "montantCollecte": "${montant} raised"
+    "montantCollecte": "${montant} raised",
+    "tropheeAlt": "Contest trophy",
+    "aucunParticipant": "No one has joined this contest yet."
   },
   "ConcoursManager": {
     "mesConcours": {
       "heading": "My ongoing contests",
       "empty": "You're not organizing or taking part in any contest yet.",
       "createurAnonyme": "FanBoss créateur",
-      "inviterHeading": "Invite someone"
+      "inviterHeading": "Invite someone",
+      "aucunParticipant": "No one has joined this contest yet.",
+      "modeMaitreJeuBadge": "Game master · {pourcentage}%"
     },
     "invitations": {
       "heading": "Pending invitations",
@@ -285,7 +290,11 @@
       "aucuneCampagne": "You have no active campaign -- create one first in the Service tab to be able to accept.",
       "accepter": "Accept",
       "refuser": "Decline",
-      "echec": "Action failed, try again."
+      "echec": "Action failed, try again.",
+      "consentement": {
+        "repartition": "{pourcentageCreateur}% for you, {pourcentageOrganisateur}% for {organisateur}",
+        "checkbox": "I agree that {pourcentage}% of my earnings on this contest will go to {organisateur}."
+      }
     },
     "creer": {
       "heading": "Create a contest",
@@ -295,6 +304,16 @@
       "aucuneCampagne": "Create a fundraising campaign first (Service tab) to be able to launch a contest.",
       "submit": "Create the contest",
       "echec": "Creation failed, try again."
+    },
+    "creerMaitreJeu": {
+      "heading": "Create a contest (Game master)",
+      "nomLabel": "Contest name",
+      "dateFinLabel": "End date",
+      "pourcentageLabel": "Percentage paid to the game master (%)",
+      "photoLabel": "Trophy photo (optional)",
+      "submit": "Create the contest",
+      "echec": "Creation failed, try again.",
+      "uploadImpossible": "Failed to upload the photo."
     },
     "inviter": {
       "pseudoPlaceholder": "Pseudo of the créateur to invite",

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  accepterConcoursSchema,
+  creerConcoursMaitreJeuSchema,
   creerOffreSchema,
+  definirTropheeConcoursSchema,
   isAtLeast18,
   minBirthDateForSignup,
   publierMessageSchema,
@@ -342,5 +345,72 @@ describe("publierMessageSchema", () => {
   it("rejects a publication with neither contenu nor any media", () => {
     expect(publierMessageSchema.safeParse({}).success).toBe(false);
     expect(publierMessageSchema.safeParse({ contenu: null }).success).toBe(false);
+  });
+});
+
+// Concours Phase 2, mode 'maitre_du_jeu' (migration 0047). The RPC
+// (creer_concours_maitre_jeu()) is the real guarantee for the 0-100
+// bound -- these tests only cover the schema's own clean-400 layer.
+describe("creerConcoursMaitreJeuSchema", () => {
+  const base = { nom: "Tournoi", dateFin: "2026-12-01T00:00:00.000Z" };
+
+  it("accepts a valid payload", () => {
+    expect(creerConcoursMaitreJeuSchema.safeParse({ ...base, pourcentageMaitreJeu: 20 }).success).toBe(
+      true,
+    );
+  });
+
+  it("accepts the boundaries 0 and 100", () => {
+    expect(creerConcoursMaitreJeuSchema.safeParse({ ...base, pourcentageMaitreJeu: 0 }).success).toBe(
+      true,
+    );
+    expect(creerConcoursMaitreJeuSchema.safeParse({ ...base, pourcentageMaitreJeu: 100 }).success).toBe(
+      true,
+    );
+  });
+
+  it("rejects a negative or >100 pourcentageMaitreJeu", () => {
+    expect(creerConcoursMaitreJeuSchema.safeParse({ ...base, pourcentageMaitreJeu: -1 }).success).toBe(
+      false,
+    );
+    expect(creerConcoursMaitreJeuSchema.safeParse({ ...base, pourcentageMaitreJeu: 101 }).success).toBe(
+      false,
+    );
+  });
+
+  it("rejects a missing nom", () => {
+    expect(
+      creerConcoursMaitreJeuSchema.safeParse({ dateFin: base.dateFin, pourcentageMaitreJeu: 20 })
+        .success,
+    ).toBe(false);
+  });
+});
+
+describe("accepterConcoursSchema", () => {
+  it("accepts campagneId alone -- conditionsAcceptees is optional (entre_createurs never sends it)", () => {
+    const result = accepterConcoursSchema.safeParse({
+      campagneId: "11111111-1111-1111-8111-111111111111",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts an explicit conditionsAcceptees (the maitre_du_jeu consent flow)", () => {
+    const result = accepterConcoursSchema.safeParse({
+      campagneId: "11111111-1111-1111-8111-111111111111",
+      conditionsAcceptees: true,
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe("definirTropheeConcoursSchema", () => {
+  it("accepts a real r2Key", () => {
+    expect(
+      definirTropheeConcoursSchema.safeParse({ r2Key: "concours/abc/trophee.jpg" }).success,
+    ).toBe(true);
+  });
+
+  it("rejects an empty r2Key", () => {
+    expect(definirTropheeConcoursSchema.safeParse({ r2Key: "" }).success).toBe(false);
   });
 });

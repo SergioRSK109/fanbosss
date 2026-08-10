@@ -7596,6 +7596,11 @@ end $$;
 
 -- Positive check: authenticated still holds EXECUTE on all 4 (the
 -- revoke didn't overreach), against their CURRENT signatures.
+-- accepter_invitation_concours()'s signature here was updated in place by
+-- migration 0047 (2-arg -> 3-arg, p_conditions_acceptees added) -- same
+-- "a later migration invalidates an earlier test's assumption, so the
+-- old test itself gets updated, never left describing a dropped
+-- signature" discipline already established for migration 0032/0033.
 do $$
 begin
   if not has_function_privilege('authenticated', 'creer_concours(text, timestamptz, uuid)', 'EXECUTE') then
@@ -7604,7 +7609,7 @@ begin
   if not has_function_privilege('authenticated', 'inviter_participant_concours(uuid, uuid)', 'EXECUTE') then
     raise exception 'TEST FAILED: authenticated lost EXECUTE on inviter_participant_concours()';
   end if;
-  if not has_function_privilege('authenticated', 'accepter_invitation_concours(uuid, uuid)', 'EXECUTE') then
+  if not has_function_privilege('authenticated', 'accepter_invitation_concours(uuid, uuid, boolean)', 'EXECUTE') then
     raise exception 'TEST FAILED: authenticated lost EXECUTE on accepter_invitation_concours()';
   end if;
   if not has_function_privilege('authenticated', 'refuser_invitation_concours(uuid)', 'EXECUTE') then
@@ -7645,6 +7650,534 @@ begin
     raise notice 'PASS: "concours" is rejected as a pseudo (reserved-word list kept in sync with the new route)';
   end;
 end $$;
+
+-- ---------------------------------------------------------------------
+-- Concours Phase 2: mode 'maitre_du_jeu' (migration 0047) -- the 3-way
+-- payment split (créateur / platform / Maître du jeu organizer), the
+-- explicit consent gate, and the extended wallet. The single most
+-- important guarantee tested here, per the brief's own emphasis: real
+-- dollar amounts through the actual create_paiement_on_validation()
+-- trigger, not just read from its source.
+--
+-- Fixture: a Maître du jeu organisateur (c0470001, deliberately NOT a
+-- créateur with any campagne of their own -- proves the whole flow works
+-- without one), créateur A (c0470002, own campagne c0471002, will accept
+-- WITH consent), créateur B (c0470003, own campagne c0471003, will be
+-- used to prove the consent gate rejects a non-consenting accept without
+-- corrupting the invitation), and a fan (c0470005) to fund contributions.
+-- ---------------------------------------------------------------------
+insert into users (id, telephone, pays) values
+  ('c0470001-0000-0000-0000-000000000001', '+243900000401', 'RDC'),
+  ('c0470002-0000-0000-0000-000000000002', '+243900000402', 'RDC'),
+  ('c0470003-0000-0000-0000-000000000003', '+243900000403', 'RDC'),
+  ('c0470005-0000-0000-0000-000000000005', '+243900000405', 'RDC');
+
+insert into offres (id, createur_id, type, libelle, config, actif) values
+  ('c0471002-0000-0000-0000-000000000002', 'c0470002-0000-0000-0000-000000000002', 'campagne', 'Campagne MDJ A', jsonb_build_object('description', 'x', 'objectif', 1000), true),
+  ('c0471003-0000-0000-0000-000000000003', 'c0470003-0000-0000-0000-000000000003', 'campagne', 'Campagne MDJ B', jsonb_build_object('description', 'x', 'objectif', 1000), true);
+
+-- creer_concours_maitre_jeu() rejects auth.uid() IS NULL. Explicitly
+-- clears app.current_user_id first -- it's still set from the earlier
+-- reserved-pseudo test otherwise, which would make this a no-op check
+-- against a real session instead of a genuinely NULL one.
+select set_config('app.current_user_id', '', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform creer_concours_maitre_jeu('x', now() + interval '1 day', 20);
+    raise exception 'TEST FAILED: creer_concours_maitre_jeu() succeeded with auth.uid() IS NULL';
+  exception when others then
+    if sqlerrm != 'not authenticated' then
+      raise exception 'TEST FAILED: unexpected error calling creer_concours_maitre_jeu() with a NULL auth.uid(): %', sqlerrm;
+    end if;
+    raise notice 'PASS: creer_concours_maitre_jeu() rejects a call with auth.uid() IS NULL';
+  end;
+end $$;
+reset role;
+
+-- creer_concours_maitre_jeu() rejects an out-of-bounds percentage, both
+-- directions.
+select set_config('app.current_user_id', 'c0470001-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform creer_concours_maitre_jeu('Hors bornes negatif', now() + interval '1 day', -1);
+    raise exception 'TEST FAILED: creer_concours_maitre_jeu() accepted a negative pourcentage_maitre_jeu';
+  exception when others then
+    if sqlerrm != 'p_pourcentage_maitre_jeu must be between 0 and 100' then
+      raise exception 'TEST FAILED: unexpected error for a negative pourcentage: %', sqlerrm;
+    end if;
+    raise notice 'PASS: creer_concours_maitre_jeu() rejects a negative pourcentage_maitre_jeu';
+  end;
+end $$;
+do $$
+begin
+  begin
+    perform creer_concours_maitre_jeu('Hors bornes superieur', now() + interval '1 day', 101);
+    raise exception 'TEST FAILED: creer_concours_maitre_jeu() accepted a pourcentage_maitre_jeu > 100';
+  exception when others then
+    if sqlerrm != 'p_pourcentage_maitre_jeu must be between 0 and 100' then
+      raise exception 'TEST FAILED: unexpected error for a >100 pourcentage: %', sqlerrm;
+    end if;
+    raise notice 'PASS: creer_concours_maitre_jeu() rejects a pourcentage_maitre_jeu > 100';
+  end;
+end $$;
+reset role;
+
+do $$
+declare
+  v_count integer;
+begin
+  select count(*) into v_count from concours where nom in ('Hors bornes negatif', 'Hors bornes superieur');
+  if v_count != 0 then
+    raise exception 'TEST FAILED: a rejected creer_concours_maitre_jeu() attempt left a concours row behind';
+  end if;
+  raise notice 'PASS: neither rejected creer_concours_maitre_jeu() attempt left any trace';
+end $$;
+
+-- Real creation, mode='maitre_du_jeu', pourcentage=20 -- and, unlike
+-- creer_concours() (entre_createurs), the organizer is NOT auto-accepted
+-- as a participant: they have no campagne to link at all in this mode.
+select set_config('app.current_user_id', 'c0470001-0000-0000-0000-000000000001', false);
+set role authenticated;
+select set_config(
+  'app.concours_mdj_id',
+  (select creer_concours_maitre_jeu('Tournoi Maitre du Jeu', now() + interval '10 days', 20))::text,
+  false
+);
+reset role;
+
+do $$
+declare
+  v_count integer;
+  v_mode text;
+  v_pourcentage numeric;
+begin
+  select count(*) into v_count from concours_participants
+    where concours_id = current_setting('app.concours_mdj_id')::uuid;
+  if v_count != 0 then
+    raise exception 'TEST FAILED: creer_concours_maitre_jeu() should insert zero participant rows (unlike creer_concours()), got %', v_count;
+  end if;
+
+  select mode, pourcentage_maitre_jeu into v_mode, v_pourcentage
+    from concours where id = current_setting('app.concours_mdj_id')::uuid;
+  if v_mode != 'maitre_du_jeu' then
+    raise exception 'TEST FAILED: creer_concours_maitre_jeu() should always produce mode=maitre_du_jeu, got %', v_mode;
+  end if;
+  if v_pourcentage != 20 then
+    raise exception 'TEST FAILED: pourcentage_maitre_jeu should be 20, got %', v_pourcentage;
+  end if;
+  raise notice 'PASS: creer_concours_maitre_jeu() creates the concours with mode=maitre_du_jeu and the given pourcentage, with NO auto-accepted participant';
+end $$;
+
+-- concours_publics restructure (LEFT JOIN): a freshly-created
+-- maitre_du_jeu concours with zero accepted participants still shows
+-- exactly ONE row (the organizer/nom/date_fin/trophy columns, driven by
+-- the `concours` row itself), never zero -- this is what makes the
+-- public page reachable (and the organizer's own "mes concours" listing
+-- non-empty) before anyone has joined, unlike the old INNER JOIN which
+-- would have made this concours invisible everywhere until someone
+-- accepted.
+do $$
+declare
+  v_count integer;
+  v_createur_id uuid;
+  v_campagne_id uuid;
+  v_organisateur_id uuid;
+begin
+  select count(*) into v_count from concours_publics
+    where concours_id = current_setting('app.concours_mdj_id')::uuid;
+  if v_count != 1 then
+    raise exception 'TEST FAILED: concours_publics should show exactly 1 (phantom) row for a participant-less concours, got %', v_count;
+  end if;
+
+  select createur_id, campagne_id, organisateur_id into v_createur_id, v_campagne_id, v_organisateur_id
+    from concours_publics where concours_id = current_setting('app.concours_mdj_id')::uuid;
+  if v_createur_id is not null or v_campagne_id is not null then
+    raise exception 'TEST FAILED: the phantom row should have NULL createur_id/campagne_id, got % / %', v_createur_id, v_campagne_id;
+  end if;
+  if v_organisateur_id != 'c0470001-0000-0000-0000-000000000001' then
+    raise exception 'TEST FAILED: the phantom row should still carry the real organisateur_id, got %', v_organisateur_id;
+  end if;
+  raise notice 'PASS: concours_publics (LEFT JOIN) shows a real, single row for a participant-less maitre_du_jeu concours -- never zero rows -- with participant columns genuinely NULL';
+end $$;
+
+-- pourcentage_maitre_jeu is deliberately never exposed via concours_publics
+-- -- the fan-never-sees-the-percentage principle. Checked at the
+-- information_schema level, same style as every other "this view never
+-- exposes column X" proof in this project (masque_exploration on
+-- profils_explorables, fan_id on offres_disponibilite_produit).
+do $$
+declare
+  v_count integer;
+begin
+  select count(*) into v_count
+    from information_schema.columns
+    where table_name = 'concours_publics' and column_name = 'pourcentage_maitre_jeu';
+  if v_count != 0 then
+    raise exception 'TEST FAILED: concours_publics exposes pourcentage_maitre_jeu -- this must stay private to the organizer/invited créateur only';
+  end if;
+  raise notice 'PASS: concours_publics never exposes pourcentage_maitre_jeu (verified at the schema level, not just by reading the view definition)';
+end $$;
+
+-- Organizer invites créateur A and créateur B (identity only, unchanged
+-- inviter_participant_concours() from migration 0046).
+select set_config('app.current_user_id', 'c0470001-0000-0000-0000-000000000001', false);
+set role authenticated;
+select inviter_participant_concours(current_setting('app.concours_mdj_id')::uuid, 'c0470002-0000-0000-0000-000000000002');
+select inviter_participant_concours(current_setting('app.concours_mdj_id')::uuid, 'c0470003-0000-0000-0000-000000000003');
+reset role;
+
+-- Créateur B tries to accept a maitre_du_jeu invitation with
+-- p_conditions_acceptees explicitly FALSE -- must be rejected outright,
+-- not silently treated as a no-op accept (the brief's own explicit
+-- requirement).
+select set_config('app.current_user_id', 'c0470003-0000-0000-0000-000000000003', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform accepter_invitation_concours(current_setting('app.concours_mdj_id')::uuid, 'c0471003-0000-0000-0000-000000000003', false);
+    raise exception 'TEST FAILED: accepter_invitation_concours() accepted a maitre_du_jeu invitation with p_conditions_acceptees=false';
+  exception when others then
+    if sqlerrm != 'you must accept the revenue-share terms to join a maître du jeu concours' then
+      raise exception 'TEST FAILED: unexpected error rejecting a non-consenting accept: %', sqlerrm;
+    end if;
+    raise notice 'PASS: accepter_invitation_concours() rejects an explicit p_conditions_acceptees=false on a maitre_du_jeu concours';
+  end;
+end $$;
+
+-- Same rejection when the parameter is simply omitted (defaults to
+-- false) -- the 2-arg call form, exactly what an entre_createurs accept
+-- already uses elsewhere in this file.
+do $$
+begin
+  begin
+    perform accepter_invitation_concours(current_setting('app.concours_mdj_id')::uuid, 'c0471003-0000-0000-0000-000000000003');
+    raise exception 'TEST FAILED: accepter_invitation_concours() accepted a maitre_du_jeu invitation with p_conditions_acceptees omitted (defaults to false)';
+  exception when others then
+    if sqlerrm != 'you must accept the revenue-share terms to join a maître du jeu concours' then
+      raise exception 'TEST FAILED: unexpected error rejecting a 2-arg (default-false) accept on a maitre_du_jeu concours: %', sqlerrm;
+    end if;
+    raise notice 'PASS: the 2-arg call form (p_conditions_acceptees defaulting to false) is rejected identically for a maitre_du_jeu concours';
+  end;
+end $$;
+reset role;
+
+do $$
+declare
+  v_statut text;
+  v_campagne_id uuid;
+begin
+  select invite_statut, campagne_id into v_statut, v_campagne_id from concours_participants
+    where concours_id = current_setting('app.concours_mdj_id')::uuid
+      and createur_id = 'c0470003-0000-0000-0000-000000000003';
+  if v_statut != 'invite' or v_campagne_id is not null then
+    raise exception 'TEST FAILED: créateur B''s invitation was corrupted by the rejected accept attempts -- statut=% campagne_id=%', v_statut, v_campagne_id;
+  end if;
+  raise notice 'PASS: both rejected accept attempts left créateur B''s invitation genuinely untouched (still invite, no campagne)';
+end $$;
+
+-- Créateur A accepts WITH explicit consent -- the real, successful path.
+select set_config('app.current_user_id', 'c0470002-0000-0000-0000-000000000002', false);
+set role authenticated;
+select accepter_invitation_concours(current_setting('app.concours_mdj_id')::uuid, 'c0471002-0000-0000-0000-000000000002', true);
+reset role;
+
+do $$
+declare
+  v_statut text;
+  v_campagne_id uuid;
+  v_conditions boolean;
+begin
+  select invite_statut, campagne_id, conditions_acceptees into v_statut, v_campagne_id, v_conditions
+    from concours_participants
+    where concours_id = current_setting('app.concours_mdj_id')::uuid
+      and createur_id = 'c0470002-0000-0000-0000-000000000002';
+  if v_statut != 'accepte' or v_campagne_id != 'c0471002-0000-0000-0000-000000000002' or v_conditions != true then
+    raise exception 'TEST FAILED: créateur A''s consenting accept did not record correctly -- statut=% campagne_id=% conditions=%', v_statut, v_campagne_id, v_conditions;
+  end if;
+  raise notice 'PASS: accepter_invitation_concours() records invite_statut=accepte, the real campagne_id, and conditions_acceptees=true together for a consenting maitre_du_jeu accept';
+end $$;
+
+-- definir_photo_trophee_concours(): NULL auth.uid() rejected, a
+-- non-organizer rejected, the real organizer succeeds and the photo is
+-- visible through the public view (never gated behind participants,
+-- unlike pourcentage_maitre_jeu -- the trophy is meant to be public).
+-- app.current_user_id is still set to créateur A's from the accept
+-- above -- explicitly cleared here for a genuinely NULL auth.uid().
+select set_config('app.current_user_id', '', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform definir_photo_trophee_concours(current_setting('app.concours_mdj_id')::uuid, 'concours/x/trophee.jpg');
+    raise exception 'TEST FAILED: definir_photo_trophee_concours() succeeded with auth.uid() IS NULL';
+  exception when others then
+    if sqlerrm != 'not authenticated' then
+      raise exception 'TEST FAILED: unexpected error calling definir_photo_trophee_concours() with a NULL auth.uid(): %', sqlerrm;
+    end if;
+    raise notice 'PASS: definir_photo_trophee_concours() rejects a call with auth.uid() IS NULL';
+  end;
+end $$;
+reset role;
+
+select set_config('app.current_user_id', 'c0470002-0000-0000-0000-000000000002', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform definir_photo_trophee_concours(current_setting('app.concours_mdj_id')::uuid, 'concours/hacked/trophee.jpg');
+    raise exception 'TEST FAILED: a non-organizer was able to set the trophy photo';
+  exception when others then
+    if sqlerrm != 'not authorized: only the concours organizer can set the trophy photo' then
+      raise exception 'TEST FAILED: unexpected error for a non-organizer trophy-photo attempt: %', sqlerrm;
+    end if;
+    raise notice 'PASS: definir_photo_trophee_concours() rejects a caller who is not the concours organizer';
+  end;
+end $$;
+reset role;
+
+select set_config('app.current_user_id', 'c0470001-0000-0000-0000-000000000001', false);
+set role authenticated;
+select definir_photo_trophee_concours(current_setting('app.concours_mdj_id')::uuid, 'concours/real/trophee.jpg');
+reset role;
+
+do $$
+declare
+  v_key text;
+begin
+  select photo_trophee_r2_key into v_key from concours_publics
+    where concours_id = current_setting('app.concours_mdj_id')::uuid and createur_id = 'c0470002-0000-0000-0000-000000000002';
+  if v_key != 'concours/real/trophee.jpg' then
+    raise exception 'TEST FAILED: the organizer-set trophy photo is not visible through concours_publics, got %', v_key;
+  end if;
+  raise notice 'PASS: definir_photo_trophee_concours() sets the real trophy photo, visible publicly through concours_publics';
+end $$;
+
+-- ---------------------------------------------------------------------
+-- The actual point of this lot: the 3-way payment split, on a real
+-- transaction reaching 'validee' (the moment create_paiement_on_validation()
+-- fires), verified against real dollar amounts, not read from the
+-- function's source. $100, 20% Maître du jeu:
+--   commission_plateforme = 15 (15% HT, unchanged)
+--   frais_agregateur      = 3  (unchanged)
+--   tva                   = 2.4 (16% of 15, unchanged)
+--   net_total             = 100 - 15 - 2.4 = 82.6
+--   montant_maitre_jeu    = round(82.6 * 0.20, 2) = 16.52
+--   montant_net_createur  = 82.6 - 16.52 = 66.08
+-- ---------------------------------------------------------------------
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('c0470071-0000-0000-0000-000000000071',
+   'c0470005-0000-0000-0000-000000000005',
+   'c0470002-0000-0000-0000-000000000002',
+   'c0471002-0000-0000-0000-000000000002', 100, 'en_attente');
+update transactions set statut = 'validee' where id = 'c0470071-0000-0000-0000-000000000071';
+
+do $$
+declare
+  v_commission numeric;
+  v_frais numeric;
+  v_tva numeric;
+  v_net_createur numeric;
+  v_maitre_jeu numeric;
+  v_maitre_jeu_id uuid;
+begin
+  select commission_plateforme, frais_agregateur, tva, montant_net_createur, montant_maitre_jeu, montant_maitre_jeu_id
+    into v_commission, v_frais, v_tva, v_net_createur, v_maitre_jeu, v_maitre_jeu_id
+    from paiements where transaction_id = 'c0470071-0000-0000-0000-000000000071';
+
+  if v_commission != 15 then
+    raise exception 'TEST FAILED: commission_plateforme was % instead of 15', v_commission;
+  end if;
+  if v_frais != 3 then
+    raise exception 'TEST FAILED: frais_agregateur was % instead of 3', v_frais;
+  end if;
+  if v_tva != 2.4 then
+    raise exception 'TEST FAILED: tva was % instead of 2.4', v_tva;
+  end if;
+  if v_maitre_jeu != 16.52 then
+    raise exception 'TEST FAILED: montant_maitre_jeu was % instead of 16.52 (82.6 net_total * 20%%)', v_maitre_jeu;
+  end if;
+  if v_net_createur != 66.08 then
+    raise exception 'TEST FAILED: montant_net_createur was % instead of 66.08 (82.6 - 16.52)', v_net_createur;
+  end if;
+  if v_maitre_jeu_id != 'c0470001-0000-0000-0000-000000000001' then
+    raise exception 'TEST FAILED: montant_maitre_jeu_id was % instead of the organisateur''s id', v_maitre_jeu_id;
+  end if;
+  raise notice 'PASS: create_paiement_on_validation() splits a $100 contribution to a consenting maitre_du_jeu participant into commission=15, frais=3, tva=2.4, montant_maitre_jeu=16.52, montant_net_createur=66.08 -- a real atomic 3-way split on a single paiements row, not a separate transfer';
+end $$;
+
+-- Non-regression, mode entre_createurs: a contribution to créateur B
+-- (c0450002, from the earlier "Concours Duo" fixture, accepted into an
+-- entre_createurs concours with their own real campagne c0451002) must
+-- produce EXACTLY the pre-0047 formula -- no montant_maitre_jeu at all --
+-- even though that créateur genuinely IS an accepted concours
+-- participant, just not in maitre_du_jeu mode. This is the most
+-- important non-regression proof in this lot: a real, valid concours
+-- link that must NOT trigger the new logic.
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('c0470072-0000-0000-0000-000000000072',
+   'c0470005-0000-0000-0000-000000000005',
+   'c0450002-0000-0000-0000-000000000002',
+   'c0451002-0000-0000-0000-000000000002', 60, 'en_attente');
+update transactions set statut = 'validee' where id = 'c0470072-0000-0000-0000-000000000072';
+
+do $$
+declare
+  v_net_createur numeric;
+  v_maitre_jeu numeric;
+  v_maitre_jeu_id uuid;
+begin
+  select montant_net_createur, montant_maitre_jeu, montant_maitre_jeu_id
+    into v_net_createur, v_maitre_jeu, v_maitre_jeu_id
+    from paiements where transaction_id = 'c0470072-0000-0000-0000-000000000072';
+
+  if v_maitre_jeu is not null or v_maitre_jeu_id is not null then
+    raise exception 'TEST FAILED: an entre_createurs-linked campagne triggered the 3-way split -- montant_maitre_jeu=% montant_maitre_jeu_id=%', v_maitre_jeu, v_maitre_jeu_id;
+  end if;
+  -- 60 * 0.15 = 9 commission, 9 * 0.16 = 1.44 tva, net = 60 - 9 - 1.44 = 49.56.
+  if v_net_createur != 49.56 then
+    raise exception 'TEST FAILED: montant_net_createur for an entre_createurs-linked campagne was % instead of 49.56 (the unmodified 0024 formula)', v_net_createur;
+  end if;
+  raise notice 'PASS: mode entre_createurs is completely unaffected by this migration -- a real, accepted concours link in that mode still produces the exact pre-0047 formula, no 3-way split';
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Wallet: solde_wallet_createur() extended to sum the caller's Maître du
+-- jeu cut (paiements.montant_maitre_jeu_id = auth.uid()) alongside their
+-- own créateur earnings. Checked at BOTH stages: while the paiement is
+-- still 'initie' (en_attente_livraison) and after delivery flips it to
+-- 'reussi' (net_a_retirer) -- proving the Maître du jeu's cut is frozen/
+-- unfrozen by the same underlying transaction state as the créateur's
+-- own share, not a separately-tracked balance.
+-- ---------------------------------------------------------------------
+select set_config('app.current_user_id', 'c0470002-0000-0000-0000-000000000002', false);
+set role authenticated;
+do $$
+declare
+  v_en_attente numeric;
+  v_net numeric;
+begin
+  select en_attente_livraison, net_a_retirer into v_en_attente, v_net
+    from solde_wallet_createur('c0470002-0000-0000-0000-000000000002');
+  if v_en_attente != 66.08 then
+    raise exception 'TEST FAILED: créateur A''s en_attente_livraison was % instead of 66.08 before delivery', v_en_attente;
+  end if;
+  if v_net != 0 then
+    raise exception 'TEST FAILED: créateur A''s net_a_retirer was % instead of 0 before delivery', v_net;
+  end if;
+  raise notice 'PASS: créateur A''s own wallet reflects their reduced 66.08 cut (en_attente_livraison) before delivery';
+end $$;
+reset role;
+
+select set_config('app.current_user_id', 'c0470001-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+declare
+  v_en_attente numeric;
+  v_net numeric;
+begin
+  select en_attente_livraison, net_a_retirer into v_en_attente, v_net
+    from solde_wallet_createur('c0470001-0000-0000-0000-000000000001');
+  if v_en_attente != 16.52 then
+    raise exception 'TEST FAILED: organisateur''s en_attente_livraison was % instead of 16.52 before delivery', v_en_attente;
+  end if;
+  if v_net != 0 then
+    raise exception 'TEST FAILED: organisateur''s net_a_retirer was % instead of 0 before delivery', v_net;
+  end if;
+  raise notice 'PASS: the Maître du jeu organisateur''s OWN wallet reflects their 16.52 cut (en_attente_livraison), called with their own auth.uid()';
+end $$;
+reset role;
+
+-- Delivery flips the paiement to 'reussi' -- both wallets move into
+-- net_a_retirer.
+update transactions set statut = 'livree' where id = 'c0470071-0000-0000-0000-000000000071';
+
+select set_config('app.current_user_id', 'c0470002-0000-0000-0000-000000000002', false);
+set role authenticated;
+do $$
+declare
+  v_en_attente numeric;
+  v_net numeric;
+begin
+  select en_attente_livraison, net_a_retirer into v_en_attente, v_net
+    from solde_wallet_createur('c0470002-0000-0000-0000-000000000002');
+  if v_en_attente != 0 or v_net != 66.08 then
+    raise exception 'TEST FAILED: créateur A''s wallet after delivery was en_attente_livraison=% net_a_retirer=% instead of 0 / 66.08', v_en_attente, v_net;
+  end if;
+  raise notice 'PASS: créateur A''s wallet moves the reduced 66.08 into net_a_retirer once delivered';
+end $$;
+reset role;
+
+select set_config('app.current_user_id', 'c0470001-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+declare
+  v_en_attente numeric;
+  v_net numeric;
+begin
+  select en_attente_livraison, net_a_retirer into v_en_attente, v_net
+    from solde_wallet_createur('c0470001-0000-0000-0000-000000000001');
+  if v_en_attente != 0 or v_net != 16.52 then
+    raise exception 'TEST FAILED: organisateur''s wallet after delivery was en_attente_livraison=% net_a_retirer=% instead of 0 / 16.52', v_en_attente, v_net;
+  end if;
+  raise notice 'PASS: the Maître du jeu organisateur''s wallet moves their 16.52 cut into net_a_retirer once delivered, retirable exactly like any other gain via the existing demandes_retrait mechanism';
+end $$;
+reset role;
+
+-- ---------------------------------------------------------------------
+-- Grant audit: anon has no EXECUTE on either new RPC, authenticated
+-- does, same 0020/0021 pattern as every write RPC in this project.
+-- ---------------------------------------------------------------------
+set role anon;
+do $$
+begin
+  begin
+    perform creer_concours_maitre_jeu('x', now() + interval '1 day', 20);
+    raise exception 'TEST FAILED: anon was able to call creer_concours_maitre_jeu() at all';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE privilege on creer_concours_maitre_jeu()';
+  end;
+end $$;
+do $$
+begin
+  begin
+    perform definir_photo_trophee_concours(current_setting('app.concours_mdj_id')::uuid, 'concours/anon/trophee.jpg');
+    raise exception 'TEST FAILED: anon was able to call definir_photo_trophee_concours() at all';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE privilege on definir_photo_trophee_concours()';
+  end;
+end $$;
+reset role;
+
+do $$
+begin
+  if not has_function_privilege('authenticated', 'creer_concours_maitre_jeu(text, timestamptz, numeric)', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lost EXECUTE on creer_concours_maitre_jeu()';
+  end if;
+  if not has_function_privilege('authenticated', 'definir_photo_trophee_concours(uuid, text)', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lost EXECUTE on definir_photo_trophee_concours()';
+  end if;
+  raise notice 'PASS: authenticated holds EXECUTE on both new maitre_du_jeu RPCs';
+end $$;
+
+-- Note on scope, same as demandes_retrait_select_own's own note above:
+-- concours_select_involved (the new RLS policy letting an organizer or
+-- an invited/accepted créateur read pourcentage_maitre_jeu directly off
+-- the raw `concours` table) is not exercised here via a direct SELECT --
+-- this whole checklist file runs as the postgres superuser, which
+-- bypasses RLS regardless of app.current_user_id, and this local
+-- stub_auth.sql harness never grants authenticated/anon any table-level
+-- privilege at all (only real Supabase projects provision that
+-- automatically). Verified manually against a real throwaway database
+-- with a temporary grant before writing this migration (the organizer
+-- saw all 3 of their own concours, an invited/accepted créateur saw only
+-- the concours they're actually involved in, and an uninvolved
+-- authenticated user saw none) -- not something this harness can
+-- reproduce as a permanent, automated assertion.
 
 do $$
 begin

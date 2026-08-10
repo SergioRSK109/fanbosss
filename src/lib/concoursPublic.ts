@@ -5,8 +5,12 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 // Not sensitive, still signed rather than a permanent public bucket URL,
 // same 24h expiry as every other public-profile photo in this project
-// (see profil.ts#PHOTO_SIGNED_URL_EXPIRY_SECONDS).
+// (see profil.ts#PHOTO_SIGNED_URL_EXPIRY_SECONDS). Reused for the trophy
+// photo (migration 0047) -- same reasoning applies: not confidential,
+// just consistently signed per this project's standing R2 policy.
 const PHOTO_SIGNED_URL_EXPIRY_SECONDS = 60 * 60 * 24;
+
+export type ConcoursMode = "entre_createurs" | "maitre_du_jeu";
 
 export interface ConcoursParticipant {
   createurId: string;
@@ -23,25 +27,31 @@ export interface ConcoursPublicData {
   nom: string;
   dateFin: string;
   organisateurId: string;
+  mode: ConcoursMode;
+  trophyPhotoUrl: string | null;
   ended: boolean;
   participants: ConcoursParticipant[];
 }
 
-// Reads concours_publics (migration 0045) -- already scoped to accepted
-// participants only, with montant_collecte read live from
-// campagnes_montant_collecte (never recomputed here, see that
-// migration's own comment). Returns null when the concours doesn't
-// exist at all; since creer_concours() always auto-accepts the
-// organizer's own participation in the same call, a real concours can
-// never have zero rows here -- there is no "exists but empty" case to
-// distinguish from "not found".
+// Reads concours_publics (migration 0045, restructured to a LEFT JOIN by
+// migration 0047 -- see that migration's own comment). Returns null when
+// the concours doesn't exist at all -- since migration 0047, a real
+// concours can NEVER have zero rows here regardless of mode: an
+// entre_createurs concours still auto-accepts its organizer
+// (creer_concours(), unchanged), and a maitre_du_jeu concours -- which
+// has no auto-accepted participant at all -- still gets exactly one
+// "phantom" row (organizer/nom/date_fin/trophy columns populated,
+// createur_id/campagne_id/pseudo/etc. all NULL) from the LEFT JOIN's own
+// driving `concours` row. Those phantom rows are filtered out of
+// `participants` below -- they represent "nobody has joined yet", not a
+// real participant.
 export async function getConcoursPublicData(concoursId: string): Promise<ConcoursPublicData | null> {
   const supabase = await createSupabaseServerClient();
 
   const { data: rows } = await supabase
     .from("concours_publics")
     .select(
-      "concours_id, nom, mode, organisateur_id, date_fin, createur_id, campagne_id, montant_collecte, pseudo, nom_affichage, photo_r2_key",
+      "concours_id, nom, mode, organisateur_id, date_fin, createur_id, campagne_id, montant_collecte, pseudo, nom_affichage, photo_r2_key, photo_trophee_r2_key",
     )
     .eq("concours_id", concoursId);
 
@@ -50,10 +60,14 @@ export async function getConcoursPublicData(concoursId: string): Promise<Concour
   }
 
   const first = rows[0];
+  const participantRows = rows.filter(
+    (row): row is typeof row & { createur_id: string; campagne_id: string } =>
+      Boolean(row.createur_id && row.campagne_id),
+  );
 
   const photoUrlByKey = new Map<string, string>();
   const keysToSign = Array.from(
-    new Set(rows.map((row) => row.photo_r2_key).filter((key): key is string => Boolean(key))),
+    new Set(participantRows.map((row) => row.photo_r2_key).filter((key): key is string => Boolean(key))),
   );
   await Promise.all(
     keysToSign.map(async (key) => {
@@ -61,9 +75,13 @@ export async function getConcoursPublicData(concoursId: string): Promise<Concour
     }),
   );
 
+  const trophyPhotoUrl = first.photo_trophee_r2_key
+    ? await getSignedDownloadUrl(first.photo_trophee_r2_key, PHOTO_SIGNED_URL_EXPIRY_SECONDS)
+    : null;
+
   const leaderIds = new Set(
     computeLeaderIds(
-      rows.map((row) => ({ createurId: row.createur_id, montantCollecte: row.montant_collecte })),
+      participantRows.map((row) => ({ createurId: row.createur_id, montantCollecte: row.montant_collecte })),
     ),
   );
 
@@ -72,8 +90,10 @@ export async function getConcoursPublicData(concoursId: string): Promise<Concour
     nom: first.nom,
     dateFin: first.date_fin,
     organisateurId: first.organisateur_id,
+    mode: first.mode as ConcoursMode,
+    trophyPhotoUrl,
     ended: isConcoursEnded(first.date_fin),
-    participants: rows.map((row) => ({
+    participants: participantRows.map((row) => ({
       createurId: row.createur_id,
       campagneId: row.campagne_id,
       montantCollecte: row.montant_collecte,
@@ -90,6 +110,14 @@ export interface ConcoursOrganise {
   nom: string;
   dateFin: string;
   organisateurId: string;
+  mode: ConcoursMode;
+  // Only ever populated for the two parties migration 0047's
+  // concours_select_involved RLS policy actually lets read it (the
+  // organizer, or an invited/accepted participant) -- see that
+  // migration's own comment for why concours_publics itself never
+  // exposes this. Null for a mode='entre_createurs' concours, where this
+  // field simply doesn't apply.
+  pourcentageMaitreJeu: number | null;
   participants: { createurId: string; displayName: string | null; montantCollecte: number }[];
 }
 
@@ -98,6 +126,8 @@ export interface InvitationConcours {
   nom: string;
   dateFin: string;
   organisateurDisplayName: string | null;
+  mode: ConcoursMode;
+  pourcentageMaitreJeu: number | null;
 }
 
 // Phase 1-bis: the /offres "Concours" tab needs two créateur-only lists
@@ -109,86 +139,147 @@ export interface InvitationConcours {
 // "self-only SELECT on an otherwise RPC-only table" precedent as
 // reservations_stock_select_own (physical products, migration 0039).
 //
-// Display data (nom/date_fin/organisateur, and the full accepted roster
-// for "mesConcours") is then read from concours_publics rather than the
-// raw `concours` table -- no new policy needed there at all: since
-// creer_concours() always auto-accepts the organizer in the same
-// transaction, concours_publics always has at least the organizer's own
-// row for any concours that exists, including one the caller has only
-// been invited to and not yet accepted.
+// Since migration 0047 (concours_select_involved), "concours I organize"
+// is resolved directly against the raw `concours` table instead of only
+// ever being discovered through the caller's own concours_participants
+// row -- a Maître du jeu organizer is never auto-accepted as a
+// participant (see creer_concours_maitre_jeu()'s own comment), so the
+// old participation-only discovery would have left an organizer unable
+// to see, manage, or invite anyone into their own freshly-created
+// maitre_du_jeu concours. This same raw-table read is also what supplies
+// mode/pourcentageMaitreJeu for both "mesConcours" (the organizer's own
+// split, for their own reference) and "invitations" (the consent
+// screen's actual numbers, brief point 7) -- concours_publics
+// deliberately never exposes pourcentageMaitreJeu at all (see migration
+// 0047's own comment), so this raw-table read is the only legitimate
+// path to it.
 export async function getConcoursGereesEtInvitations(userId: string): Promise<{
   mesConcours: ConcoursOrganise[];
   invitations: InvitationConcours[];
 }> {
   const supabase = await createSupabaseServerClient();
 
-  const { data: mesParticipations } = await supabase
-    .from("concours_participants")
-    .select("concours_id, invite_statut")
-    .eq("createur_id", userId);
+  const [{ data: mesParticipations }, { data: organises }] = await Promise.all([
+    supabase
+      .from("concours_participants")
+      .select("concours_id, invite_statut")
+      .eq("createur_id", userId),
+    supabase
+      .from("concours")
+      .select("id, nom, date_fin, mode, pourcentage_maitre_jeu, organisateur_id")
+      .eq("organisateur_id", userId),
+  ]);
 
-  if (!mesParticipations || mesParticipations.length === 0) {
-    return { mesConcours: [], invitations: [] };
-  }
-
-  const mesIds = mesParticipations
+  const accepteIds = (mesParticipations ?? [])
     .filter((p) => p.invite_statut === "accepte")
     .map((p) => p.concours_id);
-  const invitationIds = mesParticipations
+  const invitationIds = (mesParticipations ?? [])
     .filter((p) => p.invite_statut === "invite")
     .map((p) => p.concours_id);
+  const organisedIds = (organises ?? []).map((c) => c.id);
 
-  const allIds = Array.from(new Set([...mesIds, ...invitationIds]));
-  if (allIds.length === 0) {
+  const mesConcoursIds = Array.from(new Set([...accepteIds, ...organisedIds]));
+  const allInvolvedIds = Array.from(new Set([...mesConcoursIds, ...invitationIds]));
+
+  if (allInvolvedIds.length === 0) {
     return { mesConcours: [], invitations: [] };
   }
 
-  const { data: rows } = await supabase
-    .from("concours_publics")
-    .select(
-      "concours_id, nom, date_fin, organisateur_id, createur_id, montant_collecte, pseudo, nom_affichage",
-    )
-    .in("concours_id", allIds);
+  // Details (nom/date_fin/mode/pourcentage/organisateur) for every
+  // concours the caller organizes, participates in, or is invited to --
+  // concours_select_involved (migration 0047) permits all three cases,
+  // via the exact same query. Concours the caller already organizes are
+  // already in `organises` above; this only needs to cover accepteIds/
+  // invitationIds not already covered by that.
+  const idsNeedingDetails = allInvolvedIds.filter((id) => !organisedIds.includes(id));
+  const { data: extraDetails } =
+    idsNeedingDetails.length > 0
+      ? await supabase
+          .from("concours")
+          .select("id, nom, date_fin, mode, pourcentage_maitre_jeu, organisateur_id")
+          .in("id", idsNeedingDetails)
+      : { data: [] as NonNullable<typeof organises> };
 
-  const rowsByConcoursId = new Map<string, NonNullable<typeof rows>>();
-  for (const row of rows ?? []) {
-    const existing = rowsByConcoursId.get(row.concours_id);
-    if (existing) {
-      existing.push(row);
-    } else {
-      rowsByConcoursId.set(row.concours_id, [row]);
+  const detailsById = new Map(
+    [...(organises ?? []), ...(extraDetails ?? [])].map((row) => [row.id, row]),
+  );
+
+  // Accepted-participant rosters (display name + montant_collecte),
+  // still read from concours_publics -- the one place that shape is
+  // already assembled, and it's fine to expose here since none of it
+  // includes pourcentage_maitre_jeu.
+  const { data: participantRows } =
+    mesConcoursIds.length > 0
+      ? await supabase
+          .from("concours_publics")
+          .select("concours_id, createur_id, montant_collecte, pseudo, nom_affichage")
+          .in("concours_id", mesConcoursIds)
+      : { data: [] as { concours_id: string; createur_id: string | null; montant_collecte: number; pseudo: string | null; nom_affichage: string | null }[] };
+
+  const participantsByConcoursId = new Map<
+    string,
+    { createurId: string; displayName: string | null; montantCollecte: number }[]
+  >();
+  for (const row of participantRows ?? []) {
+    if (!row.createur_id) {
+      continue; // phantom row (LEFT JOIN, no accepted participant yet)
     }
+    const existing = participantsByConcoursId.get(row.concours_id) ?? [];
+    existing.push({
+      createurId: row.createur_id,
+      displayName: resolveDisplayName(row.nom_affichage, row.pseudo),
+      montantCollecte: row.montant_collecte,
+    });
+    participantsByConcoursId.set(row.concours_id, existing);
   }
 
-  const mesConcours: ConcoursOrganise[] = mesIds
-    .map((id) => rowsByConcoursId.get(id))
-    .filter((group): group is NonNullable<typeof rows> => Boolean(group && group.length > 0))
-    .map((group) => ({
-      concoursId: group[0].concours_id,
-      nom: group[0].nom,
-      dateFin: group[0].date_fin,
-      organisateurId: group[0].organisateur_id,
-      participants: group.map((row) => ({
-        createurId: row.createur_id,
-        displayName: resolveDisplayName(row.nom_affichage, row.pseudo),
-        montantCollecte: row.montant_collecte,
-      })),
+  const mesConcours: ConcoursOrganise[] = mesConcoursIds
+    .map((id) => detailsById.get(id))
+    .filter((details): details is NonNullable<typeof details> => Boolean(details))
+    .map((details) => ({
+      concoursId: details.id,
+      nom: details.nom,
+      dateFin: details.date_fin,
+      organisateurId: details.organisateur_id,
+      mode: details.mode as ConcoursMode,
+      pourcentageMaitreJeu: details.pourcentage_maitre_jeu,
+      participants: participantsByConcoursId.get(details.id) ?? [],
     }));
 
+  // Organizer display name for invitations -- resolved independently via
+  // profils_publics rather than searching for the organizer among
+  // concours_publics' own accepted-participant rows (the old approach,
+  // which silently depended on the organizer always being an accepted
+  // participant themselves -- never true for maitre_du_jeu).
+  const organisateurIds = Array.from(
+    new Set(
+      invitationIds
+        .map((id) => detailsById.get(id)?.organisateur_id)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  );
+  const { data: organisateurProfils } =
+    organisateurIds.length > 0
+      ? await supabase
+          .from("profils_publics")
+          .select("id, pseudo, nom_affichage")
+          .in("id", organisateurIds)
+      : { data: [] as { id: string; pseudo: string | null; nom_affichage: string | null }[] };
+  const organisateurDisplayNameById = new Map(
+    (organisateurProfils ?? []).map((row) => [row.id, resolveDisplayName(row.nom_affichage, row.pseudo)]),
+  );
+
   const invitations: InvitationConcours[] = invitationIds
-    .map((id) => rowsByConcoursId.get(id))
-    .filter((group): group is NonNullable<typeof rows> => Boolean(group && group.length > 0))
-    .map((group) => {
-      const organisateurRow = group.find((row) => row.createur_id === group[0].organisateur_id);
-      return {
-        concoursId: group[0].concours_id,
-        nom: group[0].nom,
-        dateFin: group[0].date_fin,
-        organisateurDisplayName: organisateurRow
-          ? resolveDisplayName(organisateurRow.nom_affichage, organisateurRow.pseudo)
-          : null,
-      };
-    });
+    .map((id) => detailsById.get(id))
+    .filter((details): details is NonNullable<typeof details> => Boolean(details))
+    .map((details) => ({
+      concoursId: details.id,
+      nom: details.nom,
+      dateFin: details.date_fin,
+      organisateurDisplayName: organisateurDisplayNameById.get(details.organisateur_id) ?? null,
+      mode: details.mode as ConcoursMode,
+      pourcentageMaitreJeu: details.pourcentage_maitre_jeu,
+    }));
 
   return { mesConcours, invitations };
 }
