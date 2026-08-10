@@ -3,6 +3,7 @@ import { getTranslations } from "next-intl/server";
 import { Link } from "@/i18n/navigation";
 import { ConcoursCountdown } from "@/components/ConcoursCountdown";
 import { ShareCampagneButton } from "@/components/ShareCampagneButton";
+import { buttonClass } from "@/components/ui/button-styles";
 import { computeEqualSharePercent, formatPoints } from "@/lib/concours";
 import { getConcoursPublicData } from "@/lib/concoursPublic";
 
@@ -52,6 +53,19 @@ export default async function ConcoursPage({
         <h1 className="text-2xl font-bold">{concours.nom}</h1>
         <div className="mt-2">
           <ConcoursCountdown dateFin={concours.dateFin} />
+        </div>
+        <div className="mt-3">
+          {/* Meant for a second phone filming the contest -- opens in a
+              new tab (target="_blank") since the primary use is copying
+              this exact URL onto that other device, not navigating away
+              from this one. */}
+          <Link
+            href={`/concours/${concours.concoursId}/ecran`}
+            target="_blank"
+            className={buttonClass("outline", "sm")}
+          >
+            {t("ouvrirEcran")}
+          </Link>
         </div>
       </div>
 

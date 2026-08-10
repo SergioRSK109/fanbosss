@@ -270,7 +270,8 @@
     "createurAnonyme": "Créateur FanBoss",
     "montantCollecte": "{points} points",
     "tropheeAlt": "Trophée du concours",
-    "aucunParticipant": "Personne n'a encore rejoint ce concours."
+    "aucunParticipant": "Personne n'a encore rejoint ce concours.",
+    "ouvrirEcran": "📺 Ouvrir l'écran de diffusion"
   },
   "ConcoursManager": {
     "mesConcours": {
