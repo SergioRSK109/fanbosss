@@ -55,9 +55,22 @@ export async function PATCH(
     );
   }
 
+  // Migration 0049: whenever actif is explicitly part of this request,
+  // record whether this was a manual deactivation in the same write --
+  // desactive_manuellement is what campagnes_publiques filters on to
+  // distinguish "the créateur turned this off" (disappears from the
+  // public profile entirely) from a campagne closing naturally (date_fin
+  // passed / objectif reached, neither of which ever touches this
+  // column -- see that migration's own comment). Reactivating (actif:
+  // true) flips it back to false in this same update.
+  const updatePayload: Record<string, unknown> = { ...parsed.data };
+  if (parsed.data.actif !== undefined) {
+    updatePayload.desactive_manuellement = parsed.data.actif === false;
+  }
+
   const { data, error } = await supabase
     .from("offres")
-    .update(parsed.data)
+    .update(updatePayload)
     .eq("id", id)
     .select()
     .single();

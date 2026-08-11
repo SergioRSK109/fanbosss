@@ -54,10 +54,15 @@ export default async function OffresPage({
 
   const [{ data: offres }, { data: demandes }, { data: profil }, { data: validees }, concoursData] =
     await Promise.all([
+      // genere_pour_concours_id is not null for a synthetic campagne
+      // migration 0048's creer_concours()/accepter_invitation_concours()
+      // auto-create -- excluded here so it never appears in the
+      // créateur's own offer-management list, exactly per Part A.4.
       supabase
         .from("offres")
         .select("id, type, prix, libelle, actif, config, stock_total, image_r2_key")
-        .eq("createur_id", user.id),
+        .eq("createur_id", user.id)
+        .is("genere_pour_concours_id", null),
       supabase
         .from("transactions")
         .select("id, montant, deadline_acceptation, offres(type), created_at")
@@ -210,20 +215,16 @@ export default async function OffresPage({
     </div>
   );
 
-  // The créateur's own active campagnes -- used both by "Créer un
-  // concours" (which campagne to launch it with) and "Invitations en
-  // attente" (which campagne to accept with). Derived from the same
-  // `offres` query every other tab already reads, not a new fetch.
-  const mesCampagnesActives = offresNormalisees
-    .filter((offre) => offre.type === "campagne" && offre.actif)
-    .map((offre) => ({ id: offre.id, libelle: offre.libelle }));
-
+  // Migration 0048: creer_concours()/accepter_invitation_concours() both
+  // create and own their own synthetic campagne automatically, so
+  // ConcoursManager no longer needs the créateur's own campagnes threaded
+  // in at all -- see CLAUDE.md's "Creator contests -- campagne
+  // auto-générée" section.
   const concoursContent = (
     <ConcoursManager
       viewerId={user.id}
       mesConcours={concoursData.mesConcours}
       invitations={concoursData.invitations}
-      mesCampagnes={mesCampagnesActives}
     />
   );
 

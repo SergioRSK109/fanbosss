@@ -326,18 +326,38 @@ export const publierMessageSchema = z
     path: ["contenu"],
   });
 
-// Concours entre créateurs, Phase 1 (migration 0045) + the Phase 1-bis
-// two-temps invitation flow (migration 0046). Mirrors each RPC's own
-// signature -- the RPC is still the real guarantee (ownership/type
-// checks, mode always forced to 'entre_createurs' server-side), these
-// are just the usual "clean 400 instead of a raw Postgres error" layer.
+// Concours entre créateurs, Phase 1 (migration 0045) through the campagne
+// auto-generation + points objective / record time follow-up (migration
+// 0048). Mirrors each RPC's own signature -- the RPC is still the real
+// guarantee (mode always forced server-side, the DB's own
+// concours_temps_record_requiert_objectif/concours_dates_coherentes
+// constraints are the real guarantee behind the three refines below),
+// these are just the usual "clean 400 instead of a raw Postgres error"
+// layer. campagneId is gone from both this schema and
+// accepterConcoursSchema below, since migration 0048: the campagne a
+// concours needs is created automatically by the RPC itself, never
+// chosen by the client -- see CLAUDE.md's "Creator contests" section.
 export const creerConcoursSchema = z
   .object({
     nom: z.string().trim().min(1).max(100),
     dateFin: z.string().trim().min(1),
-    campagneId: z.string().uuid(),
+    dateDebut: z.string().trim().min(1).nullable().optional(),
+    objectifPoints: z.number().positive().nullable().optional(),
+    tempsRecord: z.string().trim().min(1).nullable().optional(),
   })
-  .strict();
+  .strict()
+  .refine((data) => !data.tempsRecord || data.objectifPoints != null, {
+    message: "un temps record nécessite un objectif de points",
+    path: ["tempsRecord"],
+  })
+  .refine((data) => !data.dateDebut || new Date(data.dateDebut).getTime() < new Date(data.dateFin).getTime(), {
+    message: "la date de début doit précéder la date de fin",
+    path: ["dateDebut"],
+  })
+  .refine((data) => !data.tempsRecord || new Date(data.tempsRecord).getTime() < new Date(data.dateFin).getTime(), {
+    message: "le temps record doit précéder la date de fin",
+    path: ["tempsRecord"],
+  });
 
 // Invitation is by identity only since migration 0046 -- no campagne_id
 // here at all, deliberately: nobody but the invited créateur can know
@@ -354,25 +374,43 @@ export const inviterConcoursSchema = z
 // entirely for entre_createurs, and rejects a maitre_du_jeu accept
 // outright unless it's explicitly true. Optional here (defaults to
 // false server-side, same as the RPC's own default) so an
-// entre_createurs accept never has to send it at all.
+// entre_createurs accept never has to send it at all. No campagneId
+// field at all since migration 0048 -- the accepting créateur's own
+// synthetic campagne is created automatically by the RPC.
 export const accepterConcoursSchema = z
   .object({
-    campagneId: z.string().uuid(),
     conditionsAcceptees: z.boolean().optional(),
   })
   .strict();
 
-// Concours Phase 2, mode 'maitre_du_jeu' (migration 0047). Mirrors
-// creer_concours_maitre_jeu()'s own signature -- the RPC is still the
-// real guarantee (0-100 bound, mode always forced server-side), this is
-// just the usual clean-400-instead-of-a-raw-Postgres-error layer.
+// Concours Phase 2, mode 'maitre_du_jeu' (migration 0047), extended with
+// the same points-objective fields (migration 0048) -- Part B applies to
+// both modes. Mirrors creer_concours_maitre_jeu()'s own signature -- the
+// RPC is still the real guarantee (0-100 bound, mode always forced
+// server-side), this is just the usual clean-400-instead-of-a-raw-
+// Postgres-error layer.
 export const creerConcoursMaitreJeuSchema = z
   .object({
     nom: z.string().trim().min(1).max(100),
     dateFin: z.string().trim().min(1),
     pourcentageMaitreJeu: z.number().min(0).max(100),
+    dateDebut: z.string().trim().min(1).nullable().optional(),
+    objectifPoints: z.number().positive().nullable().optional(),
+    tempsRecord: z.string().trim().min(1).nullable().optional(),
   })
-  .strict();
+  .strict()
+  .refine((data) => !data.tempsRecord || data.objectifPoints != null, {
+    message: "un temps record nécessite un objectif de points",
+    path: ["tempsRecord"],
+  })
+  .refine((data) => !data.dateDebut || new Date(data.dateDebut).getTime() < new Date(data.dateFin).getTime(), {
+    message: "la date de début doit précéder la date de fin",
+    path: ["dateDebut"],
+  })
+  .refine((data) => !data.tempsRecord || new Date(data.tempsRecord).getTime() < new Date(data.dateFin).getTime(), {
+    message: "le temps record doit précéder la date de fin",
+    path: ["tempsRecord"],
+  });
 
 export const definirTropheeConcoursSchema = z
   .object({

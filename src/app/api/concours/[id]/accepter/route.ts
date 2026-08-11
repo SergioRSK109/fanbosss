@@ -3,11 +3,13 @@ import { accepterConcoursSchema } from "@/lib/validation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 // Thin wrapper -- accepter_invitation_concours() (migration 0046, its
-// signature extended by 0047 with p_conditions_acceptees) is the real
-// guarantee (eligibility: own row, still 'invite'; ownership+type on the
-// supplied campagne, via the same verifier_campagne_du_createur() helper
-// creer_concours() itself uses; and, for a maitre_du_jeu concours, that
-// conditions_acceptees is genuinely true) -- never re-implemented here.
+// signature extended by 0047 with p_conditions_acceptees, and simplified
+// by 0048 to drop p_campagne_id entirely) is the real guarantee
+// (eligibility: own row, still 'invite'; and, for a maitre_du_jeu
+// concours, that conditions_acceptees is genuinely true) -- never
+// re-implemented here. Since migration 0048, the accepting créateur's
+// own synthetic campagne is created automatically by the RPC -- no
+// campagneId in the request body at all anymore.
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -31,7 +33,6 @@ export async function POST(
 
   const { error } = await supabase.rpc("accepter_invitation_concours", {
     p_concours_id: id,
-    p_campagne_id: parsed.data.campagneId,
     // Only meaningful for a mode='maitre_du_jeu' concours -- the RPC
     // (migration 0047) ignores it entirely for entre_createurs. Defaults
     // to false, matching the RPC's own default, when the entre_createurs

@@ -5,6 +5,7 @@ import {
   computeLeaderIds,
   formatPoints,
   isConcoursEnded,
+  isDateInFuture,
 } from "@/lib/concours";
 
 const REFERENCE = new Date("2026-08-09T12:00:00.000Z");
@@ -55,6 +56,25 @@ describe("isConcoursEnded", () => {
 
   it("is true after date_fin", () => {
     expect(isConcoursEnded("2026-08-01T12:00:00.000Z", REFERENCE)).toBe(true);
+  });
+});
+
+// Migration 0048: backs the /concours/[id] page's "Le concours ouvre
+// le..." date_debut notice, computed in the data layer (concoursPublic.ts)
+// rather than inline in the page's render body -- see that module's own
+// comment for why (react-hooks/purity flags a raw `new Date()`/`Date.now()`
+// call during a Server Component's render).
+describe("isDateInFuture", () => {
+  it("is true for a date after now", () => {
+    expect(isDateInFuture("2026-08-10T12:00:00.000Z", REFERENCE)).toBe(true);
+  });
+
+  it("is false exactly at now", () => {
+    expect(isDateInFuture("2026-08-09T12:00:00.000Z", REFERENCE)).toBe(false);
+  });
+
+  it("is false for a date before now", () => {
+    expect(isDateInFuture("2026-08-01T12:00:00.000Z", REFERENCE)).toBe(false);
   });
 });
 

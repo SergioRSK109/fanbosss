@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   accepterConcoursSchema,
   creerConcoursMaitreJeuSchema,
+  creerConcoursSchema,
   creerOffreSchema,
   definirTropheeConcoursSchema,
   isAtLeast18,
@@ -348,9 +349,81 @@ describe("publierMessageSchema", () => {
   });
 });
 
-// Concours Phase 2, mode 'maitre_du_jeu' (migration 0047). The RPC
-// (creer_concours_maitre_jeu()) is the real guarantee for the 0-100
-// bound -- these tests only cover the schema's own clean-400 layer.
+// Concours entre créateurs (migration 0045), extended with the points
+// objective / record time fields (migration 0048). No campagneId at all
+// -- creer_concours() creates and owns its own synthetic campagne, see
+// CLAUDE.md's "Creator contests -- campagne auto-générée" section. The
+// RPC is the real guarantee for the mode/DB-constraint behavior -- these
+// tests only cover the schema's own clean-400 layer, including the three
+// refines mirroring concours_temps_record_requiert_objectif/
+// concours_dates_coherentes.
+describe("creerConcoursSchema", () => {
+  const base = { nom: "Concours", dateFin: "2026-12-01T00:00:00.000Z" };
+
+  it("accepts a minimal payload -- no campagneId, no objectif fields at all", () => {
+    expect(creerConcoursSchema.safeParse(base).success).toBe(true);
+  });
+
+  it("rejects an empty nom", () => {
+    expect(creerConcoursSchema.safeParse({ ...base, nom: "" }).success).toBe(false);
+  });
+
+  it("accepts a valid dateDebut before dateFin", () => {
+    expect(
+      creerConcoursSchema.safeParse({ ...base, dateDebut: "2026-11-01T00:00:00.000Z" }).success,
+    ).toBe(true);
+  });
+
+  it("rejects a dateDebut on or after dateFin", () => {
+    expect(
+      creerConcoursSchema.safeParse({ ...base, dateDebut: "2026-12-01T00:00:00.000Z" }).success,
+    ).toBe(false);
+    expect(
+      creerConcoursSchema.safeParse({ ...base, dateDebut: "2027-01-01T00:00:00.000Z" }).success,
+    ).toBe(false);
+  });
+
+  it("accepts objectifPoints alone (rule 2 -- objectif seul, no temps record)", () => {
+    expect(creerConcoursSchema.safeParse({ ...base, objectifPoints: 100 }).success).toBe(true);
+  });
+
+  it("rejects a temps_record with no objectif_points at all", () => {
+    expect(
+      creerConcoursSchema.safeParse({ ...base, tempsRecord: "2026-11-15T00:00:00.000Z" }).success,
+    ).toBe(false);
+  });
+
+  it("accepts objectifPoints + a tempsRecord before dateFin", () => {
+    expect(
+      creerConcoursSchema.safeParse({
+        ...base,
+        objectifPoints: 100,
+        tempsRecord: "2026-11-15T00:00:00.000Z",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects a tempsRecord on or after dateFin", () => {
+    expect(
+      creerConcoursSchema.safeParse({
+        ...base,
+        objectifPoints: 100,
+        tempsRecord: "2026-12-01T00:00:00.000Z",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a non-positive objectifPoints", () => {
+    expect(creerConcoursSchema.safeParse({ ...base, objectifPoints: 0 }).success).toBe(false);
+    expect(creerConcoursSchema.safeParse({ ...base, objectifPoints: -5 }).success).toBe(false);
+  });
+});
+
+// Concours Phase 2, mode 'maitre_du_jeu' (migration 0047), extended with
+// the same points objective / record time fields (migration 0048). The
+// RPC (creer_concours_maitre_jeu()) is the real guarantee for the 0-100
+// bound and the DB constraints -- these tests only cover the schema's
+// own clean-400 layer.
 describe("creerConcoursMaitreJeuSchema", () => {
   const base = { nom: "Tournoi", dateFin: "2026-12-01T00:00:00.000Z" };
 
@@ -384,22 +457,45 @@ describe("creerConcoursMaitreJeuSchema", () => {
         .success,
     ).toBe(false);
   });
+
+  it("rejects a temps_record with no objectif_points, same as creerConcoursSchema", () => {
+    expect(
+      creerConcoursMaitreJeuSchema.safeParse({
+        ...base,
+        pourcentageMaitreJeu: 20,
+        tempsRecord: "2026-11-15T00:00:00.000Z",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("accepts objectifPoints + a valid tempsRecord", () => {
+    expect(
+      creerConcoursMaitreJeuSchema.safeParse({
+        ...base,
+        pourcentageMaitreJeu: 20,
+        objectifPoints: 500,
+        tempsRecord: "2026-11-15T00:00:00.000Z",
+      }).success,
+    ).toBe(true);
+  });
 });
 
 describe("accepterConcoursSchema", () => {
-  it("accepts campagneId alone -- conditionsAcceptees is optional (entre_createurs never sends it)", () => {
-    const result = accepterConcoursSchema.safeParse({
-      campagneId: "11111111-1111-1111-8111-111111111111",
-    });
+  it("accepts an empty body -- conditionsAcceptees is optional (entre_createurs never sends it)", () => {
+    const result = accepterConcoursSchema.safeParse({});
     expect(result.success).toBe(true);
   });
 
   it("accepts an explicit conditionsAcceptees (the maitre_du_jeu consent flow)", () => {
+    const result = accepterConcoursSchema.safeParse({ conditionsAcceptees: true });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a campagneId -- migration 0048 removed it entirely, the RPC creates its own", () => {
     const result = accepterConcoursSchema.safeParse({
       campagneId: "11111111-1111-1111-8111-111111111111",
-      conditionsAcceptees: true,
     });
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
   });
 });
 

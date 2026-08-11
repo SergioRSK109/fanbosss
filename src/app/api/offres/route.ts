@@ -79,6 +79,14 @@ export async function POST(request: NextRequest) {
   }
   if (parsed.data.actif !== undefined) {
     upsertPayload.actif = parsed.data.actif;
+    // Migration 0049: this route -- not PATCH /api/offres/[id] -- is what
+    // OffresManager's own désactiver/réactiver button actually calls (an
+    // upsert, per this route's own comment above); the same
+    // manual-vs-natural-closure signal has to be set here too, or the
+    // real toggle a créateur clicks would never distinguish itself from
+    // a campagne closing on its own. See campagnes_publiques (migration
+    // 0049) for what reads this.
+    upsertPayload.desactive_manuellement = parsed.data.actif === false;
   }
   if (parsed.data.stock_total !== undefined) {
     upsertPayload.stock_total = parsed.data.stock_total;

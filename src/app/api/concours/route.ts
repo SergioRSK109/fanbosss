@@ -2,10 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { creerConcoursSchema } from "@/lib/validation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
-// Thin wrapper -- creer_concours() (migration 0045/0046) is the real
-// guarantee for every rule that matters (ownership + type check on the
-// campagne, mode always forced to 'entre_createurs'), never re-implemented
-// here, same shape as every other RPC wrapper in this project.
+// Thin wrapper -- creer_concours() (migration 0045/0046, campagne
+// auto-generation + points objective added in migration 0048) is the
+// real guarantee for every rule that matters (mode always forced to
+// 'entre_createurs', the DB's own concours_temps_record_requiert_objectif/
+// concours_dates_coherentes constraints), never re-implemented here, same
+// shape as every other RPC wrapper in this project. No campagneId in the
+// request body at all since migration 0048 -- the RPC creates and owns
+// its own synthetic campagne.
 export async function POST(request: NextRequest) {
   const supabase = await createSupabaseServerClient();
   const {
@@ -26,7 +30,9 @@ export async function POST(request: NextRequest) {
   const { data, error } = await supabase.rpc("creer_concours", {
     p_nom: parsed.data.nom,
     p_date_fin: parsed.data.dateFin,
-    p_campagne_id: parsed.data.campagneId,
+    p_date_debut: parsed.data.dateDebut ?? null,
+    p_objectif_points: parsed.data.objectifPoints ?? null,
+    p_temps_record: parsed.data.tempsRecord ?? null,
   });
 
   if (error) {

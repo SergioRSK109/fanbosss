@@ -98,6 +98,53 @@ describe("POST /api/concours/maitre-jeu", () => {
       p_nom: "Tournoi sponsorisé",
       p_date_fin: VALID_BODY.dateFin,
       p_pourcentage_maitre_jeu: 20,
+      p_date_debut: null,
+      p_objectif_points: null,
+      p_temps_record: null,
+    });
+  });
+
+  it("rejects a temps_record with no objectif_points with 400 before calling the RPC", async () => {
+    const supabase = buildSupabase({ id: "u1" }, { data: null, error: null });
+    const rpcSpy = vi.spyOn(supabase, "rpc");
+    vi.mocked(createSupabaseServerClient).mockResolvedValue(
+      supabase as unknown as Awaited<ReturnType<typeof createSupabaseServerClient>>,
+    );
+
+    const { POST } = await import("@/app/api/concours/maitre-jeu/route");
+    const response = await POST(
+      buildRequest({ ...VALID_BODY, tempsRecord: new Date(Date.now() + 3600000).toISOString() }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    expect(rpcSpy).not.toHaveBeenCalled();
+  });
+
+  it("passes date_debut/objectif_points/temps_record through when provided", async () => {
+    const supabase = buildSupabase(
+      { id: "u1" },
+      { data: "22222222-2222-4222-8222-222222222222", error: null },
+    );
+    const rpcSpy = vi.spyOn(supabase, "rpc");
+    vi.mocked(createSupabaseServerClient).mockResolvedValue(
+      supabase as unknown as Awaited<ReturnType<typeof createSupabaseServerClient>>,
+    );
+
+    const dateDebut = new Date(Date.now() + 3600000).toISOString();
+    const tempsRecord = new Date(Date.now() + 7200000).toISOString();
+
+    const { POST } = await import("@/app/api/concours/maitre-jeu/route");
+    await POST(
+      buildRequest({ ...VALID_BODY, dateDebut, objectifPoints: 500, tempsRecord }) as never,
+    );
+
+    expect(rpcSpy).toHaveBeenCalledWith("creer_concours_maitre_jeu", {
+      p_nom: VALID_BODY.nom,
+      p_date_fin: VALID_BODY.dateFin,
+      p_pourcentage_maitre_jeu: 20,
+      p_date_debut: dateDebut,
+      p_objectif_points: 500,
+      p_temps_record: tempsRecord,
     });
   });
 });

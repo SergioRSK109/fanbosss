@@ -8,11 +8,6 @@ import { inputClass, labelClass } from "@/components/ui/field-styles";
 import { Link } from "@/i18n/navigation";
 import type { ConcoursOrganise, InvitationConcours } from "@/lib/concoursPublic";
 
-interface Campagne {
-  id: string;
-  libelle: string | null;
-}
-
 // toLocaleDateString() with no explicit locale resolves from the
 // runtime's own default (server) vs the browser's (client) -- a real,
 // reproducible hydration mismatch, not just a style nit (caught live
@@ -30,35 +25,162 @@ const selectClass =
 // Phase 1-bis: créateur-facing UI for concours entre créateurs (migration
 // 0045/0046) -- schema/RPCs/the public /concours/[id] page already
 // existed; this is the first créateur-facing management surface for any
-// of it. Three pieces, per the brief: create, respond to invitations
-// (own campagne chosen at accept time -- see CLAUDE.md's "Creator
-// contests" section for why that moved here instead of staying at invite
-// time), and invite someone into a concours you organize (by pseudo,
-// resolved server-side -- src/app/api/concours/[id]/inviter/route.ts).
+// of it. Three pieces, per the brief: create, respond to invitations,
+// and invite someone into a concours you organize (by pseudo, resolved
+// server-side -- src/app/api/concours/[id]/inviter/route.ts).
 //
 // Phase 2 (migration 0047) adds a second mode, maitre_du_jeu, reusing
 // this exact tab per the brief's own instruction rather than a new one:
 // InvitationRow gained the explicit consent screen (percentage
 // breakdown + required checkbox) an invited créateur sees only for a
 // maitre_du_jeu invitation, and CreerConcoursMaitreJeuForm is a new,
-// separate creation form below the existing entre_createurs one -- it
-// has no campagne dependency at all (a Maître du jeu organizer isn't
-// necessarily a créateur with a campagne to link), unlike
-// CreerConcoursForm.
+// separate creation form below the existing entre_createurs one.
+//
+// Migration 0048 removed campagne selection from every form here
+// entirely -- creer_concours()/accepter_invitation_concours() now create
+// and own a synthetic campagne automatically (see CLAUDE.md's "Creator
+// contests -- campagne auto-générée" section), so ConcoursManager no
+// longer receives (or needs) a `mesCampagnes` prop at all. The same
+// migration added the points-objective/temps-record questions
+// (ObjectifPointsFields below), shared between both creation forms per
+// the brief's own "les deux modes" instruction.
 
-function CreerConcoursForm({ mesCampagnes }: { mesCampagnes: Campagne[] }) {
+interface ObjectifPointsValue {
+  dateDebut: string;
+  aDesPoints: boolean;
+  objectifPoints: string;
+  aUnTempsRecord: boolean;
+  tempsRecord: string;
+}
+
+const EMPTY_OBJECTIF_VALUE: ObjectifPointsValue = {
+  dateDebut: "",
+  aDesPoints: false,
+  objectifPoints: "",
+  aUnTempsRecord: false,
+  tempsRecord: "",
+};
+
+// Converts the form's local, string-based state into the exact
+// {dateDebut, objectifPoints, tempsRecord} shape POST /api/concours and
+// POST /api/concours/maitre-jeu both expect -- a temps_record can only
+// ever be sent alongside a real objectif (mirroring
+// concours_temps_record_requiert_objectif, the real DB guarantee), which
+// this function enforces by construction: clearing objectifPoints/
+// tempsRecord back to null the instant aDesPoints/aUnTempsRecord go
+// false, rather than trusting stale leftover text in a hidden field.
+function buildObjectifPayload(value: ObjectifPointsValue) {
+  return {
+    dateDebut: value.dateDebut ? new Date(`${value.dateDebut}T00:00:00`).toISOString() : null,
+    objectifPoints: value.aDesPoints && value.objectifPoints ? Number(value.objectifPoints) : null,
+    tempsRecord:
+      value.aDesPoints && value.aUnTempsRecord && value.tempsRecord
+        ? new Date(value.tempsRecord).toISOString()
+        : null,
+  };
+}
+
+// Progressive disclosure per the brief (B.4), shared verbatim between
+// CreerConcoursForm and CreerConcoursMaitreJeuForm since the questions
+// and their ordering are identical for both modes: date de début
+// (optional, purely informative) -> "objectif de points ?" -> only if
+// yes, "temps record précis ?" -> only if yes, the temps record
+// date/heure field itself.
+function ObjectifPointsFields({
+  value,
+  onChange,
+}: {
+  value: ObjectifPointsValue;
+  onChange: (value: ObjectifPointsValue) => void;
+}) {
+  const t = useTranslations("ConcoursManager.objectifFields");
+
+  return (
+    <>
+      <label className={labelClass}>
+        {t("dateDebutLabel")}
+        <input
+          type="date"
+          value={value.dateDebut}
+          onChange={(event) => onChange({ ...value, dateDebut: event.target.value })}
+          className={inputClass}
+        />
+      </label>
+      <label className={labelClass}>
+        {t("objectifQuestion")}
+        <select
+          value={value.aDesPoints ? "oui" : "non"}
+          onChange={(event) => {
+            const aDesPoints = event.target.value === "oui";
+            onChange({
+              ...value,
+              aDesPoints,
+              objectifPoints: aDesPoints ? value.objectifPoints : "",
+              aUnTempsRecord: aDesPoints ? value.aUnTempsRecord : false,
+              tempsRecord: aDesPoints ? value.tempsRecord : "",
+            });
+          }}
+          className={selectClass}
+        >
+          <option value="non">{t("non")}</option>
+          <option value="oui">{t("oui")}</option>
+        </select>
+      </label>
+      {value.aDesPoints && (
+        <>
+          <label className={labelClass}>
+            {t("objectifLabel")}
+            <input
+              type="number"
+              min={1}
+              step="1"
+              value={value.objectifPoints}
+              onChange={(event) => onChange({ ...value, objectifPoints: event.target.value })}
+              required
+              className={inputClass}
+            />
+          </label>
+          <label className={labelClass}>
+            {t("tempsRecordQuestion")}
+            <select
+              value={value.aUnTempsRecord ? "oui" : "non"}
+              onChange={(event) => {
+                const aUnTempsRecord = event.target.value === "oui";
+                onChange({ ...value, aUnTempsRecord, tempsRecord: aUnTempsRecord ? value.tempsRecord : "" });
+              }}
+              className={selectClass}
+            >
+              <option value="non">{t("non")}</option>
+              <option value="oui">{t("oui")}</option>
+            </select>
+          </label>
+          {value.aUnTempsRecord && (
+            <label className={labelClass}>
+              {t("tempsRecordLabel")}
+              <input
+                type="datetime-local"
+                value={value.tempsRecord}
+                onChange={(event) => onChange({ ...value, tempsRecord: event.target.value })}
+                required
+                className={inputClass}
+              />
+            </label>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+function CreerConcoursForm() {
   const t = useTranslations("ConcoursManager.creer");
   const tCommon = useTranslations("Common");
   const router = useRouter();
   const [nom, setNom] = useState("");
   const [dateFin, setDateFin] = useState("");
-  const [campagneId, setCampagneId] = useState(mesCampagnes[0]?.id ?? "");
+  const [objectif, setObjectif] = useState<ObjectifPointsValue>(EMPTY_OBJECTIF_VALUE);
   const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState("");
-
-  if (mesCampagnes.length === 0) {
-    return <p className="text-sm text-foreground-muted">{t("aucuneCampagne")}</p>;
-  }
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -72,7 +194,7 @@ function CreerConcoursForm({ mesCampagnes }: { mesCampagnes: Campagne[] }) {
         body: JSON.stringify({
           nom,
           dateFin: new Date(`${dateFin}T23:59:59`).toISOString(),
-          campagneId,
+          ...buildObjectifPayload(objectif),
         }),
       });
       const body = await response.json();
@@ -83,6 +205,7 @@ function CreerConcoursForm({ mesCampagnes }: { mesCampagnes: Campagne[] }) {
 
       setNom("");
       setDateFin("");
+      setObjectif(EMPTY_OBJECTIF_VALUE);
       setStatus("idle");
       router.refresh();
     } catch (err) {
@@ -114,20 +237,7 @@ function CreerConcoursForm({ mesCampagnes }: { mesCampagnes: Campagne[] }) {
           className={inputClass}
         />
       </label>
-      <label className={labelClass}>
-        {t("campagneLabel")}
-        <select
-          value={campagneId}
-          onChange={(event) => setCampagneId(event.target.value)}
-          className={selectClass}
-        >
-          {mesCampagnes.map((campagne) => (
-            <option key={campagne.id} value={campagne.id}>
-              {campagne.libelle ?? campagne.id}
-            </option>
-          ))}
-        </select>
-      </label>
+      <ObjectifPointsFields value={objectif} onChange={setObjectif} />
       <button type="submit" disabled={status === "saving"} className={buttonClass("primary", "sm", "self-start")}>
         {status === "saving" ? tCommon("saving") : t("submit")}
       </button>
@@ -137,7 +247,8 @@ function CreerConcoursForm({ mesCampagnes }: { mesCampagnes: Campagne[] }) {
 }
 
 // Maître du jeu creation, per the brief: nom / date de fin / pourcentage
-// / an optional trophy photo. Two-step submit, same "create the record
+// / an optional trophy photo, plus the same points-objective questions
+// as CreerConcoursForm. Two-step submit, same "create the record
 // first, then upload, then PATCH the resulting key" flow ProduitRow
 // (OffresManager.tsx) already established for offres.image_r2_key --
 // R2's presigned-upload pipeline needs a real concours id to build the
@@ -149,6 +260,7 @@ function CreerConcoursMaitreJeuForm() {
   const [nom, setNom] = useState("");
   const [dateFin, setDateFin] = useState("");
   const [pourcentage, setPourcentage] = useState("");
+  const [objectif, setObjectif] = useState<ObjectifPointsValue>(EMPTY_OBJECTIF_VALUE);
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState("");
@@ -166,6 +278,7 @@ function CreerConcoursMaitreJeuForm() {
           nom,
           dateFin: new Date(`${dateFin}T23:59:59`).toISOString(),
           pourcentageMaitreJeu: Number(pourcentage),
+          ...buildObjectifPayload(objectif),
         }),
       });
       const body = await response.json();
@@ -202,6 +315,7 @@ function CreerConcoursMaitreJeuForm() {
       setNom("");
       setDateFin("");
       setPourcentage("");
+      setObjectif(EMPTY_OBJECTIF_VALUE);
       setFile(null);
       setStatus("idle");
       router.refresh();
@@ -234,6 +348,7 @@ function CreerConcoursMaitreJeuForm() {
           className={inputClass}
         />
       </label>
+      <ObjectifPointsFields value={objectif} onChange={setObjectif} />
       <label className={labelClass}>
         {t("pourcentageLabel")}
         <input
@@ -369,18 +484,11 @@ function ConcoursOrganiseCard({
   );
 }
 
-function InvitationRow({
-  invitation,
-  mesCampagnes,
-}: {
-  invitation: InvitationConcours;
-  mesCampagnes: Campagne[];
-}) {
+function InvitationRow({ invitation }: { invitation: InvitationConcours }) {
   const t = useTranslations("ConcoursManager.invitations");
   const tCommon = useTranslations("Common");
   const locale = useLocale();
   const router = useRouter();
-  const [campagneId, setCampagneId] = useState(mesCampagnes[0]?.id ?? "");
   const [conditionsAcceptees, setConditionsAcceptees] = useState(false);
   const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState("");
@@ -397,7 +505,7 @@ function InvitationRow({
     const response = await fetch(`/api/concours/${invitation.concoursId}/accepter`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ campagneId, conditionsAcceptees }),
+      body: JSON.stringify({ conditionsAcceptees }),
     });
     const body = await response.json();
 
@@ -440,24 +548,6 @@ function InvitationRow({
           {formatDate(invitation.dateFin, locale)}
         </p>
       </div>
-      {mesCampagnes.length === 0 ? (
-        <p className="text-sm text-foreground-muted">{t("aucuneCampagne")}</p>
-      ) : (
-        <label className={labelClass}>
-          {t("campagneLabel")}
-          <select
-            value={campagneId}
-            onChange={(event) => setCampagneId(event.target.value)}
-            className={selectClass}
-          >
-            {mesCampagnes.map((campagne) => (
-              <option key={campagne.id} value={campagne.id}>
-                {campagne.libelle ?? campagne.id}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
       {isMaitreDuJeu && (
         <div className="rounded-2xl border border-border bg-surface-muted p-3">
           <p className="text-sm font-medium">
@@ -487,9 +577,7 @@ function InvitationRow({
         <button
           type="button"
           onClick={handleAccepter}
-          disabled={
-            status === "saving" || mesCampagnes.length === 0 || (isMaitreDuJeu && !conditionsAcceptees)
-          }
+          disabled={status === "saving" || (isMaitreDuJeu && !conditionsAcceptees)}
           className={buttonClass("primary", "sm")}
         >
           {status === "saving" ? tCommon("saving") : t("accepter")}
@@ -512,12 +600,10 @@ export function ConcoursManager({
   viewerId,
   mesConcours,
   invitations,
-  mesCampagnes,
 }: {
   viewerId: string;
   mesConcours: ConcoursOrganise[];
   invitations: InvitationConcours[];
-  mesCampagnes: Campagne[];
 }) {
   const t = useTranslations("ConcoursManager");
 
@@ -543,11 +629,7 @@ export function ConcoursManager({
         ) : (
           <ul className="flex flex-col gap-3">
             {invitations.map((invitation) => (
-              <InvitationRow
-                key={invitation.concoursId}
-                invitation={invitation}
-                mesCampagnes={mesCampagnes}
-              />
+              <InvitationRow key={invitation.concoursId} invitation={invitation} />
             ))}
           </ul>
         )}
@@ -555,7 +637,7 @@ export function ConcoursManager({
 
       <section>
         <h3 className="mb-3 text-base font-bold">{t("creer.heading")}</h3>
-        <CreerConcoursForm mesCampagnes={mesCampagnes} />
+        <CreerConcoursForm />
       </section>
 
       <section>

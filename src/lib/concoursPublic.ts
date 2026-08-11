@@ -1,4 +1,4 @@
-import { computeLeaderIds, isConcoursEnded } from "@/lib/concours";
+import { computeLeaderIds, isConcoursEnded, isDateInFuture } from "@/lib/concours";
 import { resolveDisplayName } from "@/lib/profil";
 import { getSignedDownloadUrl } from "@/lib/r2";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -26,21 +26,44 @@ export interface ConcoursPublicData {
   concoursId: string;
   nom: string;
   dateFin: string;
+  // Purely informative (migration 0048) -- never a technical gate on
+  // participation, see CLAUDE.md's "Creator contests -- campagne
+  // auto-générée + objectif/temps record" section.
+  dateDebut: string | null;
+  // Computed here, not inline in the page's JSX -- calling `new Date()`
+  // during a Server Component's render is flagged as an impure render
+  // call (react-hooks/purity), same reasoning `ended` below already
+  // established for date_fin.
+  dateDebutAVenir: boolean;
+  objectifPoints: number | null;
+  tempsRecord: string | null;
   organisateurId: string;
   mode: ConcoursMode;
   trophyPhotoUrl: string | null;
   ended: boolean;
+  // Set only once a participant has crossed objectifPoints before the
+  // effective deadline (tempsRecord if set, else dateFin) -- rules 1/2
+  // from CLAUDE.md's three-rule priority. When set, this participant is
+  // THE winner, regardless of `ended` (the brief: "le concours peut
+  // afficher le résultat dès cet instant"). When null, the page falls
+  // back to the unchanged rule-3 logic (isLeader + ended) below.
+  vainqueurObjectifId: string | null;
+  vainqueurObjectifAt: string | null;
   participants: ConcoursParticipant[];
 }
 
 // Reads concours_publics (migration 0045, restructured to a LEFT JOIN by
-// migration 0047 -- see that migration's own comment). Returns null when
-// the concours doesn't exist at all -- since migration 0047, a real
-// concours can NEVER have zero rows here regardless of mode: an
-// entre_createurs concours still auto-accepts its organizer
-// (creer_concours(), unchanged), and a maitre_du_jeu concours -- which
-// has no auto-accepted participant at all -- still gets exactly one
-// "phantom" row (organizer/nom/date_fin/trophy columns populated,
+// migration 0047 -- see that migration's own comment) and
+// concours_vainqueur_objectif (migration 0048, the points-objective
+// winner-determination view -- see CLAUDE.md for why this needs a
+// chronological reconstruction rather than "who has the highest
+// montant_collecte right now"). Returns null when the concours doesn't
+// exist at all -- since migration 0047, a real concours can NEVER have
+// zero rows in concours_publics regardless of mode: an entre_createurs
+// concours still auto-accepts its organizer (creer_concours(),
+// unchanged), and a maitre_du_jeu concours -- which has no auto-accepted
+// participant at all -- still gets exactly one "phantom" row
+// (organizer/nom/date_fin/trophy/objectif columns populated,
 // createur_id/campagne_id/pseudo/etc. all NULL) from the LEFT JOIN's own
 // driving `concours` row. Those phantom rows are filtered out of
 // `participants` below -- they represent "nobody has joined yet", not a
@@ -48,12 +71,19 @@ export interface ConcoursPublicData {
 export async function getConcoursPublicData(concoursId: string): Promise<ConcoursPublicData | null> {
   const supabase = await createSupabaseServerClient();
 
-  const { data: rows } = await supabase
-    .from("concours_publics")
-    .select(
-      "concours_id, nom, mode, organisateur_id, date_fin, createur_id, campagne_id, montant_collecte, pseudo, nom_affichage, photo_r2_key, photo_trophee_r2_key",
-    )
-    .eq("concours_id", concoursId);
+  const [{ data: rows }, { data: vainqueurRows }] = await Promise.all([
+    supabase
+      .from("concours_publics")
+      .select(
+        "concours_id, nom, mode, organisateur_id, date_fin, date_debut, objectif_points, temps_record, createur_id, campagne_id, montant_collecte, pseudo, nom_affichage, photo_r2_key, photo_trophee_r2_key",
+      )
+      .eq("concours_id", concoursId),
+    supabase
+      .from("concours_vainqueur_objectif")
+      .select("createur_id, atteint_a")
+      .eq("concours_id", concoursId)
+      .maybeSingle(),
+  ]);
 
   if (!rows || rows.length === 0) {
     return null;
@@ -89,10 +119,16 @@ export async function getConcoursPublicData(concoursId: string): Promise<Concour
     concoursId: first.concours_id,
     nom: first.nom,
     dateFin: first.date_fin,
+    dateDebut: first.date_debut,
+    dateDebutAVenir: Boolean(first.date_debut) && isDateInFuture(first.date_debut as string),
+    objectifPoints: first.objectif_points,
+    tempsRecord: first.temps_record,
     organisateurId: first.organisateur_id,
     mode: first.mode as ConcoursMode,
     trophyPhotoUrl,
     ended: isConcoursEnded(first.date_fin),
+    vainqueurObjectifId: vainqueurRows?.createur_id ?? null,
+    vainqueurObjectifAt: vainqueurRows?.atteint_a ?? null,
     participants: participantRows.map((row) => ({
       createurId: row.createur_id,
       campagneId: row.campagne_id,
