@@ -29,3 +29,27 @@ const PALIER_ICONS: Record<number, string> = {
 export function iconForPalierDonateur(palier: number): string {
   return PALIER_ICONS[palier] ?? "🌱";
 }
+
+// Maps each palier to an i18n KEY, not a hardcoded display string -- the
+// actual translated name lives in messages/{fr,en}.json under
+// CreateurProfile.badgeDonateur.paliers, resolved by the caller (which
+// has next-intl access; this file deliberately doesn't, same "pure,
+// DOM/database-free" reasoning as the rest of this module).
+const PALIER_NOMS: Record<number, string> = {
+  10: "bronze",
+  50: "argent",
+  100: "or",
+  150: "platine",
+  250: "emeraude",
+  500: "saphir",
+  1000: "rubis",
+  1500: "diamant",
+  3000: "legende",
+};
+
+// Same defensive fallback shape as iconForPalierDonateur() -- never
+// expected to fire in practice, for the same reason (palier is always
+// one of PALIERS_DONATEUR's own values by construction).
+export function nomPourPalierDonateur(palier: number): string {
+  return PALIER_NOMS[palier] ?? "bronze";
+}
