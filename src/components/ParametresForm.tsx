@@ -100,6 +100,7 @@ export function ParametresForm({
   classementPublic,
   masqueExploration,
   badgeFidelitePublic,
+  badgeDonateurPublic,
   photoUrl,
   couvertureUrl,
 }: {
@@ -117,6 +118,7 @@ export function ParametresForm({
   classementPublic: boolean;
   masqueExploration: boolean;
   badgeFidelitePublic: boolean;
+  badgeDonateurPublic: boolean;
   photoUrl: string | null;
   couvertureUrl: string | null;
 }) {
@@ -131,6 +133,7 @@ export function ParametresForm({
   const [classementValue, setClassementValue] = useState(classementPublic);
   const [masqueExplorationValue, setMasqueExplorationValue] = useState(masqueExploration);
   const [badgeFideliteValue, setBadgeFideliteValue] = useState(badgeFidelitePublic);
+  const [badgeDonateurValue, setBadgeDonateurValue] = useState(badgeDonateurPublic);
   const [file, setFile] = useState<File | null>(null);
   // The raw file straight from the OS picker, before cropping -- opens
   // PhotoCropper when set. Never uploaded directly: `file` (above) only
@@ -334,6 +337,7 @@ export function ParametresForm({
         classement_public: classementValue,
         masque_exploration: masqueExplorationValue,
         badge_fidelite_public: badgeFideliteValue,
+        badge_donateur_public: badgeDonateurValue,
       };
 
       if (file) {
@@ -667,6 +671,19 @@ export function ParametresForm({
             className="h-5 w-5 accent-brand-500"
           />
           <span className="text-sm">{t("badgeFideliteCheckboxLabel")}</span>
+        </label>
+
+        <label className="flex items-center gap-3">
+          <input
+            type="checkbox"
+            checked={badgeDonateurValue}
+            onChange={(event) => {
+              setBadgeDonateurValue(event.target.checked);
+              mainSave.dismiss();
+            }}
+            className="h-5 w-5 accent-brand-500"
+          />
+          <span className="text-sm">{t("badgeDonateurCheckboxLabel")}</span>
         </label>
 
         {mainSave.status === "error" && (

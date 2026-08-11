@@ -260,6 +260,13 @@ export const parametresProfilSchema = z
     // badges_fidelite_publics exposes this user's badges (as a
     // supporter, and as a créateur's list of supporters) publicly.
     badge_fidelite_public: z.boolean().optional(),
+    // Donor badge opt-in (migration 0051) -- same opt-in-off-by-default
+    // pattern as badge_fidelite_public, but scoped to this user's own
+    // cumulative spend across every créateur combined, not one specific
+    // pair. Controls whether badges_donateur_publics exposes this user's
+    // tier publicly; the admin-only top-20 ranking (/admin) always shows
+    // everyone regardless of this flag.
+    badge_donateur_public: z.boolean().optional(),
     // Set after a successful upload via POST /api/profil/photo-upload-url
     // + PUT to R2 -- never accepted directly from arbitrary client input
     // without that round-trip, but the schema itself doesn't need to know

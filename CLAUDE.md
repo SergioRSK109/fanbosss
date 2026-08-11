@@ -1850,6 +1850,258 @@ each function's own check, `solde_wallet_createur` rejects a caller
 asking for someone else's balance, and the legitimate caller still holds
 `EXECUTE`).
 
+## Referral system repair: parrain bonus surfaced + filleul discount (Lot A, migration `0050`)
+
+The referral (parrainage) mechanism itself — `parrainages` table,
+`users.parrain_id`, the `?ref=` signup param, a 10% bonus on the
+referred transaction's commission computed by
+`handle_transaction_livraison()` — has existed since migration `0002`,
+the very first migration. **It has been correctly computing and storing
+real money this entire time, and nothing in the app has ever shown it to
+anyone.** `solde_wallet_createur()` (migration `0027`) never once summed
+the `parrainages` table, and there was no UI anywhere — not `/finance`,
+not `/parametres`, nowhere — surfacing a user's own referral link or what
+they'd earned from it. A parrain has been earning real, correctly-computed
+bonuses since day one with no way to ever see or withdraw them. This is
+why it "stayed invisible from the start" — the computation was always
+right, the display layer simply never got built.
+
+**1. Anti-self-referral guard**: `users_pas_auto_parrainage check
+(parrain_id != id)`. NULL (the overwhelming majority of users, never
+referred by anyone) passes — `!=` against NULL evaluates to NULL, which a
+CHECK constraint treats as satisfied (a CHECK only ever rejects a row
+when its expression is explicitly `FALSE`) — this is the *correct*
+operator here, the opposite of the `!=`-against-`auth.uid()` bug fixed in
+migration `0020`: that was a security check where a NULL needed to be
+*rejected*, the exact opposite requirement.
+
+**2. `solde_wallet_createur()` extended** to fold the parrain's own
+earned bonuses into `net_a_retirer` — `Σ parrainages.montant_bonus where
+parrain_id = auth.uid()`, added alongside the créateur/Maître-du-jeu
+earnings already there (migration `0047`). Per instruction, no change to
+`parrainages.statut` (`du`/`paye`, unused since `0002`) — the raw sum is
+added directly, and the existing "total earned minus total already
+withdrawn" subtraction (`demandes_retrait`) is what naturally prevents
+double-counting once a bonus is actually withdrawn, with zero extra
+bookkeeping on the `parrainages` table itself. **Deliberately not added
+to `en_attente_livraison` or `en_litige`**: unlike a créateur's own
+`paiements` row (which starts `initie` and can be disputed before ever
+becoming spendable), a `parrainages` row is only ever inserted once the
+underlying transaction has already reached `livree`
+(`handle_transaction_livraison()`) — there's no earlier, not-yet-spendable
+state for a referral bonus to sit in, and no `confirmation_fan`/litige
+concept applies to it (it isn't itself a transaction). It's real,
+spendable money the moment it exists.
+
+**3. Filleul first-transaction discount, the one genuinely new piece.**
+`create_paiement_on_validation()` (last redefined by migration `0047`,
+for the Maître du jeu 3-way split) gained a check, run before the
+commission rate is picked: if the créateur being paid was themselves
+referred (`users.parrain_id is not null`) **and** this is the very first
+`paiements` row ever created for them, across every offer type, the
+commission is 10% HT instead of the standard 15% — one-time, permanent,
+independent of the parrain's own 30-day bonus window. Scope, stated
+plainly:
+
+- **Créateur-side only, never fan-side** — a fan never pays commission at
+  all; this check only ever consults `new.createur_id`, so a filleul who
+  only ever pays as a fan simply never reaches it for themselves. Being
+  someone else's fan on a transaction never consults their own
+  `parrain_id`.
+- **Requires having actually been referred** — a filleul who never
+  becomes a créateur never gets a discount on anything, because the
+  discount only exists at the point commission is charged on a
+  transaction where *they* are the créateur.
+- **"First transaction" = the first time this créateur has a `paiements`
+  row at all**, checked at the exact point this trigger already
+  computes/freezes commission (the transition into `validee`), not at
+  `livree`. This is deliberate, not a looser reading of the brief's own
+  "jamais livrée" wording: `paiements` rows are created and frozen once,
+  permanently, at `validee` (never recomputed later, see "Commission
+  rate" above) — there is no later point where re-checking this would
+  even be meaningful, and for `don`/`contenu_debloque`/`evenement_live`/
+  `campagne` (immediate-validation types) `validee` and `livree` happen
+  in the same webhook request anyway, so the distinction is moot for
+  those types.
+
+**Concurrency**: `perform 1 from users where id = new.createur_id for
+update;` locks the créateur's own `users` row before the "is this their
+first `paiements` row" check — two transactions reaching `validee` for a
+genuinely brand-new créateur at the same instant can't both read "no
+`paiements` row yet" and both walk away with the discount; the second
+waits for the first to commit, then re-reads under a fresh snapshot that
+already includes the first's insert. Mirrors `reserver_stock_produit()`'s
+own row-locking discipline (migration `0039`) for the same class of race.
+Everything below this point (the Maître du jeu 3-way split, migration
+`0047`) is unchanged — the discount only ever affects which commission
+*rate* feeds `v_net_total`; the split logic has no idea a discount was
+applied.
+
+**`calculerRepartitionPaiement()` (`src/lib/transactions.ts`) is
+deliberately NOT extended with this discount.** Its only caller
+(`CampagneRow`'s live payout calculator, `OffresManager.tsx`) previews a
+general "what you'd net on this amount" figure while a créateur is
+setting up a campaign — it has no way to know whether a specific future
+contribution would land on that créateur's literal first-ever
+transaction, and nothing asked for that preview to account for it. The
+real rate is still only ever decided by `create_paiement_on_validation()`
+itself, at actual payment time — flagged here explicitly (same discipline
+as every other place in this file where a JS mirror deliberately doesn't
+track every SQL edge case) so a future session doesn't "fix" this into a
+drift bug.
+
+**UI — new "Parrainage" section in `/parametres`** (`ParrainageCard.tsx`,
+rendered by `ParametresPage` between `VerificationForm` and the
+Performance section): the user's own referral link
+(`{origin}/signup?ref={userId}` — the `?ref=` param already existed and
+was already wired into `SignupForm.tsx`/`handle_new_auth_user()` since
+day one; this card is purely the missing display layer), a copy button
+(same `navigator.clipboard` pattern as `CopyProfileLinkButton`, copy-first
+with no share-sheet fallback since a plain URL has nothing extra a share
+sheet would add), and two live numbers: **filleuls actifs** (distinct
+`filleul_id` count from the caller's own `parrainages` rows — i.e.
+referrals who've actually generated a bonus, not merely everyone who
+signed up via the link but never transacted) and **total gagné** (sum of
+`montant_bonus`). Both come from a plain, self-only query
+(`parrainages_select_own` RLS: `parrain_id = auth.uid()`, migration
+`0001`) — no new RPC needed, RLS already scopes this correctly.
+
+Tested end-to-end in `checklist_2_3.sql`, entirely through the real
+trigger chain (never a manually-inserted `parrainages` row): the
+self-referral constraint rejects `parrain_id = id` and leaves no trace,
+while a NULL and a real distinct `parrain_id` both pass; a referred
+créateur's first-ever $1000 transaction is charged exactly $100
+commission (10%), their second is charged $150 (15%) — proving the
+discount fires exactly once; a créateur with no `parrain_id` at all
+always pays the standard rate; a filleul who only ever appears as a *fan*
+on someone else's transaction never triggers a discount for that other
+créateur, proving the check only ever consults the transaction's own
+`createur_id`; the parrain's two resulting bonuses (10.00 + 15.00 = 25.00,
+computed by the pre-existing, *unmodified* `handle_transaction_livraison()`)
+are folded into `net_a_retirer` and nowhere else; and the bonus is
+genuinely retirable through the real `demander_retrait()` RPC, with the
+pending request correctly zeroing the balance afterward — no
+double-counting.
+
+Verified visually end-to-end (same throwaway mock-Supabase/Playwright
+technique used throughout this file): the "Parrainage" card renders the
+correct filleuls-actifs count and total-gagné figure from real seeded
+`parrainages` rows, the copy button places exactly
+`{origin}/signup?ref={userId}` on the clipboard, and all of the above
+holds in both `fr` (light) and `/en/` (dark).
+
+## Donor badge + always-complete admin ranking (Lot B, migration `0051`)
+
+A public, opt-in tier badge based on a user's own cumulative spend across
+the *whole platform* — every créateur combined, not one specific pair
+(distinct from the existing fan loyalty badge, migration `0022`, which is
+scoped to a single fan/créateur relationship) — plus a top-20 spenders
+ranking visible only in `/admin`, which deliberately ignores the opt-in
+entirely.
+
+**Schema**: `users.badge_donateur_public boolean not null default false`,
+same off-by-default pattern as `badge_fidelite_public`.
+`calculer_palier_donateur(p_montant)` is a pure, immutable SQL function —
+`max()` over a fixed threshold array (`10, 50, 100, 150, 250, 500, 1000,
+1500, 3000`) filtered to values the amount actually reaches, or `NULL`
+below the smallest one. Widening the palier list later is a one-line
+array edit, nothing else changes. `badges_donateur_publics` is a view,
+same view-owner-bypasses-RLS mechanism as every other public aggregate in
+this project (`classement_volume`, `profils_explorables`,
+`campagnes_montant_collecte`...) — it can freely read
+`paiements`/`transactions` to compute the real cumulative total, while its
+own `where badge_donateur_public = true and calculer_palier_donateur(...)
+is not null` clause is the entire safety guarantee, not a grant.
+**Deliberately exposes only the palier, never the exact `total_depense`**
+— same "tier only, never the raw underlying number" discipline this
+project already applies to `classement_volume`/`reactivite`/`progression`
+(rank only, never the count). Granted to `authenticated, anon`.
+
+**UI — public profile badge** (`DonorBadge.tsx`, same tone-based styling
+as `VerifiedBadge`): `getCreateurProfileData()` gained a `donorPalier`
+field, queried straight from `badges_donateur_publics` filtered by
+`user_id = createurId` (the profile *owner's* own tier — this page shows
+a user's own badge on their own profile, the same "no fan/créateur role
+split" reasoning that already lets `badgesFidelite`/`supporters` coexist
+on one profile). Rendered in `CreateurProfileView`'s rank-badge row
+(the `-mt-8` row that visually overlaps the bottom of the header banner),
+alongside `RankBadge` — the row's own visibility condition widened from
+`hasRanks` to `hasRanks || donorPalier !== null` so the badge still shows
+up for a user with no leaderboard rank at all.
+
+**A real, caught-by-actually-looking-at-a-screenshot bug**: the first
+version passed no `tone` prop to `DonorBadge`, defaulting to `"light"`
+(`bg-brand-500/15 text-brand-600` — translucent purple-on-white, meant for
+a plain card background). Since this row sits in the exact same
+`-mt-8`-pulled-up-into-the-header zone as `RankBadge` — which gets away
+with it because it always uses a *solid*, opaque gradient with white text,
+never a translucent tone — the donor badge rendered nearly invisible,
+blended into the purple/coral gradient banner behind it. Confirmed
+directly, not just suspected: Playwright reported the badge element as
+`isVisible: true` with a real, non-zero bounding box (it's not
+`display:none`, not clipped, not zero-size — technically present and
+"visible" by every DOM/a11y measure), yet a screenshot of that exact
+region showed nothing legible there at all — the translucent 15%-opacity
+background over a vivid gradient is what actually made it disappear to a
+real viewer, a failure mode no `isVisible()`/bounding-box check alone
+would ever catch. This is exactly the trap `VerifiedBadge` already has an
+`onDark` tone specifically to avoid, one line away in the very same
+header. Fixed by passing `tone="onDark"` to `DonorBadge` at this one call
+site — verified after the fix with the same screenshot-region technique
+that caught it, not just re-read from the diff.
+
+**UI — `/parametres` toggle**: `badgeDonateurCheckboxLabel`, same
+pattern/placement (main form, alongside `badgeFideliteCheckboxLabel`) as
+every other opt-in checkbox on this page. `parametresProfilSchema` and
+`/api/profil`'s select list both extended with `badge_donateur_public` —
+no new route logic needed, the existing generic `.update(parsed.data)`
+passthrough handles it.
+
+**Admin ranking — deliberately reads raw `paiements`/`transactions`
+directly, never through `badges_donateur_publics`.** The whole point of
+this list is that the platform owner sees *everyone's* cumulative spend
+regardless of whether they've opted into the public badge — querying the
+view (which filters on `badge_donateur_public = true`) would silently
+hide every opted-out spender from the one place that's specifically
+supposed to show them anyway. `/admin/page.tsx` sums
+`paiements.montant_brut` grouped by the linked transaction's `fan_id`
+(`statut_paiement = 'reussi'`, all-time — not scoped to "this month" the
+way `topCreateurs` is, matching `calculer_palier_donateur()`'s own
+all-time definition), sorted descending, top 20, rendered in the existing
+"Vue d'ensemble" tab right below "Top 10 créateurs par volume" — same
+list styling, same `#{rank} {label} {montant}$` row shape.
+
+Tested end-to-end in `checklist_2_3.sql`, entirely through the real
+transaction lifecycle (never a manually-inserted `paiements` row):
+`calculer_palier_donateur()` at every threshold and boundary (9→null,
+10→10, 49→10, 50→50, ... 3000→3000, 10000→3000); the badge stays fully
+hidden below the smallest threshold and while opted out, even once the
+threshold is reached; it appears the instant the opt-in is flipped on,
+with no new spend needed; a second, larger contribution moves the palier
+live (recomputed from the real running total, never stored or frozen at
+the first threshold reached); opting back out hides it again immediately;
+the view's own column exposure is confirmed to be palier-only, never a
+raw spend figure; the grant-audit pattern holds (`anon`/`authenticated`
+both hold `SELECT`); and — the closest this SQL-only harness can get to
+proving the admin ranking's own "always complete" claim, which actually
+lives in TypeScript, not SQL — a direct query confirms the underlying
+`paiements`/`transactions` rows an admin's raw query would read are
+completely unaffected by the opt-in toggle.
+
+Verified visually end-to-end (same throwaway mock-Supabase/Playwright
+technique used throughout this file, fixture: PART_B opted in with a real
+$150 cumulative spend, PART_C opted *out* despite a real $1000 spend,
+both driven through the actual `en_attente → validee → livree`
+transaction lifecycle): PART_B's public profile shows "Soutien 150$+"
+legibly over the header banner (the `onDark`-tone fix, confirmed via the
+same bounding-box-vs-screenshot technique that caught the bug); PART_C's
+own public profile shows no badge at all; the admin ranking shows *both*
+— Stranger C ranked #1 at $1000, Participant B #2 at $150 — proving the
+opt-out is completely irrelevant to what the admin sees; and the
+`badge_donateur_public` checkbox toggle genuinely persists server-side
+across a full page reload. All of the above holds in both `fr` (light)
+and `/en/` (dark), zero unexpected console errors.
+
 ## Tab-bar navigation reorg (Lot 3, migration `0028`)
 
 Everything from Lots 1–2b (commission, fan confirmation, litige

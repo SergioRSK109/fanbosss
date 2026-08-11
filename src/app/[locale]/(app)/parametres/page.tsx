@@ -6,6 +6,7 @@ import { ClassementProgresCard } from "@/components/ClassementProgresCard";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { LogoutButton } from "@/components/LogoutButton";
 import { ParametresForm } from "@/components/ParametresForm";
+import { ParrainageCard } from "@/components/ParrainageCard";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { RankBadge } from "@/components/ui/RankBadge";
 import { VerificationForm } from "@/components/VerificationForm";
@@ -53,11 +54,12 @@ export default async function ParametresPage({
     { data: progressionRow },
     { data: progresRows },
     { data: transactionsLivrees },
+    { data: parrainageRows },
   ] = await Promise.all([
     supabase
       .from("users")
       .select(
-        "nom_affichage, pseudo, pseudo_modifie_at, bio, lien_tiktok, lien_instagram, lien_youtube, lien_autre, classement_public, masque_exploration, badge_fidelite_public, createur_verifie, photo_r2_key, photo_couverture_r2_key",
+        "nom_affichage, pseudo, pseudo_modifie_at, bio, lien_tiktok, lien_instagram, lien_youtube, lien_autre, classement_public, masque_exploration, badge_fidelite_public, badge_donateur_public, createur_verifie, photo_r2_key, photo_couverture_r2_key",
       )
       .eq("id", user.id)
       .single(),
@@ -95,6 +97,14 @@ export default async function ParametresPage({
       .select("createur_id, created_at")
       .eq("fan_id", user.id)
       .eq("statut", "livree"),
+    // Referral link section (migration 0050) -- self-only
+    // (parrainages_select_own RLS: parrain_id = auth.uid()), no new RPC
+    // needed. "Filleuls actifs" = distinct filleuls who've actually
+    // generated a bonus (i.e. reached 'livree' on at least one
+    // transaction within their own 30-day window), not merely every
+    // signup that used this user's referral link -- someone who signed
+    // up via the link but never transacted has no row here at all.
+    supabase.from("parrainages").select("filleul_id, montant_bonus").eq("parrain_id", user.id),
   ]);
 
   const photoUrl = profil?.photo_r2_key
@@ -168,6 +178,12 @@ export default async function ParametresPage({
       : { data: [] as { id: string; pseudo: string | null; nom_affichage: string | null }[] };
   const createurProfilById = new Map((createursSupportes ?? []).map((p) => [p.id, p]));
 
+  const filleulsActifs = new Set((parrainageRows ?? []).map((row) => row.filleul_id)).size;
+  const totalGagneParrainage = (parrainageRows ?? []).reduce(
+    (sum, row) => sum + Number(row.montant_bonus),
+    0,
+  );
+
   const mesBadges = createurIdsSupportes
     .map((createurId) => {
       const p = createurProfilById.get(createurId);
@@ -213,6 +229,7 @@ export default async function ParametresPage({
         classementPublic={profil?.classement_public ?? false}
         masqueExploration={profil?.masque_exploration ?? false}
         badgeFidelitePublic={profil?.badge_fidelite_public ?? false}
+        badgeDonateurPublic={profil?.badge_donateur_public ?? false}
         photoUrl={photoUrl}
         couvertureUrl={couvertureUrl}
       />
@@ -221,6 +238,14 @@ export default async function ParametresPage({
           nomAffichage={profil?.nom_affichage ?? null}
           createurVerifie={profil?.createur_verifie ?? false}
           demandeActuelle={demandeActuelle}
+        />
+      </div>
+
+      <div className="mt-4">
+        <ParrainageCard
+          userId={user.id}
+          filleulsActifs={filleulsActifs}
+          totalGagne={totalGagneParrainage}
         />
       </div>
 

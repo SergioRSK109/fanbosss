@@ -72,6 +72,7 @@ export default async function AdminPage() {
     { data: authUsersPage },
     { data: verificationRows },
     { data: signalementRows },
+    { data: paiementsReussisRows },
   ] = await Promise.all([
     serviceSupabase
       .from("transactions")
@@ -137,6 +138,19 @@ export default async function AdminPage() {
       .not("publication_id", "is", null)
       .eq("statut", "en_attente")
       .order("created_at", { ascending: true }),
+    // Lot B: donor ranking (migration 0051) -- the exact same
+    // `paiements.statut_paiement = 'reussi'` basis badges_donateur_publics
+    // itself sums, read directly here instead of through that view since
+    // this ranking must show EVERY fan regardless of badge_donateur_public
+    // -- the whole point of this admin-only list is that the opt-in never
+    // hides anyone from the platform owner. All-time cumulative, not
+    // scoped to this month (unlike topCreateurs above) -- "dépense totale
+    // cumulée" is the same all-time definition calculer_palier_donateur()
+    // itself is computed against.
+    serviceSupabase
+      .from("paiements")
+      .select("montant_brut, transactions(fan_id)")
+      .eq("statut_paiement", "reussi"),
   ]);
 
   const userLabelById = new Map(
@@ -174,6 +188,25 @@ export default async function AdminPage() {
       createurId,
       label: userLabelById.get(createurId) ?? t("deletedUser"),
       volume,
+    }));
+
+  // Top 20 donateurs, dépense cumulée sur toute la vie du compte (Lot B,
+  // migration 0051) -- deliberately ignores badge_donateur_public, see
+  // the query's own comment above.
+  const depenseByFan = new Map<string, number>();
+  for (const row of paiementsReussisRows ?? []) {
+    const tx = Array.isArray(row.transactions) ? row.transactions[0] : row.transactions;
+    const fanId = tx?.fan_id;
+    if (!fanId) continue;
+    depenseByFan.set(fanId, (depenseByFan.get(fanId) ?? 0) + Number(row.montant_brut));
+  }
+  const topDonateurs = [...depenseByFan.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 20)
+    .map(([fanId, total]) => ({
+      fanId,
+      label: userLabelById.get(fanId) ?? t("deletedUser"),
+      total,
     }));
 
   const remboursementsManuels: RemboursementManuel[] = (manualRefundRows ?? []).map((row) => ({
@@ -320,6 +353,27 @@ export default async function AdminPage() {
                 </span>
                 <span className="text-sm font-semibold text-brand-600 dark:text-brand-300">
                   {c.volume.toFixed(0)}$
+                </span>
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-lg font-bold">{t("topDonateursHeading")}</h2>
+        <p className="mb-3 text-sm text-foreground-muted">{t("topDonateursIntro")}</p>
+        {topDonateurs.length === 0 ? (
+          <p className="text-sm text-foreground-muted">{t("topDonateursEmpty")}</p>
+        ) : (
+          <ol className="flex flex-col gap-2">
+            {topDonateurs.map((d, index) => (
+              <li key={d.fanId} className="card flex items-center justify-between px-4 py-3">
+                <span className="text-sm font-medium">
+                  #{index + 1} {d.label}
+                </span>
+                <span className="text-sm font-semibold text-brand-600 dark:text-brand-300">
+                  {d.total.toFixed(0)}$
                 </span>
               </li>
             ))}

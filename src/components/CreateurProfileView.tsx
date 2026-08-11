@@ -7,6 +7,7 @@ import { PublicationsList } from "@/components/PublicationsList";
 import { ReportButton } from "@/components/ReportButton";
 import { ServiceProduitTabs } from "@/components/ServiceProduitTabs";
 import { ShareCampagneButton } from "@/components/ShareCampagneButton";
+import { DonorBadge } from "@/components/ui/DonorBadge";
 import { RankBadge } from "@/components/ui/RankBadge";
 import { VerifiedBadge } from "@/components/ui/VerifiedBadge";
 import { ZoomablePhoto } from "@/components/ui/ZoomablePhoto";
@@ -86,6 +87,7 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
     campagnes,
     produits,
     ranks,
+    donorPalier,
     supporters,
     badgesFidelite,
     publications,
@@ -95,6 +97,7 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
   const hasSocialLinks = Object.values(socialLinks).some(Boolean);
   const hasRanks =
     ranks.volume !== null || ranks.reactivite !== null || ranks.progression !== null;
+  const hasBadgeRow = hasRanks || donorPalier !== null;
 
   return (
     <main className="mx-auto max-w-2xl flex flex-col pb-12">
@@ -169,7 +172,7 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
         </div>
       </div>
 
-      {hasRanks && (
+      {hasBadgeRow && (
         <div className="-mt-8 flex flex-wrap justify-center gap-2 px-5">
           {ranks.volume !== null && (
             <RankBadge kind="volume" label={t("rankVolume", { rank: ranks.volume })} />
@@ -186,6 +189,13 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
               label={t("rankProgression", { rank: ranks.progression })}
             />
           )}
+          {donorPalier !== null && (
+            <DonorBadge
+              palier={donorPalier}
+              label={t("badgeDonateur.label", { palier: donorPalier })}
+              tone="onDark"
+            />
+          )}
         </div>
       )}
 
@@ -194,7 +204,7 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
           = true, so every row here is already safe to show; nothing
           further to check in this component. */}
       {supporters.length > 0 && (
-        <section className={`flex flex-col gap-2 px-5 ${hasRanks ? "mt-6" : "mt-8"}`}>
+        <section className={`flex flex-col gap-2 px-5 ${hasBadgeRow ? "mt-6" : "mt-8"}`}>
           <h2 className="text-lg font-bold">{t("badgeFidelite.supportersHeading")}</h2>
           <ul className="flex flex-col gap-1.5">
             {supporters.map((supporter) => (
@@ -209,7 +219,7 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
         </section>
       )}
 
-      <div className={supporters.length > 0 || hasRanks ? "mt-6" : "mt-8"}>
+      <div className={supporters.length > 0 || hasBadgeRow ? "mt-6" : "mt-8"}>
         <ProfileTabs
           offresContent={
             <ServiceProduitTabs

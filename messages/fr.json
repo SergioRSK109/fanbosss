@@ -203,6 +203,9 @@
       "anonymousSupporter": "Un supporter",
       "anonymousCreateur": "Un créateur"
     },
+    "badgeDonateur": {
+      "label": "Soutien {palier}$+"
+    },
     "participer": "Participer",
     "verified": "Vérifié",
     "tabs": {
@@ -493,6 +496,7 @@
     "classementCheckboxLabel": "Apparaître dans les classements publics",
     "masqueExplorationCheckboxLabel": "Ne pas me suggérer dans l'exploration (je reste trouvable par recherche)",
     "badgeFideliteCheckboxLabel": "Rendre mes badges de fidélité publics (visibles sur ton profil et sur celui des créateurs que tu soutiens)",
+    "badgeDonateurCheckboxLabel": "Rendre mon badge de soutien public (basé sur tes dépenses cumulées sur toute la plateforme, tous créateurs confondus)",
     "pseudoLabel": "Choisis ton identifiant",
     "pseudoPlaceholder": "ex: sergio_123, sergioRSK",
     "pseudoAvailable": "✓ disponible",
@@ -518,6 +522,15 @@
       "lightAriaLabel": "Thème clair",
       "darkAriaLabel": "Thème sombre",
       "systemAriaLabel": "Thème système"
+    },
+    "parrainage": {
+      "heading": "Parrainage",
+      "description": "Partage ce lien -- chaque personne qui s'inscrit avec devient ton filleul, et tu gagnes un bonus sur ses transactions pendant ses 30 premiers jours.",
+      "copyButton": "📋 Copier mon lien de parrainage",
+      "copied": "Lien copié !",
+      "copyError": "Impossible de copier le lien.",
+      "filleulsActifsLabel": "Filleuls actifs",
+      "totalGagneLabel": "Total gagné"
     }
   },
   "PhotoCropper": {
@@ -604,6 +617,9 @@
     },
     "topCreateursHeading": "Top 10 créateurs par volume -- ce mois-ci",
     "topCreateursEmpty": "Aucune transaction ce mois-ci.",
+    "topDonateursHeading": "Top 20 donateurs -- dépense cumulée",
+    "topDonateursIntro": "Toujours complet, indépendamment de l'opt-in du badge de soutien public de chacun.",
+    "topDonateursEmpty": "Aucun paiement réussi pour l'instant.",
     "gestionAdminsHeading": "Gestion des admins",
     "gestionAdmins": {
       "grant": "Accorder le statut admin",

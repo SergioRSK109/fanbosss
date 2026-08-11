@@ -81,6 +81,12 @@ export interface CreateurProfileData {
     reactivite: number | null;
     progression: number | null;
   };
+  // Donor badge (migration 0051) -- this profile's OWN cumulative spend
+  // tier across every créateur combined, straight from
+  // badges_donateur_publics (already filtered to badge_donateur_public =
+  // true and a real palier reached -- nothing further to check here).
+  // Null whenever the badge is off or no threshold has been reached yet.
+  donorPalier: number | null;
   // Fan loyalty badge (migration 0022), both directions -- there's no
   // fan/créateur role split in this app, so the same profile can have
   // both. `supporters`: opted-in fans who support THIS profile as a
@@ -161,6 +167,7 @@ export async function getCreateurProfileData(
     { data: progressionRow },
     { data: supporterRows },
     { data: badgeRows },
+    { data: donorBadgeRow },
   ] = await Promise.all([
     supabase
       .from("profils_publics")
@@ -227,6 +234,14 @@ export async function getCreateurProfileData(
       .select("createur_id, depuis")
       .eq("fan_id", createurId)
       .order("depuis", { ascending: true }),
+    // Donor badge (migration 0051) -- this profile's own tier, if opted
+    // in and reached. maybeSingle(), not single(): most profiles have no
+    // row here at all (opted out, or below the smallest threshold).
+    supabase
+      .from("badges_donateur_publics")
+      .select("palier")
+      .eq("user_id", createurId)
+      .maybeSingle(),
   ]);
 
   if (!profil) {
@@ -420,6 +435,7 @@ export async function getCreateurProfileData(
       reactivite: reactiviteRow?.rang ?? null,
       progression: progressionRow?.rang ?? null,
     },
+    donorPalier: donorBadgeRow?.palier ?? null,
     supporters,
     badgesFidelite,
     publications,

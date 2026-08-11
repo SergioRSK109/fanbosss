@@ -58,6 +58,7 @@ describe("GET /[locale]/[handle] (percent-encoded '@' bug)", () => {
       campagnes: [],
       produits: [],
       ranks: { volume: null, reactivite: null, progression: null },
+      donorPalier: null,
       supporters: [],
       badgesFidelite: [],
       publications: [],
