@@ -3,9 +3,10 @@
 Plateforme PWA permettant à n'importe quel utilisateur de monétiser sa
 relation avec ses fans, via des offres : vidéo personnalisée, mention
 (shoutout), don libre, accès WhatsApp premium, contenu à débloquer, accès
-à un live privé, campagne de collecte de fonds. N'importe qui peut aussi
-bien recevoir des paiements que payer quelqu'un d'autre — il n'y a pas de
-distinction fan/créateur (brief v3 point 1).
+à un live privé, campagne de collecte de fonds, produit physique à stock
+limité. N'importe qui peut aussi bien recevoir des paiements que payer
+quelqu'un d'autre — il n'y a pas de distinction fan/créateur (brief v3
+point 1).
 
 > Pour l'historique complet des décisions de design, le détail exhaustif
 > de chaque fonctionnalité et les tests qui les prouvent, voir
@@ -32,7 +33,7 @@ npm run dev
 
 ### Base de données
 
-Les migrations `supabase/migrations/*.sql` (34 à ce jour) — toujours
+Les migrations `supabase/migrations/*.sql` (49 à ce jour) — toujours
 incrémentales, jamais un `DROP`/recréation depuis zéro — sont appliquées
 **automatiquement** sur le projet Supabase de production par
 `.github/workflows/deploy-migrations.yml` à chaque push sur `main` qui
@@ -148,7 +149,7 @@ npm run test:sql  # tests SQL de bout en bout, contre un vrai Postgres :
 ```
 
 `npm run test:sql` (`supabase/tests/checklist_2_3.sql`) crée une base
-jetable, applique les 34 migrations dans l'ordre, et prouve concrètement
+jetable, applique les 49 migrations dans l'ordre, et prouve concrètement
 (pas juste "en théorie"), entre autres :
 - qu'une offre WhatsApp ne peut jamais descendre sous 20$, même par
   UPDATE direct sur la colonne `prix`, et qu'un champ JSON `config` ne peut
@@ -180,6 +181,7 @@ jetable, applique les 34 migrations dans l'ordre, et prouve concrètement
 | `contenu_debloque` | Contenu uploadé une seule fois par le créateur (`offres.config.r2_key`) ; chaque paiement débloque l'accès au même fichier ; validation/livraison immédiates | fixé par le créateur |
 | `evenement_live` | Le créateur renseigne un lien externe (`offres.config.lien_live`) ; le paiement révèle ce lien ; validation/livraison immédiates | fixé par le créateur |
 | `campagne` | Collecte de fonds à but libre (titre, description, objectif, date de fin optionnelle) ; mécaniquement un `don` avec montant collecté calculé en direct, clôturée automatiquement à l'objectif atteint ou à la date de fin | libre, choisi par le fan |
+| `produit` | Produit physique à stock limité, expédié par le créateur. Réservation atomique de 10 minutes avant paiement (verrou de ligne Postgres, testé sous vraie concurrence — voir `supabase/tests/concurrency_test_produit.sh`) ; le créateur marque la commande expédiée (`livrer_produit()`), avec la même fenêtre de confirmation fan de 72h que `video`/`shoutout` | fixé par le créateur, par libellé |
 
 `contenu_debloque` et `evenement_live` sont livrés complets (pas de
 placeholder) ; leurs feature flags (`contenu_debloque_actif`,
@@ -232,9 +234,34 @@ Au-delà du parcours de paiement de base, la plateforme inclut :
   sélection du fichier, avant même de lancer l'upload ; limite de taille
   (10 Mo image / 200 Mo vidéo) imposée réellement côté serveur, signée
   dans l'URL R2 elle-même, pas seulement vérifiée côté client.
-- **`/explorer`** : annuaire public des créateurs (recherche, filtre par
-  type d'offre), visibles par défaut dès leur première offre active
-  (opt-out via `/parametres`).
+- **`/explorer`** : grille de découverte façon Instagram, une tuile par
+  publication (photo/vidéo/texte, 3 colonnes, défilement infini) plutôt
+  qu'une liste de fiches créateur — le filtre par type d'offre a
+  été retiré, remplacé par une recherche (pseudo exact ou floue sur
+  bio/nom/liens sociaux) qui, elle, retrouve un créateur même s'il a
+  choisi de ne pas apparaître dans la grille par défaut
+  (`masque_exploration`). Vidéos en lecture automatique muette dès 50%
+  visible à l'écran.
+- **Produits physiques** (`/offres`, onglet "Produit physique") : stock
+  limité, réservation atomique de 10 minutes avant paiement (empêche la
+  survente lors d'achats concurrents sur la dernière unité), adresse de
+  livraison collectée au paiement, le créateur marque la commande
+  expédiée avec une référence de suivi optionnelle.
+- **Concours entre créateurs** (`/offres`, onglet "Concours" +
+  `/concours/[id]` public + `/concours/[id]/ecran`, écran de diffusion
+  plein écran pensé pour être filmé en live) : un créateur invite
+  d'autres créateurs dans un concours à durée limitée ; chacun garde sa
+  propre campagne de collecte (générée et gérée automatiquement, jamais
+  choisie manuellement) et l'argent d'un fan va toujours directement au
+  créateur qu'il soutient, jamais redistribué en interne. Vainqueur
+  déterminé soit au montant collecté le plus élevé à la clôture, soit —
+  si un objectif de points est défini — au premier participant à
+  l'atteindre (avec, en option, une deadline "temps record" resserrée).
+  Mode **Maître du jeu** : un organisateur externe (pas forcément
+  créateur) prélève un pourcentage convenu sur chaque contribution, en
+  un seul mouvement d'argent atomique au moment du paiement (jamais un
+  virement séparé entre comptes) — le fan ne voit jamais ce pourcentage
+  avant de payer.
 - **`/classement`** : classements publics (volume, réactivité) sur 30
   jours glissants, opt-in, rang seul affiché (jamais le montant/nombre
   sous-jacent). Une carte privée sur le dashboard montre à chaque créateur
@@ -360,10 +387,10 @@ deux rendent exactement la même vue (`CreateurProfileView`/
 `getCreateurProfileData`).
 
 **Profil enrichi** : nom d'affichage, bio, photo de profil (recadrée
-côté client avant upload), liens TikTok/Instagram/YouTube/autre —
-éditables uniquement depuis `/parametres`, après création du compte
-(l'upload photo nécessite une URL R2 signée, donc un compte déjà
-authentifié).
+côté client avant upload), photo de couverture (bannière au-dessus de
+l'avatar), liens TikTok/Instagram/YouTube/autre — éditables uniquement
+depuis `/parametres`, après création du compte (l'upload photo
+nécessite une URL R2 signée, donc un compte déjà authentifié).
 
 **Inscription** : nom/post-nom, pays + numéro de téléphone (indicatif
 dépendant du pays), province/ville (dépendant du pays), date de
