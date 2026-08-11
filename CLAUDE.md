@@ -4734,14 +4734,25 @@ regression here would either silently wipe out an unrelated save or,
 worse, leave every offer's `actif` toggle permanently disconnected from
 the new column.
 
-**Not independently visually verified in a live browser this session**
-— flagged explicitly rather than silently claimed, same discipline as
-the concours campagne-auto-génération lot immediately above: `tsc`,
-`eslint`, the full `npm test` suite, the full `npm run test:sql` suite,
-and a clean production `next build` all pass, but the public profile's
-actual on-screen behavior (a manually-deactivated campagne disappearing,
-a naturally-closed one staying, both in `fr` and `/en/`) has not been
-confirmed against a running browser.
+**Verified visually end-to-end in a follow-up session** (same throwaway
+mock-Supabase/Playwright technique used throughout this file — a real
+Chromium browser driven against a small Node mock of the Auth/PostgREST/
+RPC surface, a real `next dev`, real clicks/form submits, no static DOM
+snapshotting): on the créateur's public profile, a campagne manually
+deactivated via `OffresManager`'s own "désactiver" button disappears
+completely from the Offres tab, while a campagne closed naturally (a
+`date_fin` already passed) stays visible with its "Campagne terminée"
+badge throughout — screenshotted immediately before and after the
+deactivation to prove the natural-closure card is unaffected, the actual
+non-regression this migration exists to protect. Reactivating (the same
+button, now "réactiver") makes the manually-deactivated campagne
+reappear. Confirmed in both `fr` (light) and `/en/` (dark) — same
+behavior, same badge text translated correctly
+("Campaign ended"/`deactivate`/`reactivate`). Zero application-level bugs
+found during this pass; the two issues actually hit were both in the test
+harness itself (a broken `ilike` regex in the mock server, and a
+CSS `href^=` "starts-with" selector that didn't account for `/en/`'s
+locale-prefixed URLs — fixed to `href*=` "contains").
 
 ## Creator contests (`concours`, Phase 1: mode `entre_createurs` only, migrations 0045-0046)
 
@@ -5789,19 +5800,37 @@ tests for all three `/api/concours*` endpoints assert the exact RPC
 payload sent (including `null` defaults for the three optional fields
 when omitted).
 
-**Not independently visually verified in a live browser this session**
-(no throwaway mock-Supabase/Playwright pass was built for this lot,
-unlike most other entries in this file) — flagged explicitly rather than
-silently claimed: `tsc`, `eslint`, the full `npm test` suite (451
-passing), the full `npm run test:sql` suite including the produit
-concurrency test (379 passing SQL assertions, 0 errors), and a full
-production `next build` all pass cleanly, which together cover
-type-safety, the real DB-level guarantees, and every RSC/client-boundary
-wiring point — but the progressive-disclosure form's actual on-screen
-behavior and the public page's progress-bar/countdown/winner-badge
-rendering have not been confirmed against a running browser in either
-locale or color scheme. Do this before treating the UI itself as proven,
-not just the code paths behind it.
+**Verified visually end-to-end in a follow-up session**, closing the gap
+flagged above (same throwaway mock-Supabase/Playwright technique used
+throughout this file, this time actually built for this lot — a real
+Chromium browser, real clicks/form submits/network interception, not
+static DOM snapshotting): confirmed on both the `entre_createurs` and
+`maitre_du_jeu` creation forms that neither shows a "Campagne à
+utiliser" field anywhere, and that the objectif/temps-record questions
+disclose progressively in both directions — the points field appears
+only after answering "Oui" to the objectif question, the date/heure
+field only after then answering "Oui" to the temps-record question, and
+both collapse back out when their governing answer flips back to "Non".
+A concours was created end-to-end through the real UI (not seeded
+directly), a participant invited by pseudo and the invitation accepted
+— at no point in that whole flow was a campagne ever requested, matching
+this migration's own "campagne becomes a pure implementation detail"
+design. On `/concours/[id]`: the "Participer" button was confirmed
+genuinely wired to the correct auto-generated campagne (verified by
+intercepting the real checkout network request, not just clicking it),
+the progress bar rendered against a real `objectif_points`, and once a
+seeded contribution crossed that objective the "🏆 Vainqueur" badge
+appeared correctly — with the temps-record countdown confirmed to stay
+suppressed once a winner is already decided, not just present. The
+broadcast screen (`/concours/[id]/ecran`) rendered the same
+winner/progress state cleanly integrated into its existing black,
+full-viewport layout, with no overflow. The auto-generated campagne was
+confirmed absent from both `OffresManager` (`/offres`) and the
+créateur's own public-profile Offres tab. All of the above confirmed in
+both `fr` (light) and `/en/` (dark). Zero application-level bugs found —
+see migration `0049`'s own section immediately above for the two
+harness-only bugs hit during this same verification pass (neither was in
+this lot's own code).
 
 ## Creator contests: broadcast screen (`/concours/[id]/ecran`, no migration)
 
