@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { computeDateExpirationAcces, isAccesExpire } from "@/lib/contenuDebloque";
 import { getSignedDownloadUrl } from "@/lib/r2";
 import {
   createSupabaseServerClient,
@@ -26,7 +27,7 @@ export async function GET(
 
   const { data: transaction, error } = await supabase
     .from("transactions")
-    .select("id, fan_id, statut, offre_id")
+    .select("id, fan_id, statut, offre_id, created_at")
     .eq("id", id)
     .single();
 
@@ -59,7 +60,28 @@ export async function GET(
     return NextResponse.json({ error: "offre non applicable" }, { status: 400 });
   }
 
-  const r2Key = (offre.config as { r2_key?: string } | null)?.r2_key;
+  const config = offre.config as { r2_key?: string; duree_acces_jours?: number } | null;
+
+  // Time-limited access (no new migration -- see creerOffreSchema's own
+  // refine): transaction.created_at is the right anchor for this type
+  // specifically, not deliverable/acceptation timestamps -- contenu_
+  // debloque has no acceptation step at all (TYPES_A_VALIDATION_IMMEDIATE,
+  // the webhook validates and delivers in the same request), so
+  // created_at and "when the fan actually got access" are effectively the
+  // same instant. A distinct error message from the "not yet unlocked"
+  // one above, so the client can tell the two apart and show the right
+  // state instead of a generic failure.
+  if (isAccesExpire(transaction.created_at, config?.duree_acces_jours)) {
+    const expiredAt = computeDateExpirationAcces(transaction.created_at, config?.duree_acces_jours);
+    return NextResponse.json(
+      {
+        error: `ton accès à ce contenu a expiré le ${expiredAt.toLocaleDateString("fr-FR")}`,
+      },
+      { status: 403 },
+    );
+  }
+
+  const r2Key = config?.r2_key;
   if (!r2Key) {
     return NextResponse.json(
       { error: "aucun contenu associé à cette offre" },

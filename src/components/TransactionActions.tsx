@@ -1,6 +1,6 @@
 "use client";
 
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { buttonClass } from "@/components/ui/button-styles";
@@ -14,11 +14,23 @@ const REVEAL_ENDPOINTS: Partial<Record<OffreType, string>> = {
   evenement_live: "live-link",
 };
 
+function formatExpirationDate(iso: string, locale: string): string {
+  // Constructing a Date from an already-known ISO string is a pure,
+  // deterministic operation (same input, same output) -- unlike
+  // Date.now()/`new Date()` with no argument, this is fine to call
+  // during render; see the comment on `expirationDateIso` below for why
+  // the actual "is it expired" *comparison* against the current wall
+  // clock is computed server-side instead.
+  return new Date(iso).toLocaleDateString(locale, { day: "numeric", month: "short", year: "numeric" });
+}
+
 export function TransactionActions({
   transactionId,
   type,
   statut,
   confirmationFan,
+  expirationDateIso,
+  accesExpire,
 }: {
   transactionId: string;
   type: OffreType;
@@ -29,10 +41,24 @@ export function TransactionActions({
   // supabase/migrations/0025_confirmation_fan_video_shoutout.sql).
   // Optional since callers for other offer types never pass it.
   confirmationFan?: string | null;
+  // Time-limited access to unlockable content -- only ever meaningful
+  // for type === "contenu_debloque" (see src/lib/contenuDebloque.ts);
+  // harmless to pass (or omit) for any other type, since the branches
+  // below never trigger for them. Both computed by the caller (a Server
+  // Component, see finance/page.tsx) rather than here: comparing against
+  // Date.now() is an impure operation React's purity rule forbids inside
+  // a client component's render -- the exact same class of restriction
+  // this codebase already works around elsewhere (ConcoursCountdown's
+  // own mount-effect workaround) -- so the *comparison* happens
+  // server-side, once, at render time, and this component only ever
+  // displays the already-decided result.
+  expirationDateIso?: string | null;
+  accesExpire?: boolean;
 }) {
   const t = useTranslations("Dashboard.transactionActions");
   const tConfirmation = useTranslations("Dashboard.confirmation");
   const tCommon = useTranslations("Common");
+  const locale = useLocale();
   const router = useRouter();
   const [link, setLink] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
@@ -80,21 +106,34 @@ export function TransactionActions({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-col gap-1">
-        <button
-          onClick={reveal}
-          className="self-start text-sm font-semibold text-brand-600 dark:text-brand-300"
-        >
-          {t(`reveal.${type}`)}
-        </button>
-        {link && (
-          <a
-            href={link}
-            target="_blank"
-            rel="noreferrer"
-            className="self-start rounded-full bg-brand-50 px-3 py-1 text-sm font-medium text-brand-600 dark:bg-white/10 dark:text-brand-300"
-          >
-            {t("open")}
-          </a>
+        {accesExpire && expirationDateIso ? (
+          <span className="self-start text-sm font-semibold text-danger-600">
+            {t("acces.expire", { date: formatExpirationDate(expirationDateIso, locale) })}
+          </span>
+        ) : (
+          <>
+            <button
+              onClick={reveal}
+              className="self-start text-sm font-semibold text-brand-600 dark:text-brand-300"
+            >
+              {t(`reveal.${type}`)}
+            </button>
+            {expirationDateIso && (
+              <span className="self-start text-xs text-foreground-muted">
+                {t("acces.expireLe", { date: formatExpirationDate(expirationDateIso, locale) })}
+              </span>
+            )}
+            {link && (
+              <a
+                href={link}
+                target="_blank"
+                rel="noreferrer"
+                className="self-start rounded-full bg-brand-50 px-3 py-1 text-sm font-medium text-brand-600 dark:bg-white/10 dark:text-brand-300"
+              >
+                {t("open")}
+              </a>
+            )}
+          </>
         )}
       </div>
       {confirmationFan === "en_attente" && (

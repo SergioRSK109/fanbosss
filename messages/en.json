@@ -453,7 +453,11 @@
         "evenement_live": "Get the live link"
       },
       "open": "Open →",
-      "unavailable": "unavailable"
+      "unavailable": "unavailable",
+      "acces": {
+        "expireLe": "Access until {date}",
+        "expire": "Your access expired on {date}"
+      }
     },
     "confirmation": {
       "satisfait": "Satisfied",
@@ -574,6 +578,8 @@
       "Other"
     ],
     "contenuDejaTeleverse": "content already uploaded",
+    "dureeAccesLabel": "Access duration (days)",
+    "dureeAccesJoursSuffix": "days (30 by default)",
     "liveUrlPlaceholder": "https://youtube.com/...",
     "uploadImpossible": "upload failed",
     "campagneStatusActive": "Active",
