@@ -8435,6 +8435,108 @@ end $$;
 -- something this harness can reproduce as a permanent, automated
 -- assertion, and unaffected by migration 0048.
 
+-- =========================================================================
+-- Distinguishing a campagne's natural closure from a manual deactivation
+-- (migration 0049). Before this migration, campagnes_publiques
+-- deliberately never filtered on `actif` at all -- a naturally-closed
+-- campagne (date_fin passed, or the objectif was reached) has to stay
+-- visible as public history (migration 0017). That same choice meant a
+-- créateur had no way to actually hide one they'd manually turned off --
+-- it looked identical to one that simply ran its course. The new
+-- desactive_manuellement column is what tells the two apart:
+-- close_expired_campagnes()/close_campagne_if_goal_reached() (both
+-- migration 0017, neither touched by 0049 at all) never set it, so a
+-- naturally-closed campagne always has desactive_manuellement = false
+-- (the column's own default) and stays visible; the créateur's own
+-- désactiver/réactiver toggle now sets it explicitly.
+--
+-- Fixture: créateur (d0490001) with three campagnes -- one closed
+-- naturally via close_expired_campagnes() (Naturelle), one manually
+-- deactivated (Manuelle), one left untouched and still active (Active,
+-- the non-regression control proving this migration didn't hide
+-- anything it shouldn't).
+-- =========================================================================
+insert into users (id, telephone, pays) values
+  ('d0490001-0000-0000-0000-000000000001', '+243900000601', 'RDC');
+
+insert into offres (id, createur_id, type, libelle, config, actif) values
+  ('d0491001-0000-0000-0000-000000000001', 'd0490001-0000-0000-0000-000000000001', 'campagne', 'Naturelle',
+    jsonb_build_object('description', 'x', 'objectif', 1000, 'date_fin', (current_date - interval '1 day')::date::text), true),
+  ('d0491002-0000-0000-0000-000000000002', 'd0490001-0000-0000-0000-000000000001', 'campagne', 'Manuelle',
+    jsonb_build_object('description', 'x', 'objectif', 1000), true),
+  ('d0491003-0000-0000-0000-000000000003', 'd0490001-0000-0000-0000-000000000001', 'campagne', 'Active',
+    jsonb_build_object('description', 'x', 'objectif', 1000), true);
+
+-- Natural closure -- the exact same pre-existing sweep, unmodified.
+select close_expired_campagnes();
+
+do $$
+declare
+  v_actif boolean;
+  v_desactive boolean;
+begin
+  select actif, desactive_manuellement into v_actif, v_desactive
+    from offres where id = 'd0491001-0000-0000-0000-000000000001';
+  if v_actif then
+    raise exception 'TEST FAILED: close_expired_campagnes() should have closed the Naturelle campagne';
+  end if;
+  if v_desactive then
+    raise exception 'TEST FAILED: close_expired_campagnes() must never set desactive_manuellement -- it did';
+  end if;
+  raise notice 'PASS: close_expired_campagnes() closes a campagne (actif=false) without ever touching desactive_manuellement';
+end $$;
+
+-- Manual deactivation -- the exact write POST /api/offres and
+-- PATCH /api/offres/[id] both now perform in the same UPDATE/upsert as
+-- flipping actif to false (see those routes' own comments).
+update offres set actif = false, desactive_manuellement = true
+  where id = 'd0491002-0000-0000-0000-000000000002';
+
+do $$
+declare
+  v_count integer;
+  v_has_naturelle boolean;
+  v_has_manuelle boolean;
+  v_has_active boolean;
+begin
+  select count(*) into v_count from campagnes_publiques
+    where createur_id = 'd0490001-0000-0000-0000-000000000001';
+  select exists(select 1 from campagnes_publiques where id = 'd0491001-0000-0000-0000-000000000001') into v_has_naturelle;
+  select exists(select 1 from campagnes_publiques where id = 'd0491002-0000-0000-0000-000000000002') into v_has_manuelle;
+  select exists(select 1 from campagnes_publiques where id = 'd0491003-0000-0000-0000-000000000003') into v_has_active;
+
+  if v_count != 2 then
+    raise exception 'TEST FAILED: campagnes_publiques should show exactly 2 of the 3 campagnes (Naturelle + Active), got %', v_count;
+  end if;
+  if not v_has_naturelle then
+    raise exception 'TEST FAILED: the naturally-closed campagne must stay visible (non-regression, migration 0017''s own guarantee)';
+  end if;
+  if v_has_manuelle then
+    raise exception 'TEST FAILED: the manually-deactivated campagne leaked into campagnes_publiques';
+  end if;
+  if not v_has_active then
+    raise exception 'TEST FAILED: the still-active, untouched campagne should obviously stay visible too';
+  end if;
+
+  raise notice 'PASS: campagnes_publiques hides only the manually-deactivated campagne -- the naturally-closed one (non-regression) and the still-active one both stay visible';
+end $$;
+
+-- Reactivating -- the same write flipping actif back to true also flips
+-- desactive_manuellement back to false in the same call.
+update offres set actif = true, desactive_manuellement = false
+  where id = 'd0491002-0000-0000-0000-000000000002';
+
+do $$
+declare
+  v_has_manuelle boolean;
+begin
+  select exists(select 1 from campagnes_publiques where id = 'd0491002-0000-0000-0000-000000000002') into v_has_manuelle;
+  if not v_has_manuelle then
+    raise exception 'TEST FAILED: reactivating a manually-deactivated campagne should make it reappear in campagnes_publiques';
+  end if;
+  raise notice 'PASS: reactivating a manually-deactivated campagne (actif=true, desactive_manuellement=false together) makes it reappear';
+end $$;
+
 do $$
 begin
   raise notice 'ALL SQL CHECKLIST TESTS PASSED';

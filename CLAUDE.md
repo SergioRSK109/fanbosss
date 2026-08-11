@@ -4656,6 +4656,93 @@ so the dashboard's numbers can never disagree with what a fan sees) as
 an extra optional field on the `Offre` type passed into `OffresManager`,
 meaningful only for `campagne` rows.
 
+## Natural closure vs. manual deactivation of a campagne (migration `0049`)
+
+`campagnes_publiques` has never filtered on `actif` (see above) —
+deliberately, since a campaign that closes on its own (`date_fin`
+passed, or the objectif was reached) has to stay visible on the public
+profile as history, not vanish the moment it stops accepting
+contributions. That was always correct for *natural* closure. But it
+meant a créateur had no way to actually **hide** a campagne they'd
+manually turned off with the existing désactiver/réactiver toggle —
+`actif = false` looked identical either way, so a manually-deactivated
+campaign stayed stuck in the public history forever, indistinguishable
+from one that simply ran its course. This migration adds the missing
+second signal so the two cases can finally be told apart, without
+touching the original "never filter on `actif`" behavior at all.
+
+`offres.desactive_manuellement boolean not null default false` — the
+default is what makes this safe by construction: **neither**
+`close_expired_campagnes()` **nor** `close_campagne_if_goal_reached()`
+(both migration `0017`) was touched by this migration at all, so neither
+natural-closure trigger ever sets this column — a naturally-closed
+campagne always has `desactive_manuellement = false` and keeps showing
+up in `campagnes_publiques` exactly as before. The only two write paths
+that ever set it are the créateur's own toggle:
+
+- **`PATCH /api/offres/[id]`** — whenever `actif` is explicitly part of
+  the request body, `desactive_manuellement = (actif === false)` is set
+  in the *same* `UPDATE`, never a second write.
+- **`POST /api/offres`** — the real upsert route `OffresManager`'s own
+  désactiver/réactiver button actually calls (`CampagneRow`/
+  `VideoOffreRow`/`ProduitRow` all submit here, not to
+  `PATCH /api/offres/[id]`, which this app only ever uses for a
+  post-creation `image_r2_key`/`config.r2_key` PATCH — confirmed by
+  grepping every call site before writing this). The identical
+  `desactive_manuellement = (actif === false)` logic was added to this
+  route's own `upsertPayload` construction too, in the same `if
+  (parsed.data.actif !== undefined)` branch `actif` itself already uses
+  — **this is the one that actually matters for the real UI**: patching
+  only `PATCH /api/offres/[id]` would have shipped a column nothing
+  real ever set, since that route isn't what the désactiver/réactiver
+  button calls. Flagged here explicitly since a request describing this
+  feature named only the PATCH route — reading the actual code before
+  trusting that description is what caught the mismatch, same "the code
+  is correct, verify before trusting a written brief" discipline this
+  file has followed since the pseudo-cooldown/`0020`/publications-video
+  bugs.
+
+Reactivating (`actif: true`) flips `desactive_manuellement` back to
+`false` in that same write, so a manually-deactivated campagne
+reappears in `campagnes_publiques` the instant it's turned back on —
+verified directly, not assumed.
+
+`campagnes_publiques` (migration `0017`, `genere_pour_concours_id`
+trailing column added by migration `0048`) gained
+`and desactive_manuellement = false` on top of its existing `where type
+= 'campagne'` — its own "never filter on `actif`" behavior is completely
+unchanged; this is a second, independent condition, not a replacement.
+
+Tested end-to-end in `checklist_2_3.sql`, not just described: a real
+fixture of three campagnes (one closed via `close_expired_campagnes()`,
+one manually deactivated via the exact same `actif`/
+`desactive_manuellement` write the two API routes now perform, one left
+untouched and still active) proves all three simultaneously —
+`close_expired_campagnes()` closes a campagne without ever setting
+`desactive_manuellement` (the non-regression case this migration must
+never break), the manually-deactivated one alone disappears from
+`campagnes_publiques`, and the still-active control stays visible
+throughout; a follow-up reactivation makes the manually-deactivated one
+reappear. Route-level tests (`src/app/api/offres/__tests__/route.test.ts`,
+new — no test file existed for either route before this migration —
+and `src/app/api/offres/[id]/__tests__/route.test.ts`, also new) assert
+the exact payload sent to Supabase in both directions (`actif: false` →
+`desactive_manuellement: true`, `actif: true` → `desactive_manuellement:
+false`), and that the field is never sent at all when a request doesn't
+mention `actif` (e.g. `PATCH .../[id]` with only `image_r2_key`) — a
+regression here would either silently wipe out an unrelated save or,
+worse, leave every offer's `actif` toggle permanently disconnected from
+the new column.
+
+**Not independently visually verified in a live browser this session**
+— flagged explicitly rather than silently claimed, same discipline as
+the concours campagne-auto-génération lot immediately above: `tsc`,
+`eslint`, the full `npm test` suite, the full `npm run test:sql` suite,
+and a clean production `next build` all pass, but the public profile's
+actual on-screen behavior (a manually-deactivated campagne disappearing,
+a naturally-closed one staying, both in `fr` and `/en/`) has not been
+confirmed against a running browser.
+
 ## Creator contests (`concours`, Phase 1: mode `entre_createurs` only, migrations 0045-0046)
 
 Inspired by the money contests créateurs already run on TikTok live
