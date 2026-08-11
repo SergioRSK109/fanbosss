@@ -203,6 +203,9 @@
       "anonymousSupporter": "A supporter",
       "anonymousCreateur": "A créateur"
     },
+    "badgeDonateur": {
+      "label": "Supporter {palier}$+"
+    },
     "participer": "Participate",
     "verified": "Verified",
     "tabs": {
@@ -493,6 +496,7 @@
     "classementCheckboxLabel": "Appear in public leaderboards",
     "masqueExplorationCheckboxLabel": "Don't suggest me in the explore page (I stay findable by search)",
     "badgeFideliteCheckboxLabel": "Make my loyalty badges public (visible on your profile and on the créateurs you support)",
+    "badgeDonateurCheckboxLabel": "Make my supporter badge public (based on your cumulative spend across the whole platform, every créateur combined)",
     "pseudoLabel": "Choose your handle",
     "pseudoPlaceholder": "e.g.: sergio_123, sergioRSK",
     "pseudoAvailable": "✓ available",
@@ -518,6 +522,15 @@
       "lightAriaLabel": "Light theme",
       "darkAriaLabel": "Dark theme",
       "systemAriaLabel": "System theme"
+    },
+    "parrainage": {
+      "heading": "Referrals",
+      "description": "Share this link -- anyone who signs up with it becomes your referral, and you earn a bonus on their transactions during their first 30 days.",
+      "copyButton": "📋 Copy my referral link",
+      "copied": "Link copied!",
+      "copyError": "Couldn't copy the link.",
+      "filleulsActifsLabel": "Active referrals",
+      "totalGagneLabel": "Total earned"
     }
   },
   "PhotoCropper": {
@@ -604,6 +617,9 @@
     },
     "topCreateursHeading": "Top 10 créateurs by volume -- this month",
     "topCreateursEmpty": "No transactions this month.",
+    "topDonateursHeading": "Top 20 donors -- cumulative spend",
+    "topDonateursIntro": "Always complete, regardless of each person's public supporter badge opt-in.",
+    "topDonateursEmpty": "No successful payments yet.",
     "gestionAdminsHeading": "Manage admins",
     "gestionAdmins": {
       "grant": "Grant admin status",

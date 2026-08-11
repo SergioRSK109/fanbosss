@@ -21,6 +21,15 @@ export const TVA_TAUX = 0.16;
 // net-of-commission total and deducts it from the créateur's share --
 // never a separate transfer, the same atomic split the SQL trigger
 // performs. See CLAUDE.md's "Atomic 3-way payment split" section.
+// Migration 0050's filleul-first-transaction discount (10% instead of
+// 15%) is deliberately NOT modeled here. Every existing caller of this
+// function (CampagneRow's live payout calculator, OffresManager.tsx) is
+// previewing a general "what you'd net on this amount" figure while
+// setting up a campaign -- it has no idea whether a specific future
+// contribution would land on this créateur's literal first-ever
+// transaction, and the brief never asked for that preview to account for
+// it. The real rate is still only ever decided by
+// create_paiement_on_validation() itself, at actual payment time.
 export function calculerRepartitionPaiement(montant: number, pourcentageMaitreJeu?: number | null) {
   const commissionPlateforme = round2(montant * COMMISSION_PLATEFORME_TAUX);
   const fraisAgregateur = round2(montant * FRAIS_AGREGATEUR_TAUX);

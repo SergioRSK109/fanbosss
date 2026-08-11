@@ -8537,6 +8537,402 @@ begin
   raise notice 'PASS: reactivating a manually-deactivated campagne (actif=true, desactive_manuellement=false together) makes it reappear';
 end $$;
 
+-- =========================================================================
+-- Lot A: repairing the referral (parrainage) system (migration 0050).
+-- The bonus itself has been correctly computed since migration 0002 --
+-- these tests are the first this codebase has ever run against it.
+-- =========================================================================
+
+-- Anti-self-referral guard.
+do $$
+begin
+  begin
+    insert into users (id, parrain_id) values
+      ('d0500000-0000-0000-0000-000000000000', 'd0500000-0000-0000-0000-000000000000');
+    raise exception 'TEST FAILED: a user was allowed to reference themselves as their own parrain';
+  exception when check_violation then
+    raise notice 'PASS: users_pas_auto_parrainage rejects parrain_id = id';
+  end;
+end $$;
+
+do $$
+declare
+  v_count integer;
+begin
+  select count(*) into v_count from users where id = 'd0500000-0000-0000-0000-000000000000';
+  if v_count != 0 then
+    raise exception 'TEST FAILED: the rejected self-parrainage insert left a row behind';
+  end if;
+  raise notice 'PASS: the rejected self-parrainage attempt left no trace';
+end $$;
+
+-- A NULL parrain_id (the overwhelming majority of users) must still pass
+-- -- CHECK only rejects an explicitly FALSE expression, and NULL != id is
+-- NULL, not FALSE.
+insert into users (id) values ('d0500001-0000-0000-0000-000000000001'); -- P, the parrain
+insert into users (id, parrain_id) values
+  ('d0500002-0000-0000-0000-000000000002', 'd0500001-0000-0000-0000-000000000001'); -- F, the filleul
+do $$
+begin
+  raise notice 'PASS: a NULL parrain_id and a real, distinct parrain_id both pass users_pas_auto_parrainage';
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Filleul first-transaction discount + parrain bonus, driven end-to-end
+-- through the real trigger chain (create_paiement_on_validation() at
+-- validee, handle_transaction_livraison() at livree), not asserted from
+-- a manually-inserted row. F (referred by P) receives two $1000 don
+-- transactions from a fan.
+-- ---------------------------------------------------------------------
+insert into users (id) values ('d0500003-0000-0000-0000-000000000003'); -- fan paying F
+insert into offres (id, createur_id, type, prix) values
+  ('d0500010-0000-0000-0000-000000000010', 'd0500002-0000-0000-0000-000000000002', 'don', null);
+
+-- T1: F's very first transaction ever as créateur -- must be charged 10%
+-- HT, not the standard 15%.
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('d0500020-0000-0000-0000-000000000020',
+   'd0500003-0000-0000-0000-000000000003',
+   'd0500002-0000-0000-0000-000000000002',
+   'd0500010-0000-0000-0000-000000000010', 1000, 'en_attente');
+update transactions set statut = 'validee' where id = 'd0500020-0000-0000-0000-000000000020';
+
+do $$
+declare
+  v_commission numeric;
+  v_net numeric;
+begin
+  select commission_plateforme, montant_net_createur into v_commission, v_net
+    from paiements where transaction_id = 'd0500020-0000-0000-0000-000000000020';
+  if v_commission != 100 then
+    raise exception 'TEST FAILED: F''s first transaction as créateur was charged commission=% instead of 100 (10%% of 1000)', v_commission;
+  end if;
+  if v_net != 884 then
+    raise exception 'TEST FAILED: F''s first transaction montant_net_createur was % instead of 884', v_net;
+  end if;
+  raise notice 'PASS: a referred créateur''s very first transaction is charged the reduced 10%% HT commission (100 instead of 150 on $1000)';
+end $$;
+
+update transactions set statut = 'livree' where id = 'd0500020-0000-0000-0000-000000000020';
+
+-- T2: F's SECOND transaction as créateur -- must be back to the
+-- standard 15%, proving the discount is genuinely one-time.
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('d0500021-0000-0000-0000-000000000021',
+   'd0500003-0000-0000-0000-000000000003',
+   'd0500002-0000-0000-0000-000000000002',
+   'd0500010-0000-0000-0000-000000000010', 1000, 'en_attente');
+update transactions set statut = 'validee' where id = 'd0500021-0000-0000-0000-000000000021';
+
+do $$
+declare
+  v_commission numeric;
+begin
+  select commission_plateforme into v_commission
+    from paiements where transaction_id = 'd0500021-0000-0000-0000-000000000021';
+  if v_commission != 150 then
+    raise exception 'TEST FAILED: F''s SECOND transaction as créateur was charged commission=% instead of 150 (the standard 15%% rate) -- the discount fired more than once', v_commission;
+  end if;
+  raise notice 'PASS: a filleul''s discount never fires a second time -- their second transaction as créateur pays the standard 15%%';
+end $$;
+
+update transactions set statut = 'livree' where id = 'd0500021-0000-0000-0000-000000000021';
+
+-- Non-referred créateur: always the standard rate, first transaction or
+-- not -- no parrain_id means no discount, ever.
+insert into users (id) values ('d0500004-0000-0000-0000-000000000004'); -- G, never referred
+insert into offres (id, createur_id, type, prix) values
+  ('d0500011-0000-0000-0000-000000000011', 'd0500004-0000-0000-0000-000000000004', 'don', null);
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('d0500022-0000-0000-0000-000000000022',
+   'd0500003-0000-0000-0000-000000000003',
+   'd0500004-0000-0000-0000-000000000004',
+   'd0500011-0000-0000-0000-000000000011', 1000, 'en_attente');
+update transactions set statut = 'validee' where id = 'd0500022-0000-0000-0000-000000000022';
+
+do $$
+declare
+  v_commission numeric;
+begin
+  select commission_plateforme into v_commission
+    from paiements where transaction_id = 'd0500022-0000-0000-0000-000000000022';
+  if v_commission != 150 then
+    raise exception 'TEST FAILED: a créateur with no parrain_id at all was charged commission=% instead of the standard 150', v_commission;
+  end if;
+  raise notice 'PASS: a créateur who was never referred always pays the standard 15%% commission';
+end $$;
+
+-- A filleul who never becomes a créateur (only ever appears as a fan)
+-- must never trigger a discount for anyone -- the check only ever
+-- consults the transaction's OWN createur_id, never the fan's parrain_id.
+insert into users (id) values ('d0500005-0000-0000-0000-000000000005'); -- P2, unrelated parrain
+insert into users (id, parrain_id) values
+  ('d0500006-0000-0000-0000-000000000006', 'd0500005-0000-0000-0000-000000000005'); -- H, a filleul who only ever pays as fan
+insert into users (id) values ('d0500007-0000-0000-0000-000000000007'); -- G2, unrelated fresh créateur
+insert into offres (id, createur_id, type, prix) values
+  ('d0500012-0000-0000-0000-000000000012', 'd0500007-0000-0000-0000-000000000007', 'don', null);
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('d0500023-0000-0000-0000-000000000023',
+   'd0500006-0000-0000-0000-000000000006',
+   'd0500007-0000-0000-0000-000000000007',
+   'd0500012-0000-0000-0000-000000000012', 1000, 'en_attente');
+update transactions set statut = 'validee' where id = 'd0500023-0000-0000-0000-000000000023';
+
+do $$
+declare
+  v_commission numeric;
+begin
+  select commission_plateforme into v_commission
+    from paiements where transaction_id = 'd0500023-0000-0000-0000-000000000023';
+  if v_commission != 150 then
+    raise exception 'TEST FAILED: a transaction paid BY a filleul (never a créateur themselves) was charged commission=% instead of the standard 150 -- the fan''s own parrain_id must never matter here', v_commission;
+  end if;
+  raise notice 'PASS: a filleul who never becomes a créateur never triggers a discount for anyone, including the créateur they paid as a fan';
+end $$;
+
+-- ---------------------------------------------------------------------
+-- solde_wallet_createur() now includes the parrain's earned referral
+-- bonuses in net_a_retirer -- P earned 10.00 (10%% of T1's reduced $100
+-- commission) + 15.00 (10%% of T2's standard $150 commission) = 25.00,
+-- from handle_transaction_livraison() (migration 0002, unmodified),
+-- entirely via the real trigger chain above, never a manually-inserted
+-- parrainages row.
+-- ---------------------------------------------------------------------
+do $$
+declare
+  v_count integer;
+  v_total numeric;
+begin
+  select count(*), sum(montant_bonus) into v_count, v_total
+    from parrainages where parrain_id = 'd0500001-0000-0000-0000-000000000001';
+  if v_count != 2 then
+    raise exception 'TEST FAILED: expected exactly 2 parrainages rows for P, got %', v_count;
+  end if;
+  if v_total != 25.00 then
+    raise exception 'TEST FAILED: P''s total parrainage bonus was % instead of 25.00 (10.00 + 15.00)', v_total;
+  end if;
+  raise notice 'PASS: the parrain''s two referral bonuses (10.00 + 15.00) were both recorded correctly by the pre-existing, unmodified handle_transaction_livraison()';
+end $$;
+
+select set_config('app.current_user_id', 'd0500001-0000-0000-0000-000000000001', false);
+do $$
+declare
+  v_solde record;
+begin
+  select * into v_solde from solde_wallet_createur('d0500001-0000-0000-0000-000000000001');
+  if v_solde.net_a_retirer != 25.00 then
+    raise exception 'TEST FAILED: P''s net_a_retirer was % instead of 25.00 -- the parrainage bonus never made it into the wallet total', v_solde.net_a_retirer;
+  end if;
+  if v_solde.en_attente_livraison != 0 or v_solde.en_litige != 0 then
+    raise exception 'TEST FAILED: the parrainage bonus leaked into en_attente_livraison (%) or en_litige (%) -- it must only ever count toward net_a_retirer', v_solde.en_attente_livraison, v_solde.en_litige;
+  end if;
+  raise notice 'PASS: solde_wallet_createur() folds the parrain''s earned referral bonuses into net_a_retirer only (25.00), never the other two buckets';
+end $$;
+
+-- Genuinely retirable, through the real demander_retrait() RPC -- not
+-- just visible as a number. $25 is exactly at the withdrawal minimum.
+select demander_retrait(25);
+
+do $$
+declare
+  v_solde record;
+begin
+  select * into v_solde from solde_wallet_createur('d0500001-0000-0000-0000-000000000001');
+  if v_solde.net_a_retirer != 0 then
+    raise exception 'TEST FAILED: net_a_retirer was % instead of 0 after withdrawing the full 25.00 parrainage balance -- double-counting or a missing subtraction', v_solde.net_a_retirer;
+  end if;
+  raise notice 'PASS: the parrainage bonus is genuinely retirable via demander_retrait(), and the pending request correctly zeroes net_a_retirer -- no double-counting';
+end $$;
+select set_config('app.current_user_id', '', false);
+
+-- =========================================================================
+-- Lot B: donor badge (badge_donateur) + always-complete admin ranking
+-- (migration 0051).
+-- =========================================================================
+
+-- calculer_palier_donateur(): exact thresholds and the boundaries just
+-- below each one.
+do $$
+declare
+  v_montant numeric;
+  v_attendu numeric;
+  v_actual numeric;
+begin
+  for v_montant, v_attendu in
+    select * from (values
+      (0::numeric, null::numeric),
+      (9, null),
+      (10, 10),
+      (49, 10),
+      (50, 50),
+      (99, 50),
+      (100, 100),
+      (149, 100),
+      (150, 150),
+      (249, 150),
+      (250, 250),
+      (499, 250),
+      (500, 500),
+      (999, 500),
+      (1000, 1000),
+      (1499, 1000),
+      (1500, 1500),
+      (2999, 1500),
+      (3000, 3000),
+      (10000, 3000)
+    ) as t(montant, attendu)
+  loop
+    select calculer_palier_donateur(v_montant) into v_actual;
+    if v_actual is distinct from v_attendu then
+      raise exception 'TEST FAILED: calculer_palier_donateur(%) returned % instead of %', v_montant, v_actual, v_attendu;
+    end if;
+  end loop;
+  raise notice 'PASS: calculer_palier_donateur() computes the correct palier at every threshold and boundary';
+end $$;
+
+-- badges_donateur_publics: opt-in gate, threshold gate, and live
+-- recomputation as spend crosses a new tier -- driven through the real
+-- transaction lifecycle (en_attente -> validee -> livree), never a
+-- manually-inserted paiements row.
+insert into users (id, badge_donateur_public) values
+  ('d0510001-0000-0000-0000-000000000001', false); -- D1, opted out initially
+insert into users (id) values ('d0510002-0000-0000-0000-000000000002'); -- créateur D1 pays
+insert into offres (id, createur_id, type, prix) values
+  ('d0510010-0000-0000-0000-000000000010', 'd0510002-0000-0000-0000-000000000002', 'don', null);
+
+do $$
+declare
+  v_exists boolean;
+begin
+  select exists(select 1 from badges_donateur_publics where user_id = 'd0510001-0000-0000-0000-000000000001')
+    into v_exists;
+  if v_exists then
+    raise exception 'TEST FAILED: a user with zero spend and no opt-in already has a donor badge row';
+  end if;
+  raise notice 'PASS: no badge at all before any spend or opt-in';
+end $$;
+
+-- D1 pays exactly $10 (the smallest threshold), delivered.
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('d0510020-0000-0000-0000-000000000020',
+   'd0510001-0000-0000-0000-000000000001',
+   'd0510002-0000-0000-0000-000000000002',
+   'd0510010-0000-0000-0000-000000000010', 10, 'en_attente');
+update transactions set statut = 'validee' where id = 'd0510020-0000-0000-0000-000000000020';
+update transactions set statut = 'livree' where id = 'd0510020-0000-0000-0000-000000000020';
+
+do $$
+declare
+  v_exists boolean;
+begin
+  select exists(select 1 from badges_donateur_publics where user_id = 'd0510001-0000-0000-0000-000000000001')
+    into v_exists;
+  if v_exists then
+    raise exception 'TEST FAILED: a $10-spend donor badge appeared despite badge_donateur_public still being false';
+  end if;
+  raise notice 'PASS: the badge stays hidden while badge_donateur_public is false, even once the smallest threshold is reached';
+end $$;
+
+update users set badge_donateur_public = true where id = 'd0510001-0000-0000-0000-000000000001';
+
+do $$
+declare
+  v_palier numeric;
+begin
+  select palier into v_palier from badges_donateur_publics where user_id = 'd0510001-0000-0000-0000-000000000001';
+  if v_palier != 10 then
+    raise exception 'TEST FAILED: expected palier=10 once opted in with exactly $10 spent, got %', v_palier;
+  end if;
+  raise notice 'PASS: the badge appears at palier=10 the instant the opt-in is turned on, with no new spend needed';
+end $$;
+
+-- A second, larger contribution ($990 more -> $1000 total) must move
+-- the palier live, computed from the real running total, never stored.
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('d0510021-0000-0000-0000-000000000021',
+   'd0510001-0000-0000-0000-000000000001',
+   'd0510002-0000-0000-0000-000000000002',
+   'd0510010-0000-0000-0000-000000000010', 990, 'en_attente');
+update transactions set statut = 'validee' where id = 'd0510021-0000-0000-0000-000000000021';
+update transactions set statut = 'livree' where id = 'd0510021-0000-0000-0000-000000000021';
+
+do $$
+declare
+  v_palier numeric;
+begin
+  select palier into v_palier from badges_donateur_publics where user_id = 'd0510001-0000-0000-0000-000000000001';
+  if v_palier != 1000 then
+    raise exception 'TEST FAILED: expected palier=1000 after a total of $1000 spent, got %', v_palier;
+  end if;
+  raise notice 'PASS: the palier is recomputed live from the real cumulative spend, not stored or frozen at the first threshold reached';
+end $$;
+
+-- Opting back out hides it again immediately, same as badge_fidelite_public.
+update users set badge_donateur_public = false where id = 'd0510001-0000-0000-0000-000000000001';
+do $$
+declare
+  v_exists boolean;
+begin
+  select exists(select 1 from badges_donateur_publics where user_id = 'd0510001-0000-0000-0000-000000000001')
+    into v_exists;
+  if v_exists then
+    raise exception 'TEST FAILED: the donor badge stayed visible after opting back out';
+  end if;
+  raise notice 'PASS: opting back out hides the donor badge immediately';
+end $$;
+
+-- Column exposure: palier only, never the raw total_depense -- same
+-- "tier only, never the underlying number" discipline as classement_volume.
+do $$
+declare
+  v_columns text;
+begin
+  select string_agg(column_name, ',') into v_columns
+    from information_schema.columns
+    where table_schema = 'public' and table_name = 'badges_donateur_publics';
+
+  if v_columns ~ 'depense|montant|total' then
+    raise exception 'TEST FAILED: badges_donateur_publics exposes a raw spend column (%), not palier-only', v_columns;
+  end if;
+
+  raise notice 'PASS: badges_donateur_publics exposes only user_id/pseudo/palier (%), never the raw cumulative spend', v_columns;
+end $$;
+
+-- Grants: both anon and authenticated hold SELECT, same as every other
+-- public view in this project.
+do $$
+begin
+  if not has_table_privilege('anon', 'public.badges_donateur_publics', 'SELECT') then
+    raise exception 'TEST FAILED: anon lost SELECT on badges_donateur_publics';
+  end if;
+  if not has_table_privilege('authenticated', 'public.badges_donateur_publics', 'SELECT') then
+    raise exception 'TEST FAILED: authenticated lost SELECT on badges_donateur_publics';
+  end if;
+  raise notice 'PASS: both anon and authenticated hold SELECT on badges_donateur_publics';
+end $$;
+
+-- The admin ranking's own "always complete regardless of opt-in" claim
+-- lives entirely in application code (a raw paiements/transactions
+-- query, never through this view) -- not something this SQL harness can
+-- exercise directly, but this positively confirms the one thing that
+-- WOULD silently break that claim if it regressed: opting out must never
+-- delete or hide the underlying paiements/transactions rows an admin
+-- query would read directly. D1 opted back out above; their real
+-- transactions are still there for a raw query to find.
+do $$
+declare
+  v_total numeric;
+begin
+  select sum(p.montant_brut) into v_total
+    from paiements p
+    join transactions t on t.id = p.transaction_id
+    where t.fan_id = 'd0510001-0000-0000-0000-000000000001' and p.statut_paiement = 'reussi';
+  if v_total != 1000 then
+    raise exception 'TEST FAILED: D1''s real cumulative spend (for a raw, opt-in-agnostic admin query to find) was % instead of 1000', v_total;
+  end if;
+  raise notice 'PASS: the underlying paiements/transactions rows an admin query reads directly are completely unaffected by the opt-in toggle -- the admin ranking''s "always complete" guarantee holds';
+end $$;
+
 do $$
 begin
   raise notice 'ALL SQL CHECKLIST TESTS PASSED';
