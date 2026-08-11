@@ -177,11 +177,16 @@ export async function getCreateurProfileData(
       .neq("type", "produit"),
     // campagnes_publiques, unlike offres_publiques, is never filtered to
     // actif=true -- see migration 0017 -- so closed campaigns stay in the
-    // public history instead of vanishing.
+    // public history instead of vanishing. genere_pour_concours_id is not
+    // null for a synthetic campagne migration 0048's creer_concours()/
+    // accepter_invitation_concours() auto-create -- filtered out here so
+    // it's never chosen or seen by anyone (per Part A.4); it only ever
+    // shows up through /concours/[id]'s own "Participer" button instead.
     supabase
       .from("campagnes_publiques")
-      .select("id, libelle, actif, config, created_at")
-      .eq("createur_id", createurId),
+      .select("id, libelle, actif, config, created_at, genere_pour_concours_id")
+      .eq("createur_id", createurId)
+      .is("genere_pour_concours_id", null),
     // Phase 3: produit offres, read separately from the generic `offres`
     // query above for the same "needs its own card shape" reason
     // campagnes already are -- see the field's own comment. Still

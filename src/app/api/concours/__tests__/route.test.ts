@@ -27,7 +27,6 @@ function buildRequest(body: unknown) {
 const VALID_BODY = {
   nom: "Concours de la rentrée",
   dateFin: new Date(Date.now() + 86400000).toISOString(),
-  campagneId: "11111111-1111-4111-8111-111111111111",
 };
 
 describe("POST /api/concours", () => {
@@ -48,7 +47,7 @@ describe("POST /api/concours", () => {
     expect(response.status).toBe(401);
   });
 
-  it("rejects a malformed body (invalid campagneId) with 400 before calling the RPC", async () => {
+  it("rejects a malformed body (empty nom) with 400 before calling the RPC", async () => {
     const supabase = buildSupabase({ id: "u1" }, { data: null, error: null });
     const rpcSpy = vi.spyOn(supabase, "rpc");
     vi.mocked(createSupabaseServerClient).mockResolvedValue(
@@ -56,17 +55,33 @@ describe("POST /api/concours", () => {
     );
 
     const { POST } = await import("@/app/api/concours/route");
-    const response = await POST(buildRequest({ ...VALID_BODY, campagneId: "not-a-uuid" }) as never);
+    const response = await POST(buildRequest({ ...VALID_BODY, nom: "" }) as never);
 
     expect(response.status).toBe(400);
     expect(rpcSpy).not.toHaveBeenCalled();
   });
 
-  it("surfaces the RPC's own rejection (e.g. ownership violation) as a 400", async () => {
+  it("rejects a temps_record with no objectif_points with 400 before calling the RPC", async () => {
+    const supabase = buildSupabase({ id: "u1" }, { data: null, error: null });
+    const rpcSpy = vi.spyOn(supabase, "rpc");
+    vi.mocked(createSupabaseServerClient).mockResolvedValue(
+      supabase as unknown as Awaited<ReturnType<typeof createSupabaseServerClient>>,
+    );
+
+    const { POST } = await import("@/app/api/concours/route");
+    const response = await POST(
+      buildRequest({ ...VALID_BODY, tempsRecord: new Date(Date.now() + 3600000).toISOString() }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    expect(rpcSpy).not.toHaveBeenCalled();
+  });
+
+  it("surfaces the RPC's own rejection as a 400", async () => {
     vi.mocked(createSupabaseServerClient).mockResolvedValue(
       buildSupabase(
         { id: "u1" },
-        { data: null, error: { message: "not authorized: you can only use your own campaign" } },
+        { data: null, error: { message: "not authenticated" } },
       ) as unknown as Awaited<ReturnType<typeof createSupabaseServerClient>>,
     );
 
@@ -75,15 +90,17 @@ describe("POST /api/concours", () => {
     const body = await response.json();
 
     expect(response.status).toBe(400);
-    expect(body.error).toBe("not authorized: you can only use your own campaign");
+    expect(body.error).toBe("not authenticated");
   });
 
-  it("returns the new concours id once the RPC succeeds", async () => {
+  it("returns the new concours id once the RPC succeeds, with no campagneId ever sent", async () => {
+    const supabase = buildSupabase(
+      { id: "u1" },
+      { data: "22222222-2222-4222-8222-222222222222", error: null },
+    );
+    const rpcSpy = vi.spyOn(supabase, "rpc");
     vi.mocked(createSupabaseServerClient).mockResolvedValue(
-      buildSupabase(
-        { id: "u1" },
-        { data: "22222222-2222-4222-8222-222222222222", error: null },
-      ) as unknown as Awaited<ReturnType<typeof createSupabaseServerClient>>,
+      supabase as unknown as Awaited<ReturnType<typeof createSupabaseServerClient>>,
     );
 
     const { POST } = await import("@/app/api/concours/route");
@@ -92,5 +109,39 @@ describe("POST /api/concours", () => {
 
     expect(response.status).toBe(200);
     expect(body.id).toBe("22222222-2222-4222-8222-222222222222");
+    expect(rpcSpy).toHaveBeenCalledWith("creer_concours", {
+      p_nom: VALID_BODY.nom,
+      p_date_fin: VALID_BODY.dateFin,
+      p_date_debut: null,
+      p_objectif_points: null,
+      p_temps_record: null,
+    });
+  });
+
+  it("passes date_debut/objectif_points/temps_record through when provided", async () => {
+    const supabase = buildSupabase(
+      { id: "u1" },
+      { data: "22222222-2222-4222-8222-222222222222", error: null },
+    );
+    const rpcSpy = vi.spyOn(supabase, "rpc");
+    vi.mocked(createSupabaseServerClient).mockResolvedValue(
+      supabase as unknown as Awaited<ReturnType<typeof createSupabaseServerClient>>,
+    );
+
+    const dateDebut = new Date(Date.now() + 3600000).toISOString();
+    const tempsRecord = new Date(Date.now() + 7200000).toISOString();
+
+    const { POST } = await import("@/app/api/concours/route");
+    await POST(
+      buildRequest({ ...VALID_BODY, dateDebut, objectifPoints: 250, tempsRecord }) as never,
+    );
+
+    expect(rpcSpy).toHaveBeenCalledWith("creer_concours", {
+      p_nom: VALID_BODY.nom,
+      p_date_fin: VALID_BODY.dateFin,
+      p_date_debut: dateDebut,
+      p_objectif_points: 250,
+      p_temps_record: tempsRecord,
+    });
   });
 });

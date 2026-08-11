@@ -24,7 +24,7 @@ function buildRequest(id: string, body: unknown) {
   };
 }
 
-const VALID_BODY = { campagneId: "11111111-1111-4111-8111-111111111111" };
+const VALID_BODY = {};
 
 describe("POST /api/concours/[id]/accepter", () => {
   beforeEach(() => {
@@ -43,7 +43,7 @@ describe("POST /api/concours/[id]/accepter", () => {
     expect(response.status).toBe(401);
   });
 
-  it("rejects a malformed campagneId with 400 before calling the RPC", async () => {
+  it("rejects a malformed body (conditionsAcceptees not a boolean) with 400 before calling the RPC", async () => {
     const supabase = buildSupabase({ id: "u1" }, null);
     const rpcSpy = vi.spyOn(supabase, "rpc");
     vi.mocked(createSupabaseServerClient).mockResolvedValue(
@@ -51,18 +51,18 @@ describe("POST /api/concours/[id]/accepter", () => {
     );
 
     const { POST } = await import("@/app/api/concours/[id]/accepter/route");
-    const { request, params } = buildRequest("c1", { campagneId: "not-a-uuid" });
+    const { request, params } = buildRequest("c1", { conditionsAcceptees: "yes" });
     const response = await POST(request as never, { params });
 
     expect(response.status).toBe(400);
     expect(rpcSpy).not.toHaveBeenCalled();
   });
 
-  it("surfaces the RPC's own rejection (e.g. someone else's campagne) as a 400", async () => {
+  it("surfaces the RPC's own rejection (e.g. invitation not found) as a 400", async () => {
     vi.mocked(createSupabaseServerClient).mockResolvedValue(
       buildSupabase(
         { id: "u1" },
-        { message: "not authorized: you can only use your own campaign" },
+        { message: "invitation not found" },
       ) as unknown as Awaited<ReturnType<typeof createSupabaseServerClient>>,
     );
 
@@ -72,7 +72,7 @@ describe("POST /api/concours/[id]/accepter", () => {
     const body = await response.json();
 
     expect(response.status).toBe(400);
-    expect(body.error).toBe("not authorized: you can only use your own campaign");
+    expect(body.error).toBe("invitation not found");
   });
 
   it("returns ok once the RPC succeeds", async () => {

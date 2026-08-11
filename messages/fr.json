@@ -265,15 +265,27 @@
     "termine": "Concours terminé",
     "compteAReboursAvecJours": "{jours}j {heures}:{minutes}:{secondes}",
     "compteARebours": "{heures}:{minutes}:{secondes}",
+    "compteATempsRecord": "⏱️ Temps record : {compte}",
     "badgeEnTete": "🔥 En tête",
     "badgeVainqueur": "🏆 Vainqueur",
     "createurAnonyme": "Créateur FanBoss",
     "montantCollecte": "{points} points",
+    "objectifProgres": "Objectif : {points} points",
+    "ouvreLe": "Le concours ouvre le {date}",
     "tropheeAlt": "Trophée du concours",
     "aucunParticipant": "Personne n'a encore rejoint ce concours.",
     "ouvrirEcran": "📺 Ouvrir l'écran de diffusion"
   },
   "ConcoursManager": {
+    "objectifFields": {
+      "dateDebutLabel": "Date de début (optionnel)",
+      "objectifQuestion": "Est-ce que les participants ont un nombre de points à atteindre pour gagner ?",
+      "oui": "Oui",
+      "non": "Non",
+      "objectifLabel": "Objectif de points",
+      "tempsRecordQuestion": "Est-ce que ces points doivent être atteints dans un temps record précis ?",
+      "tempsRecordLabel": "Temps record (date et heure)"
+    },
     "mesConcours": {
       "heading": "Mes concours en cours",
       "empty": "Tu n'organises ou ne participes à aucun concours pour l'instant.",
@@ -287,8 +299,6 @@
       "empty": "Aucune invitation en attente.",
       "invitePar": "Invité·e par {organisateur}",
       "createurAnonyme": "Créateur FanBoss",
-      "campagneLabel": "Ta campagne à lier",
-      "aucuneCampagne": "Tu n'as aucune campagne active -- crée-en une d'abord dans l'onglet Service pour pouvoir accepter.",
       "accepter": "Accepter",
       "refuser": "Refuser",
       "echec": "Échec de l'action, réessaie.",
@@ -301,8 +311,6 @@
       "heading": "Créer un concours",
       "nomLabel": "Nom du concours",
       "dateFinLabel": "Date de fin",
-      "campagneLabel": "Campagne à utiliser",
-      "aucuneCampagne": "Crée d'abord une campagne de collecte de fonds (onglet Service) pour pouvoir lancer un concours.",
       "submit": "Créer le concours",
       "echec": "Échec de la création, réessaie."
     },

@@ -5449,6 +5449,273 @@ campagne card, linking to the concours — all confirmed in both `fr`
   leader/winner badge, or any third mode — explicitly out of scope
   (Phase 3, per the brief).
 
+## Creator contests: campagne auto-générée + objectif/temps record (migration `0048`)
+
+Two distinct but jointly-designed changes, shipped in one migration
+because they touch the exact same two RPCs (`creer_concours()`,
+`accepter_invitation_concours()`).
+
+### Part A — the campagne becomes a pure implementation detail
+
+**Before this migration, creating or accepting a concours required the
+créateur to already own a `campagne` offre and pick it from a
+`<select>`.** This broke outright for a créateur who'd never created one
+(Phase 1's own form showed "Crée d'abord une campagne..." and refused to
+render at all), and it leaked an internal detail — "campagne" — the user
+never asked about; a concours is a contest, not a fundraiser, from the
+créateur's own point of view. `creer_concours()` and
+`accepter_invitation_concours()` now create and own a **synthetic**
+campagne offre automatically, atomically, in the same transaction as the
+concours row / the accepted participant row — the client never supplies
+a `campagne_id` anywhere in this flow anymore, at either signature.
+
+**The synthetic campagne is tagged, filtered, and otherwise invisible.**
+`offres.genere_pour_concours_id` (new column, references `concours.id`)
+is set the instant it's created. Every surface that lists a créateur's
+own campagnes now excludes it:
+- `OffresManager`'s own `/offres` query (`(app)/offres/page.tsx`) adds
+  `.is("genere_pour_concours_id", null)` directly on the raw `offres`
+  table read.
+- `campagnes_publiques` (migration `0017`) gained
+  `genere_pour_concours_id` as a trailing column (same "append, never
+  reorder" `CREATE OR REPLACE VIEW` convention documented elsewhere in
+  this file), and `getCreateurProfileData()`'s own query
+  (`src/lib/profil.ts`) filters on it the same way.
+
+**A real, accepted consequence of this, not a bug**: the "Fait partie du
+tournoi [nom]" context mention on a créateur's public campagne card
+(migration `0047`) only ever fires for a campagne that actually appears
+in `campagnesRows` — since a concours' campagne is now *always*
+synthetic (and therefore always filtered out), that mention effectively
+stops having anywhere to render for any concours created after this
+migration. This isn't a regression: Part A's whole point is that the
+campagne (and by extension its own card) disappears from everywhere
+except `/concours/[id]` — that page **is** the campaign page now, for a
+concours. The mention still works exactly as before for any pre-0048
+concours whose participant campagnes were genuinely créateur-authored
+(not synthetic, so not filtered) — nothing about existing data changes
+retroactively.
+
+**The synthetic campagne is still fully payable.** It's inserted with
+`actif = true`, no fixed `prix` (same free-amount mechanic every
+campagne already has), and `config = {date_fin: <the concours' own
+date_fin, formatted YYYY-MM-DD>}` — deliberately **no** `objectif`/
+`description` keys. This isn't an oversight: `close_campagne_if_goal_reached()`
+(migration `0017`) already treats a missing/malformed
+`config->>'objectif'` as "no goal, never auto-close on amount", and
+`offres_prix_required_unless_don` already exempts `campagne` from
+needing a fixed `prix` — a campagne offre with no objectif was already a
+fully-supported state in the existing schema before this migration ever
+touched it, confirmed by reading `close_campagne_if_goal_reached()`
+before relying on it. Giving the synthetic campagne a real `date_fin` is
+what lets the **existing**, unmodified `close_expired_campagnes()`
+hourly-cron sweep (migration `0017`) close it the moment the concours'
+own end date passes — zero concours-aware code needed for that; verified
+directly in `checklist_2_3.sql` by creating a backdated concours and
+confirming the sweep closes its auto-created campagnes.
+
+**Libelle uniqueness**: the synthetic campagne's `libelle` is `<concours
+nom> (concours <concours id>)` — the id suffix is what guarantees
+uniqueness against `unique_offre_type_par_createur` (`NULLS NOT
+DISTINCT (createur_id, type, libelle)`, migration `0007`): a créateur
+organizing two concours with the identical `nom` would otherwise collide
+on the second `INSERT`. This text is never rendered anywhere (the whole
+point is that this offre stays invisible), so the exact wording doesn't
+matter, only its uniqueness — verified directly with two same-named
+concours by the same organizer.
+
+**`/concours/[id]` is now the only place a fan can pay into a concours.**
+Since the campagne disappears from everywhere else, this page gained a
+real **"Participer"** button per participant card — a plain
+`<CheckoutButton offreId={participant.campagneId} type="campagne" />`,
+the exact same component every other campagne/don checkout in this app
+already uses, pointed at that participant's own (invisible-elsewhere)
+synthetic campagne.
+
+**Cleanup**: `verifier_campagne_du_createur()` (migration `0046`) had
+exactly two callers — `creer_concours()` and
+`accepter_invitation_concours()` — and neither takes a client-supplied
+`campagne_id` anymore, so it has zero remaining callers. Removed outright
+(`drop function`), not left as dead code — confirmed via grep across
+`supabase/`/`src/` before removing it, same "don't leave dead code
+behind" discipline already applied elsewhere in this project.
+
+### Part B — points objective / record time
+
+A concours can optionally define `objectif_points` (a points target) and,
+only alongside one, `temps_record` (an intermediate deadline to reach it
+first) — plus a purely cosmetic `date_debut` ("le concours ouvre le...",
+never a technical gate on participation: a fan can pay before, during, or
+after it with zero code path checking it at all).
+
+```sql
+alter table concours add column date_debut timestamptz;
+alter table concours add column objectif_points numeric check (objectif_points > 0);
+alter table concours add column temps_record timestamptz;
+alter table concours add constraint concours_temps_record_requiert_objectif
+  check (temps_record is null or objectif_points is not null);
+alter table concours add constraint concours_dates_coherentes
+  check (
+    (date_debut is null or date_debut < date_fin)
+    and (temps_record is null or temps_record < date_fin)
+  );
+```
+
+**Three winner-determination rules, in priority order** (the brief's own
+wording, kept verbatim since the exact ordering matters):
+
+1. **Objectif + temps record**: whoever's cumulative total first crosses
+   `objectif_points` *before* `temps_record` is declared winner **the
+   instant that happens** — the page can show the result immediately,
+   without waiting for `date_fin`. If `temps_record` passes with nobody
+   having reached it, the objectif is abandoned for the rest of the
+   contest (falls through to rule 3) — reaching it *after* `temps_record`
+   never revives it.
+2. **Objectif only, no temps record**: same "first to cross wins"
+   mechanic, just with `date_fin` itself as the effective deadline
+   instead of a separate `temps_record`.
+3. **No objectif at all** (or one that was never reached in time): the
+   pre-existing, unchanged behavior — whoever has the highest
+   `montant_collecte` once the concours has ended.
+
+**Why this needs a real chronological reconstruction, not a simple
+"who's in the lead right now" query — the delicate part of this
+migration, per the brief's own explicit flag.** `montant_collecte`
+(`campagnes_montant_collecte`, migration `0017`) is a live *final* sum —
+it has no notion of *when* a participant's total crossed any particular
+threshold. Determining "who reached 100 points first" requires, for each
+participant, rebuilding their contributions' running cumulative total
+**sorted chronologically** and finding the earliest point that total met
+or exceeded `objectif_points` — then comparing those instants *across*
+participants to find the earliest one. A participant with a much higher
+*final* total can still lose to someone whose *first-N* payments crossed
+the threshold earlier — this is the exact "cas limite" the brief calls
+out explicitly, and it's the one thing a naive "who has the most money
+now" comparison gets wrong.
+
+**`concours_vainqueur_objectif`** is a plain **view**, not a
+`SECURITY DEFINER` function — the brief allowed either ("fonction/vue"),
+and a view is the better fit here: it reuses the exact same "owned by
+the migration role, bypasses RLS on `transactions`, exposes only a
+public-safe aggregate" mechanism `campagnes_montant_collecte`/
+`classement_volume`/`concours_publics` already rely on, rather than
+adding a fourth deliberate exception to "never grant `SECURITY DEFINER`
+to `anon`" (`peut_voir_publication_complete`/`incrementer_vue_publication`
+are the only two so far, each individually justified). A window function
+(`sum(...) over (partition by concours_id, createur_id order by
+created_at, id)`) builds each participant's running cumulative total; the
+deadline filter (`t.created_at < deadline`, where `deadline =
+coalesce(temps_record, date_fin)`) is applied **before** that sum is
+computed, which is what makes a post-deadline payment structurally
+unable to "revive" a missed objective — it's excluded from the
+cumulative sum entirely, not just from the final crossing check. Zero
+rows for a concours means "no objectif-based winner" (either no
+`objectif_points` at all, or nobody reached it in time) — the page then
+falls back to the pre-existing, **completely unchanged** rule-3 logic
+(`computeLeaderIds`/`isConcoursEnded`, `src/lib/concours.ts`); this view
+deliberately never reimplements "highest total wins" itself, since that
+logic already exists and duplicating it here would risk the two silently
+disagreeing.
+
+**Verified empirically against a real throwaway database before
+building any UI on top of it**, per the brief's own explicit instruction
+— the same discipline already applied to the atomic stock reservation
+(physical products, Phase 1) and the 3-way payment split (concours Phase
+2): real staggered `created_at` timestamps (not instantaneous final
+amounts) proving all three rules individually, including the brief's own
+"cas limite" — two participants both cross `objectif_points`, and the
+one who crossed it **chronologically first** wins even though the other
+ends up with a **higher final total** by crossing later. Also verified:
+a temps-record deadline passing with nobody having reached the objective
+correctly falls back to rule 3, and a payment that *would* cross the
+threshold if counted — but lands after the deadline — is confirmed to
+never revive it (the real final `montant_collecte` still reflects it,
+proving the exclusion is scoped to the winner-determination view alone,
+not to the underlying money).
+
+**UI**: `/concours/[id]` renders a per-participant progress bar toward
+`objectif_points` (reusing `computeCampagneProgressPercent()` from
+`campagnes.ts` verbatim rather than a duplicated calculation — the exact
+same 0–100 clamp a fundraising campaign's own progress bar already
+uses), a second countdown toward `temps_record` (via `ConcoursCountdown`,
+generalized from a `dateFin`-only prop to a `targetDate` + `variant`
+shape so the exact same component drives both countdowns — the
+`tempsRecord` variant renders nothing at all once its own deadline has
+passed, per the brief, rather than reusing `dateFin`'s "Concours terminé"
+wording for a sub-deadline that isn't the contest's own end), and the
+`date_debut` notice. Once `concours_vainqueur_objectif` names a winner,
+that participant alone gets the "🏆 Vainqueur" badge — immediately,
+regardless of whether the contest has actually ended — and nobody else
+gets "🔥 En tête" either, since the outcome is already decided; the
+pre-existing rule-3 badge logic only ever runs when no objectif-based
+winner exists. The broadcast screen (`/concours/[id]/ecran`) got the
+identical progress bar + winner-priority treatment for consistency,
+since it reads the exact same `getConcoursPublicData()` call.
+
+**Creation forms** (`ConcoursManager.tsx`, both `CreerConcoursForm` and
+`CreerConcoursMaitreJeuForm` — Part B applies to both modes, per the
+brief) gained the same progressive-disclosure question sequence, sharing
+one `ObjectifPointsFields` component rather than duplicating it twice:
+date de début (optional) → "objectif de points ?" (a plain Oui/Non
+`<select>`, this app's existing "no custom radio styling anywhere else"
+convention) → only if Oui, the objectif number field → only then, "temps
+record précis ?" → only if Oui, the temps-record date/heure field. Client
+state resets downstream fields the instant an upstream answer flips back
+to Non, so a stale hidden value can never be silently submitted — the
+DB's own `concours_temps_record_requiert_objectif`/
+`concours_dates_coherentes` constraints are still the real guarantee
+either way, mirrored by matching `zod` refines in `creerConcoursSchema`/
+`creerConcoursMaitreJeuSchema` for a clean 400 instead of a raw Postgres
+error.
+
+Tested end-to-end in `checklist_2_3.sql`: `creer_concours()`/
+`accepter_invitation_concours()` create a real, fully payable, correctly
+`genere_pour_concours_id`-tagged synthetic campagne with zero
+pre-existing campagnes required on either the organizer's or an
+invitee's side; the same is re-verified for the `maitre_du_jeu` mode's
+own `accepter_invitation_concours()` path (a consenting accept still
+auto-creates the campagne); `campagnes_publiques.genere_pour_concours_id`
+correctly distinguishes a synthetic campagne from a genuinely
+créateur-authored one; two same-named concours by one organizer don't
+collide; the raw `concours_temps_record_requiert_objectif`/
+`concours_dates_coherentes` constraints reject all three invalid
+combinations directly; `creer_concours()`/`creer_concours_maitre_jeu()`
+correctly persist and `concours_publics` correctly exposes `date_debut`/
+`objectif_points`/`temps_record`; all three winner-determination rules
+plus the chronological-order "cas limite"; the old pre-0048 signatures
+are confirmed gone (a uuid-shaped 3rd argument to `creer_concours()` now
+fails to cast to the new `date_debut timestamptz` parameter rather than
+matching a dropped overload, since the new signature's trailing
+parameters all default — `accepter_invitation_concours()`'s new 2-arg
+max arity, by contrast, makes a 3-arg call a real `undefined_function`);
+and the full `0020`/`0021` grant-audit pattern holds for every
+rewritten/current-signature RPC plus `concours_vainqueur_objectif`
+(a plain view, `anon`/`authenticated` both hold `SELECT`, the
+unremarkable way every other public aggregate view in this project is
+granted). `src/lib/__tests__/concours.test.ts` covers the new
+`isDateInFuture()` helper directly; `validation.test.ts` covers both
+schemas' three refines (temps record without objectif rejected, either
+date ordering violation rejected, a well-formed payload with all three
+fields accepted) and confirms `accepterConcoursSchema` now rejects a
+`campagneId` outright (`.strict()`, no such field exists anymore); route
+tests for all three `/api/concours*` endpoints assert the exact RPC
+payload sent (including `null` defaults for the three optional fields
+when omitted).
+
+**Not independently visually verified in a live browser this session**
+(no throwaway mock-Supabase/Playwright pass was built for this lot,
+unlike most other entries in this file) — flagged explicitly rather than
+silently claimed: `tsc`, `eslint`, the full `npm test` suite (451
+passing), the full `npm run test:sql` suite including the produit
+concurrency test (379 passing SQL assertions, 0 errors), and a full
+production `next build` all pass cleanly, which together cover
+type-safety, the real DB-level guarantees, and every RSC/client-boundary
+wiring point — but the progressive-disclosure form's actual on-screen
+behavior and the public page's progress-bar/countdown/winner-badge
+rendering have not been confirmed against a running browser in either
+locale or color scheme. Do this before treating the UI itself as proven,
+not just the code paths behind it.
+
 ## Creator contests: broadcast screen (`/concours/[id]/ecran`, no migration)
 
 A second, purely visual public route — meant to be opened on a phone and

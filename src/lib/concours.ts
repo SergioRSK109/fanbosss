@@ -35,6 +35,16 @@ export function isConcoursEnded(dateFin: string, now: Date = new Date()): boolea
   return now.getTime() >= new Date(dateFin).getTime();
 }
 
+// Migration 0048: whether date_debut (purely informative, never a
+// technical gate on participation) is still ahead of `now` -- computed
+// here, in the data layer, rather than inline in a Server Component's
+// JSX, since calling `new Date()`/`Date.now()` directly during render is
+// flagged as an impure render call (react-hooks/purity) regardless of
+// Server vs Client component.
+export function isDateInFuture(date: string, now: Date = new Date()): boolean {
+  return new Date(date).getTime() > now.getTime();
+}
+
 // The shared-screen split: 2 participants = half each, 3 = a third
 // each, N = 1/N each -- always equal, per the brief (this phase has no
 // weighting mechanism). A pure percentage rather than a hardcoded CSS

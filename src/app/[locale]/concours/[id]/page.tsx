@@ -1,9 +1,11 @@
 import { notFound } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { Link } from "@/i18n/navigation";
+import { CheckoutButton } from "@/components/CheckoutButton";
 import { ConcoursCountdown } from "@/components/ConcoursCountdown";
 import { ShareCampagneButton } from "@/components/ShareCampagneButton";
 import { buttonClass } from "@/components/ui/button-styles";
+import { computeCampagneProgressPercent } from "@/lib/campagnes";
 import { computeEqualSharePercent, formatPoints } from "@/lib/concours";
 import { getConcoursPublicData } from "@/lib/concoursPublic";
 
@@ -14,6 +16,14 @@ import { getConcoursPublicData } from "@/lib/concoursPublic";
 // (computeEqualSharePercent, migration 0045's own lib) rather than just
 // "however many flex children happen to fit" -- each participant card
 // gets an explicit flex-basis of 1/N of the row.
+//
+// Migration 0048: this is now the ONLY place a fan can pay into a
+// concours' campagnes -- each participant's own auto-generated campagne
+// (invisible everywhere else, see CLAUDE.md's "Creator contests --
+// campagne auto-générée" section) is never shown/chosen anywhere else,
+// so the "Participer" button below is genuinely load-bearing, not a
+// convenience. Also renders an objectif_points progress bar and a
+// temps_record countdown when the organizer configured either.
 export default async function ConcoursPage({
   params,
 }: {
@@ -51,8 +61,16 @@ export default async function ConcoursPage({
           />
         )}
         <h1 className="text-2xl font-bold">{concours.nom}</h1>
-        <div className="mt-2">
-          <ConcoursCountdown dateFin={concours.dateFin} />
+        {concours.dateDebut && !concours.ended && concours.dateDebutAVenir && (
+          <p className="mt-1 text-sm text-foreground-muted">
+            {t("ouvreLe", { date: new Date(concours.dateDebut).toLocaleString(locale) })}
+          </p>
+        )}
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+          <ConcoursCountdown targetDate={concours.dateFin} variant="fin" />
+          {concours.tempsRecord && !concours.vainqueurObjectifId && (
+            <ConcoursCountdown targetDate={concours.tempsRecord} variant="tempsRecord" />
+          )}
         </div>
         <div className="mt-3">
           {/* Meant for a second phone filming the contest -- opens in a
@@ -78,10 +96,29 @@ export default async function ConcoursPage({
           const href = participant.pseudo
             ? `/@${participant.pseudo}`
             : `/createur/${participant.createurId}`;
-          const badge = participant.isLeader
-            ? concours.ended
+
+          // Migration 0048: once an objectif-based winner is determined
+          // (concours_vainqueur_objectif -- rules 1/2, chronological
+          // "reached it first"), that participant alone gets the
+          // Vainqueur badge, regardless of `ended` -- the brief's own
+          // "le concours peut afficher le résultat dès cet instant".
+          // Nobody else gets "En tête" once that's decided; falling
+          // back to the unchanged rule-3 (highest total) logic only
+          // when no objectif-based winner exists at all.
+          const isWinnerByObjectif = concours.vainqueurObjectifId === participant.createurId;
+          const badge = concours.vainqueurObjectifId
+            ? isWinnerByObjectif
               ? t("badgeVainqueur")
-              : t("badgeEnTete")
+              : null
+            : participant.isLeader
+              ? concours.ended
+                ? t("badgeVainqueur")
+                : t("badgeEnTete")
+              : null;
+          const highlighted = isWinnerByObjectif || (!concours.vainqueurObjectifId && participant.isLeader);
+
+          const progressPercent = concours.objectifPoints
+            ? computeCampagneProgressPercent(participant.montantCollecte, concours.objectifPoints)
             : null;
 
           return (
@@ -89,9 +126,7 @@ export default async function ConcoursPage({
               key={participant.createurId}
               style={{ flexBasis: `${sharePercent}%` }}
               className={`card flex min-w-[220px] grow flex-col items-center gap-3 p-5 text-center ${
-                participant.isLeader
-                  ? "border-2 border-brand-500"
-                  : "border border-border"
+                highlighted ? "border-2 border-brand-500" : "border border-border"
               }`}
             >
               <Link href={href} className="flex flex-col items-center gap-2">
@@ -122,6 +157,24 @@ export default async function ConcoursPage({
               <span className="text-xl font-bold">
                 {t("montantCollecte", { points: formatPoints(participant.montantCollecte, locale) })}
               </span>
+
+              {progressPercent !== null && (
+                <div className="w-full">
+                  <div className="h-2 w-full overflow-hidden rounded-full border border-border bg-surface-muted">
+                    <div
+                      className="h-full rounded-full bg-brand-500"
+                      style={{ width: `${progressPercent}%` }}
+                    />
+                  </div>
+                  <p className="mt-1 text-xs text-foreground-muted">
+                    {t("objectifProgres", {
+                      points: formatPoints(concours.objectifPoints ?? 0, locale),
+                    })}
+                  </p>
+                </div>
+              )}
+
+              <CheckoutButton offreId={participant.campagneId} type="campagne" />
             </div>
           );
         })}

@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { EcranAutoRefresh } from "@/components/EcranAutoRefresh";
+import { computeCampagneProgressPercent } from "@/lib/campagnes";
 import { formatPoints } from "@/lib/concours";
 import { getConcoursPublicData } from "@/lib/concoursPublic";
 
@@ -67,10 +68,23 @@ export default async function ConcoursEcranPage({
 
         <div className="flex w-full flex-col gap-5">
           {participants.map((participant) => {
-            const badge = participant.isLeader
-              ? concours.ended
+            // Same winner-priority logic as the normal /concours/[id]
+            // page (migration 0048): an objectif-based winner
+            // (concours_vainqueur_objectif) always wins the badge over
+            // the plain highest-total "En tête" state.
+            const isWinnerByObjectif = concours.vainqueurObjectifId === participant.createurId;
+            const badge = concours.vainqueurObjectifId
+              ? isWinnerByObjectif
                 ? t("badgeVainqueur")
-                : t("badgeEnTete")
+                : null
+              : participant.isLeader
+                ? concours.ended
+                  ? t("badgeVainqueur")
+                  : t("badgeEnTete")
+                : null;
+            const highlighted = isWinnerByObjectif || (!concours.vainqueurObjectifId && participant.isLeader);
+            const progressPercent = concours.objectifPoints
+              ? computeCampagneProgressPercent(participant.montantCollecte, concours.objectifPoints)
               : null;
 
             return (
@@ -86,7 +100,7 @@ export default async function ConcoursEcranPage({
               <div
                 key={participant.createurId}
                 className={`flex flex-col items-center gap-3 rounded-[2rem] border-4 p-6 text-center transition-transform sm:p-8 ${
-                  participant.isLeader
+                  highlighted
                     ? "scale-105 border-amber-300 bg-white/10 shadow-[0_0_50px_rgba(252,211,77,0.25)]"
                     : "border-white/15 bg-white/5"
                 }`}
@@ -117,6 +131,17 @@ export default async function ConcoursEcranPage({
                 <p className="text-4xl font-black tabular-nums sm:text-6xl">
                   {t("montantCollecte", { points: formatPoints(participant.montantCollecte, locale) })}
                 </p>
+
+                {progressPercent !== null && (
+                  <div className="w-full max-w-xs">
+                    <div className="h-3 w-full overflow-hidden rounded-full bg-white/15">
+                      <div
+                        className="h-full rounded-full bg-amber-300"
+                        style={{ width: `${progressPercent}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}

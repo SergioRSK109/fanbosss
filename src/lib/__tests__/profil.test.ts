@@ -91,6 +91,7 @@ describe("getCreateurProfileData -- badge de fidélité", () => {
       eq: () => self,
       neq: () => self,
       in: () => self,
+      is: () => self,
       order: () => self,
       single: async () => resolveValue,
       maybeSingle: async () => resolveValue,

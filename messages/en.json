@@ -265,15 +265,27 @@
     "termine": "Contest ended",
     "compteAReboursAvecJours": "{jours}d {heures}:{minutes}:{secondes}",
     "compteARebours": "{heures}:{minutes}:{secondes}",
+    "compteATempsRecord": "⏱️ Record time: {compte}",
     "badgeEnTete": "🔥 Leading",
     "badgeVainqueur": "🏆 Winner",
     "createurAnonyme": "FanBoss créateur",
     "montantCollecte": "{points} pts",
+    "objectifProgres": "Goal: {points} points",
+    "ouvreLe": "The contest opens on {date}",
     "tropheeAlt": "Contest trophy",
     "aucunParticipant": "No one has joined this contest yet.",
     "ouvrirEcran": "📺 Open broadcast screen"
   },
   "ConcoursManager": {
+    "objectifFields": {
+      "dateDebutLabel": "Start date (optional)",
+      "objectifQuestion": "Do participants have a number of points to reach to win?",
+      "oui": "Yes",
+      "non": "No",
+      "objectifLabel": "Points goal",
+      "tempsRecordQuestion": "Do they need to reach it within a specific record time?",
+      "tempsRecordLabel": "Record time (date and time)"
+    },
     "mesConcours": {
       "heading": "My ongoing contests",
       "empty": "You're not organizing or taking part in any contest yet.",
@@ -287,8 +299,6 @@
       "empty": "No pending invitations.",
       "invitePar": "Invited by {organisateur}",
       "createurAnonyme": "FanBoss créateur",
-      "campagneLabel": "Your campaign to link",
-      "aucuneCampagne": "You have no active campaign -- create one first in the Service tab to be able to accept.",
       "accepter": "Accept",
       "refuser": "Decline",
       "echec": "Action failed, try again.",
@@ -301,8 +311,6 @@
       "heading": "Create a contest",
       "nomLabel": "Contest name",
       "dateFinLabel": "End date",
-      "campagneLabel": "Campaign to use",
-      "aucuneCampagne": "Create a fundraising campaign first (Service tab) to be able to launch a contest.",
       "submit": "Create the contest",
       "echec": "Creation failed, try again."
     },
