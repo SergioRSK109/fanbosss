@@ -2102,6 +2102,69 @@ opt-out is completely irrelevant to what the admin sees; and the
 across a full page reload. All of the above holds in both `fr` (light)
 and `/en/` (dark), zero unexpected console errors.
 
+### Follow-up: named tiers, not just icons (no new migration)
+
+Each palier gained a name, shown alongside the icon that was already
+there — the badge previously read as a bare amount ("Soutien 150$+")
+with only an unlabeled emoji to distinguish tiers visually; a name makes
+the tier itself legible, not just implied by which emoji happens to be
+attached.
+
+```
+10 → Bronze       50 → Argent      100 → Or
+150 → Platine     250 → Émeraude   500 → Saphir
+1000 → Rubis      1500 → Diamant  3000 → Légende
+```
+
+(`Bronze`/`Silver`/`Gold`/`Platinum`/`Emerald`/`Sapphire`/`Ruby`/
+`Diamond`/`Legend` in `/en/` — the same escalating-preciousness metaphor
+translates directly, no localization judgment call needed here unlike,
+say, a culturally-specific term would.)
+
+`PALIER_NOMS` (`src/lib/donateurs.ts`) mirrors `PALIER_ICONS`'s own
+shape exactly — a `Record<number, string>` keyed by the same
+`PALIERS_DONATEUR` values — but stores an **i18n key** (`"bronze"`,
+`"argent"`, ...), never a hardcoded display string: this file has no
+next-intl access by design (same "pure, DOM/database-free" reasoning as
+`campagnes.ts`/`classementProgres.ts`, importable from either a Server or
+Client Component with zero risk of dragging in server-only code — see
+the Explorer/Phase-C section above for the exact build error this
+discipline exists to avoid). `nomPourPalierDonateur(palier)` returns that
+key; the real text lives in `messages/{fr,en}.json` under
+`CreateurProfile.badgeDonateur.paliers`, resolved by the one caller that
+actually has a translator (`CreateurProfileView.tsx`, already rendering
+this badge). Same defensive-fallback shape as `iconForPalierDonateur()`
+— `"bronze"` for any value outside the known list, never expected to
+fire in practice since `palier` always comes straight from
+`badges_donateur_publics`, itself always one of `PALIERS_DONATEUR`'s own
+values or absent entirely.
+
+**Label format**: `"{nom} — Soutien {palier}$+"` (`CreateurProfile.
+badgeDonateur.label`, both keys interpolated) — deliberately keeps the
+dollar threshold visible alongside the name rather than replacing it.
+The name alone would be purely decorative (a viewer would have no way to
+know what "Platine" actually means without memorizing the tier table);
+pairing it with the real amount keeps the badge concrete about the
+threshold actually reached, the same "never just decorative" principle
+`calculer_palier_donateur()`'s own tier-not-count exposure already
+follows one level up.
+
+Tested directly in `src/lib/__tests__/donateurs.test.ts`:
+`nomPourPalierDonateur()` returns the exact expected key for all nine
+paliers individually, a distinct key per palier (no accidental
+collision), and the same defensive fallback as the icon lookup for an
+out-of-range input. No SQL change was needed — this is a pure
+TypeScript/i18n addition on top of the palier number `calculer_palier_
+donateur()` already computed and exposed.
+
+Verified visually end-to-end (same throwaway mock-Supabase/Playwright
+technique, reusing this section's own PART_B fixture — $150 spent,
+opted in, palier 150): the badge reads exactly "Platine — Soutien
+150$+" in `fr` and "Platinum — Supporter 150$+" in `/en/`, still fully
+legible over the header banner at the longer label length (the
+`onDark`-tone fix from the section above holds regardless of label
+length), in both light and dark mode, zero unexpected console errors.
+
 ## Tab-bar navigation reorg (Lot 3, migration `0028`)
 
 Everything from Lots 1–2b (commission, fan confirmation, litige

@@ -18,6 +18,7 @@ import {
   computeJoursRestants,
   formatMontant,
 } from "@/lib/campagnes";
+import { nomPourPalierDonateur } from "@/lib/donateurs";
 import type { CreateurProfileData } from "@/lib/profil";
 import type { OffreType } from "@/lib/validation";
 
@@ -192,7 +193,10 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
           {donorPalier !== null && (
             <DonorBadge
               palier={donorPalier}
-              label={t("badgeDonateur.label", { palier: donorPalier })}
+              label={t("badgeDonateur.label", {
+                nom: t(`badgeDonateur.paliers.${nomPourPalierDonateur(donorPalier)}`),
+                palier: donorPalier,
+              })}
               tone="onDark"
             />
           )}

@@ -204,7 +204,18 @@
       "anonymousCreateur": "Un créateur"
     },
     "badgeDonateur": {
-      "label": "Soutien {palier}$+"
+      "label": "{nom} — Soutien {palier}$+",
+      "paliers": {
+        "bronze": "Bronze",
+        "argent": "Argent",
+        "or": "Or",
+        "platine": "Platine",
+        "emeraude": "Émeraude",
+        "saphir": "Saphir",
+        "rubis": "Rubis",
+        "diamant": "Diamant",
+        "legende": "Légende"
+      }
     },
     "participer": "Participer",
     "verified": "Vérifié",
