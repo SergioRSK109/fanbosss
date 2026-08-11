@@ -168,7 +168,29 @@ export const creerOffreSchema = z
   .refine((offre) => offre.type !== "produit" || offre.stock_total !== undefined, {
     message: "le stock du produit est requis",
     path: ["stock_total"],
-  });
+  })
+  // Time-limited access to unlockable content (no new migration -- a
+  // plain config JSONB key, same pattern as campagne's own
+  // objectif/date_fin): optional, defaults to 30 days when absent (see
+  // CONTENU_DEBLOQUE_DUREE_ACCES_JOURS_DEFAUT in
+  // src/lib/contenuDebloque.ts) -- only ever validated when actually
+  // present, mirroring date_fin's own "only when the campagne config
+  // sets it" shape.
+  .refine(
+    (offre) => {
+      if (offre.type !== "contenu_debloque") return true;
+      const duree = offre.config?.duree_acces_jours;
+      return (
+        duree === undefined ||
+        duree === null ||
+        (typeof duree === "number" && Number.isInteger(duree) && duree > 0)
+      );
+    },
+    {
+      message: "duree_acces_jours doit être un entier positif",
+      path: ["config", "duree_acces_jours"],
+    },
+  );
 
 export const modifierOffreSchema = z
   .object({

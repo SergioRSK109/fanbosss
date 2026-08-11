@@ -6610,6 +6610,156 @@ delivery route re-verifies `fan_id = auth.uid() AND statut = 'livree'`
 (or, for `contenu_debloque`/`evenement_live`, the equivalent ownership
 check reading `offre.config` via service-role) before minting a URL.
 
+## Time-limited access to unlockable content (no new migration)
+
+A créateur can cap how long a fan keeps access to a `contenu_debloque`
+purchase — default 30 days after payment, configurable per offer. No
+schema change: `offres.config` already holds type-specific data
+(`campagne` stores `objectif`/`date_fin` there, `evenement_live` stores
+`lien_live`) — this is one more optional key, `duree_acces_jours`, on
+the same JSONB column `contenu_debloque` already used for `r2_key`.
+
+**`transactions.created_at` is the right anchor, not a delivery/
+acceptation timestamp — because this type has neither.** Per the
+transaction lifecycle (see above), `contenu_debloque` is one of the
+immediate-validation types (`TYPES_A_VALIDATION_IMMEDIATE`): the webhook
+moves it `en_attente → validee → livree` in the same request, with no
+acceptation step for a créateur to act on. So `created_at` (the payment
+instant) and "the instant the fan actually got access" are the same
+moment — there's no other timestamp on this row that would mean
+anything more precise. This is genuinely different from
+`video`/`shoutout` (a real gap between payment and delivery) or
+`whatsapp` (acceptance-is-delivery, but still a separate step) — for
+those types, `created_at` alone would be the wrong anchor for an
+access-expiry feature; it only works here because of this type's own
+specific lifecycle shape.
+
+**`src/lib/contenuDebloque.ts`** — pure, DOM/database-free helpers
+(same reasoning as `campagnes.ts`/`classementProgres.ts`), the single
+source of truth shared by the server-side enforcement and the fan-facing
+display so the two can never disagree about when access actually ends:
+`CONTENU_DEBLOQUE_DUREE_ACCES_JOURS_DEFAUT = 30`,
+`computeDateExpirationAcces(transactionCreatedAt, dureeAccesJours?)`,
+`isAccesExpire(transactionCreatedAt, dureeAccesJours?, now?)`. A missing,
+non-numeric, non-finite, or non-positive `dureeAccesJours` all fall back
+to the 30-day default — both the route and the créateur-facing form
+coalesce the exact same way, never a hand-duplicated `?? 30` that could
+drift.
+
+**`GET /api/transactions/[id]/content-url`** — extended, right after the
+existing `statut !== 'livree'` check: computes the expiry from
+`transaction.created_at` and the offer's own `config.duree_acces_jours`
+(already being read via service-role for `r2_key`, no new query needed)
+and rejects with a **distinct** message
+(`"ton accès à ce contenu a expiré le {date}"`, not translated — this
+route lives outside `[locale]`, same established scope limit as every
+other API error string in this project, see "Full i18n coverage
+extension" above) from the existing `"le contenu n'a pas encore été
+débloqué"` one, so the client can tell "never unlocked" and "unlocked,
+now expired" apart rather than showing one generic failure for both.
+
+**`creerOffreSchema` gained a refine** mirroring the route's own logic as
+defense in depth: `duree_acces_jours`, when present on a
+`contenu_debloque` offer, must be a positive integer — absent/null both
+pass (defaults to 30), and the rule is never checked for any other offer
+type (a stray `duree_acces_jours` key on, say, an `evenement_live`
+offer's config is simply ignored, since nothing reads it for that type).
+
+**UI — créateur side** (`OffresManager.tsx`, the `contenu_debloque`
+settings row): a new "Durée d'accès (jours)" number input, placeholder
+`30`, optional. **The one real subtlety here**: `contenu_debloque`'s
+`config` now holds two keys set by two *different* flows —
+`duree_acces_jours` (this save) and `r2_key` (only once a file is
+actually uploaded, via a follow-up `PATCH` after the main `POST`) — and
+both `POST /api/offres`'s upsert and `PATCH /api/offres/[id]` replace
+`config` **wholesale**, never a partial JSONB merge (see
+`/api/offres`'s own comment on why `config` is only ever sent when a
+save actually means to set it). Without carrying the existing config
+forward, a plain price/duration edit on an offer that already has an
+uploaded file would silently wipe out `r2_key`, or a fresh upload's own
+follow-up `PATCH` would wipe out a duration just set in the same submit.
+Fixed by building `config` client-side as `{ ...(existing?.config ?? {}),
+duree_acces_jours: ... }` once per submit, reused for both the main
+`POST` and (if a file was picked) the follow-up upload `PATCH`.
+
+**UI — fan side** (`TransactionActions.tsx`, `/finance`'s "Paiements
+envoyés" list): shows a real "Accès jusqu'au {date}" line next to the
+reveal button while still valid, or replaces the button entirely with a
+"Ton accès a expiré le {date}" state once past the window — per the
+brief's own "pas de découverte après coup" requirement, the fan never
+clicks into a doomed request. **Computed server-side, not with
+`Date.now()` inside the client component**: comparing an expiry instant
+against the current wall clock is exactly the kind of impure operation
+React's render-purity rule forbids inside a client component's render
+(the same restriction this codebase already works around for
+`ConcoursCountdown`'s own mount-effect pattern) — so `finance/page.tsx`
+(a Server Component, evaluated once per request, where `new Date()` is
+already used elsewhere, e.g. `/admin`) computes `expirationDateIso`/
+`accesExpire` once and passes them down as plain, already-decided props;
+`TransactionActions` only ever formats and displays them, never
+re-derives "is it expired" itself.
+
+**A real, pre-existing bug found and fixed while wiring this up, not
+introduced by it.** `finance/page.tsx`'s "Paiements envoyés" query used
+to embed `offres(type)` directly off `transactions` through the
+caller's own RLS-scoped client — but the caller on *that* query is the
+**fan**, and `offres_select_own` (migrations 0003/0006) only ever lets a
+créateur read their *own* offres. Verified directly against a real
+Postgres instance with the real Supabase base grants manually replicated
+(this project's local `stub_auth.sql` harness doesn't grant
+`authenticated` any table-level privilege at all, so this couldn't have
+been caught by the SQL checklist — a plain `SET ROLE authenticated`
+query there fails with a blanket permission error before RLS's row
+filtering is ever exercised): the embed genuinely returns `NULL` for a
+non-owning fan, not an error, so nothing here ever crashed — it just
+meant `offre?.type` was always falsy, `{offre?.type && <TransactionActions
+.../>}` never rendered, and **no fan has ever been able to click
+"Obtenir le lien WhatsApp"/"Voir ma vidéo"/"Débloquer le
+contenu"/"Obtenir le lien du live" from this page**, for any offer type,
+since this section was built. Fixed by resolving the offer type through
+`offres_publiques` instead (the public view, safe for any caller,
+already used throughout this project for exactly this "a non-owner needs
+to read a safe subset of someone else's offre" situation) — and, since
+`offres_publiques` deliberately excludes `config` (`evenement_live`'s own
+config holds a pre-payment secret link), a second, narrower read via the
+service-role client for `duree_acces_jours` specifically, scoped only to
+the fan's own (already RLS-verified) `contenu_debloque` offers — the
+same "an authenticated route needs to bypass RLS for a specific,
+already-authorized read" pattern `content-url`'s own route already uses.
+
+Tested directly in `src/lib/__tests__/contenuDebloque.test.ts`: the
+30-day default (both via omission and via null/undefined/zero/negative/
+NaN all coalescing to it), a custom duration, granted-vs-expired at
+15/31 days under the default, granted-vs-expired at 5/8 days under a
+custom 7-day window, and the exact-instant boundary (inclusive — expired
+at the precise expiry millisecond, not one before it). Route tests
+(`content-url/__tests__/route.test.ts`, new — no test existed for this
+route before this feature) cover: unauthenticated/not-yet-`livree`
+rejections happen before the access window is ever checked; access
+granted within the default window; a distinct, non-generic rejection
+once the default window has passed (`getSignedDownloadUrl` never
+called); a custom 7-day duration respected on both sides of its own
+boundary. `validation.test.ts` covers the schema refine: a well-formed
+duration accepted, an absent one accepted (defaults implicitly), an
+explicit `null` accepted, zero/negative/non-integer rejected, and the
+rule confirmed inert for every other offer type.
+
+Verified visually end-to-end (same throwaway mock-Supabase/Playwright
+technique used throughout this file — a real Chromium browser, a fixture
+of three `contenu_debloque` purchases by one fan across three different
+créateurs, since this offer type allows only one per créateur: one
+within the default 30-day window, one past it, one within a
+créateur-configured 7-day window): the fan's own "Paiements envoyés"
+list now genuinely shows the "Débloquer le contenu" button at all (the
+bug fix above, confirmed by clicking it through to a real signed-URL
+round trip) alongside a real "Accès jusqu'au" date for the two still-valid
+purchases, and a distinct red "Ton accès a expiré le" state with **no**
+button at all for the expired one; on the créateur side, the "Durée
+d'accès (jours)" field renders with the `30` placeholder, and a typed
+value (`14`) genuinely persists server-side across a full reload. All of
+the above confirmed in both `fr` (light) and `/en/` (dark), zero
+unexpected console errors.
+
 ## Profile photo crop (`PhotoCropper.tsx`, `src/lib/imageCrop.ts`)
 
 Every profile photo goes through a client-side, Instagram-style square

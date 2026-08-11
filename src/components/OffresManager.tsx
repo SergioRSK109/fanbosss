@@ -809,6 +809,9 @@ function OffreRow({
   const [lienLive, setLienLive] = useState(
     (existing?.config?.lien_live as string | undefined) ?? "",
   );
+  const [dureeAccesJours, setDureeAccesJours] = useState(
+    (existing?.config?.duree_acces_jours as number | undefined)?.toString() ?? "",
+  );
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState("");
@@ -830,6 +833,26 @@ function OffreRow({
 
       if (question.kind === "live") {
         payload.config = { lien_live: lienLive };
+      }
+
+      // contenu_debloque's config carries two keys set by two different
+      // flows -- r2_key (below, only once a file is actually uploaded)
+      // and duree_acces_jours (this save). Both this POST's config and
+      // the follow-up upload PATCH replace the whole config column
+      // wholesale (never a partial JSONB merge -- see /api/offres's own
+      // comment on why config is only ever sent when explicitly meant),
+      // so this save has to carry the existing r2_key forward itself or
+      // a plain price/duration edit would silently wipe out an already-
+      // uploaded file's reference.
+      let contenuConfig: Record<string, unknown> | undefined;
+      if (question.kind === "contenu") {
+        contenuConfig = { ...(existing?.config ?? {}) };
+        if (dureeAccesJours.trim()) {
+          contenuConfig.duree_acces_jours = Number(dureeAccesJours);
+        } else {
+          delete contenuConfig.duree_acces_jours;
+        }
+        payload.config = contenuConfig;
       }
 
       const response = await fetch("/api/offres", {
@@ -869,7 +892,11 @@ function OffreRow({
         await fetch(`/api/offres/${offreId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ config: { r2_key: uploadUrlBody.r2Key } }),
+          // Carries duree_acces_jours forward from the same submit --
+          // this PATCH also replaces config wholesale (see the comment
+          // above), so omitting it here would silently wipe out a
+          // duration set in the very same save.
+          body: JSON.stringify({ config: { ...contenuConfig, r2_key: uploadUrlBody.r2Key } }),
         });
       }
 
@@ -945,6 +972,19 @@ function OffreRow({
                 {t("contenuDejaTeleverse")}
               </span>
             )}
+            <div className="flex items-center gap-2">
+              <label className={labelClass}>{t("dureeAccesLabel")}</label>
+              <input
+                type="number"
+                min={1}
+                step="1"
+                placeholder="30"
+                value={dureeAccesJours}
+                onChange={(event) => setDureeAccesJours(event.target.value)}
+                className={`${inputClass} w-20`}
+              />
+              <span className="text-xs text-foreground-muted">{t("dureeAccesJoursSuffix")}</span>
+            </div>
           </>
         )}
 

@@ -283,6 +283,53 @@ describe("creerOffreSchema", () => {
       expect(creerOffreSchema.safeParse({ ...valid, stock_total: 2.5 }).success).toBe(false);
     });
   });
+
+  describe("contenu_debloque duree_acces_jours", () => {
+    const base = { type: "contenu_debloque" as const, prix: 15 };
+
+    it("accepts a contenu_debloque offer with no duree_acces_jours at all (defaults to 30 days)", () => {
+      expect(creerOffreSchema.safeParse(base).success).toBe(true);
+    });
+
+    it("accepts a well-formed positive integer duree_acces_jours", () => {
+      expect(
+        creerOffreSchema.safeParse({ ...base, config: { duree_acces_jours: 7 } }).success,
+      ).toBe(true);
+    });
+
+    it("accepts an explicit null (same as omitting it)", () => {
+      expect(
+        creerOffreSchema.safeParse({ ...base, config: { duree_acces_jours: null } }).success,
+      ).toBe(true);
+    });
+
+    it("rejects a zero or negative duree_acces_jours", () => {
+      for (const duree_acces_jours of [0, -5]) {
+        expect(
+          creerOffreSchema.safeParse({ ...base, config: { duree_acces_jours } }).success,
+        ).toBe(false);
+      }
+    });
+
+    it("rejects a non-integer duree_acces_jours", () => {
+      expect(
+        creerOffreSchema.safeParse({ ...base, config: { duree_acces_jours: 7.5 } }).success,
+      ).toBe(false);
+    });
+
+    it("never applies this rule to any other offer type", () => {
+      // A fractional/negative "duree_acces_jours" key on an unrelated
+      // type's config is simply never checked -- this key only means
+      // anything for contenu_debloque.
+      expect(
+        creerOffreSchema.safeParse({
+          type: "evenement_live",
+          prix: 10,
+          config: { lien_live: "https://youtube.com/x", duree_acces_jours: -1 },
+        }).success,
+      ).toBe(true);
+    });
+  });
 });
 
 describe("publierMessageSchema", () => {

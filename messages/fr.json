@@ -453,7 +453,11 @@
         "evenement_live": "Obtenir le lien du live"
       },
       "open": "Ouvrir →",
-      "unavailable": "indisponible"
+      "unavailable": "indisponible",
+      "acces": {
+        "expireLe": "Accès jusqu'au {date}",
+        "expire": "Ton accès a expiré le {date}"
+      }
     },
     "confirmation": {
       "satisfait": "Satisfait",
@@ -574,6 +578,8 @@
       "Autre"
     ],
     "contenuDejaTeleverse": "contenu déjà téléversé",
+    "dureeAccesLabel": "Durée d'accès (jours)",
+    "dureeAccesJoursSuffix": "jours (30 par défaut)",
     "liveUrlPlaceholder": "https://youtube.com/...",
     "uploadImpossible": "upload impossible",
     "campagneStatusActive": "Active",
