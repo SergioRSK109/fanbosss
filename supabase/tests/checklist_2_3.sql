@@ -9877,6 +9877,403 @@ begin
 end $$;
 reset role;
 
+-- =========================================================================
+-- Admin warning mechanism, plus the suspension/ban notifications missing
+-- from the previous lot (migration 0053). Fixture: admin D, créateur A
+-- (warned, then suspended, then banned -- proving a warning alone never
+-- blocks access, and that suspendre_compte()/bannir_compte() now both
+-- create their own notification, closing the exact gap flagged in
+-- CLAUDE.md), fan B (a genuinely uninvolved bystander, used to prove
+-- marquer_avertissement_vu() is self-only).
+-- =========================================================================
+
+insert into users (id, est_admin) values
+  ('53000000-0000-0000-0000-000000000001', true); -- admin D
+
+insert into users (id) values
+  ('53000000-0000-0000-0000-000000000002'), -- créateur A
+  ('53000000-0000-0000-0000-000000000003'); -- fan B (bystander)
+
+-- emettre_avertissement(): non-admin rejected.
+select set_config('app.current_user_id', '53000000-0000-0000-0000-000000000003', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform emettre_avertissement('53000000-0000-0000-0000-000000000002', 'contenu limite');
+    raise exception 'TEST FAILED: a non-admin was able to call emettre_avertissement()';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm != 'not authorized' then
+      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: emettre_avertissement() rejects a non-admin caller';
+  end;
+end $$;
+reset role;
+
+do $$
+begin
+  if exists (select 1 from avertissements) then
+    raise exception 'TEST FAILED: the rejected non-admin attempt left a row behind';
+  end if;
+  raise notice 'PASS: the rejected non-admin attempt left no avertissement behind';
+end $$;
+
+-- emettre_avertissement(): blank/whitespace-only raison rejected, even
+-- for a genuine admin -- a warning IS its reason.
+select set_config('app.current_user_id', '53000000-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform emettre_avertissement('53000000-0000-0000-0000-000000000002', '   ');
+    raise exception 'TEST FAILED: a whitespace-only raison was accepted';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm != 'raison is required' then
+      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: emettre_avertissement() rejects a blank/whitespace-only raison';
+  end;
+  begin
+    perform emettre_avertissement('53000000-0000-0000-0000-000000000002', null);
+    raise exception 'TEST FAILED: a NULL raison was accepted';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm != 'raison is required' then
+      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: emettre_avertissement() rejects a NULL raison';
+  end;
+end $$;
+reset role;
+
+-- emettre_avertissement(): an unknown target user is rejected.
+select set_config('app.current_user_id', '53000000-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform emettre_avertissement('00000000-0000-0000-0000-000000000000', 'x');
+    raise exception 'TEST FAILED: warning an unknown user id was accepted';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm != 'user not found' then
+      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: emettre_avertissement() rejects an unknown target user';
+  end;
+end $$;
+reset role;
+
+-- Real success: admin D warns créateur A.
+select set_config('app.current_user_id', '53000000-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+begin
+  perform emettre_avertissement('53000000-0000-0000-0000-000000000002', 'Premier avertissement');
+end $$;
+reset role;
+
+do $$
+declare
+  v_row record;
+begin
+  select user_id, raison, emis_par, vu_at into v_row from avertissements;
+  if v_row.user_id != '53000000-0000-0000-0000-000000000002' then
+    raise exception 'TEST FAILED: avertissement recorded for the wrong user';
+  end if;
+  if v_row.raison != 'Premier avertissement' then
+    raise exception 'TEST FAILED: raison not recorded correctly, got %', v_row.raison;
+  end if;
+  if v_row.emis_par != '53000000-0000-0000-0000-000000000001' then
+    raise exception 'TEST FAILED: emis_par should be the admin who acted, got %', v_row.emis_par;
+  end if;
+  if v_row.vu_at is not null then
+    raise exception 'TEST FAILED: a freshly-issued avertissement should have vu_at=null, got %', v_row.vu_at;
+  end if;
+  raise notice 'PASS: emettre_avertissement() records the correct user/raison/emis_par, vu_at still null';
+end $$;
+
+-- Notification created for the avertissement.
+do $$
+declare
+  v_type text;
+  v_acteur uuid;
+begin
+  select type, acteur_id into v_type, v_acteur
+    from notifications where destinataire_id = '53000000-0000-0000-0000-000000000002';
+  if v_type != 'avertissement_recu' then
+    raise exception 'TEST FAILED: expected an avertissement_recu notification, got %', v_type;
+  end if;
+  if v_acteur != '53000000-0000-0000-0000-000000000001' then
+    raise exception 'TEST FAILED: acteur_id should be the admin who issued the warning, got %', v_acteur;
+  end if;
+  raise notice 'PASS: emettre_avertissement() creates a real avertissement_recu notification, acteur = the admin';
+end $$;
+
+-- A plain avertissement never blocks access -- statut_compte stays
+-- actif, no offres/publications/transactions side effects at all (this
+-- RPC never touches any of those tables).
+do $$
+begin
+  if (select statut_compte from users where id = '53000000-0000-0000-0000-000000000002') != 'actif' then
+    raise exception 'TEST FAILED: a plain avertissement changed statut_compte';
+  end if;
+  raise notice 'PASS: a plain avertissement never changes statut_compte -- no access block';
+end $$;
+
+-- marquer_avertissement_vu(): a genuinely uninvolved bystander (fan B)
+-- cannot mark créateur A's avertissement as vu.
+do $$
+declare
+  v_id uuid;
+begin
+  select id into v_id from avertissements limit 1;
+  perform set_config('app.tmp_avert_id_1', v_id::text, false);
+end $$;
+
+select set_config('app.current_user_id', '53000000-0000-0000-0000-000000000003', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform marquer_avertissement_vu(current_setting('app.tmp_avert_id_1')::uuid);
+    raise exception 'TEST FAILED: an uninvolved user was able to mark someone else''s avertissement as vu';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm != 'avertissement not found or already vu' then
+      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: marquer_avertissement_vu() rejects marking someone else''s avertissement as vu (self-only)';
+  end;
+end $$;
+reset role;
+
+do $$
+begin
+  if (select vu_at from avertissements where id = (select id from avertissements limit 1)) is not null then
+    raise exception 'TEST FAILED: the rejected cross-user attempt still set vu_at';
+  end if;
+  raise notice 'PASS: the rejected cross-user attempt left vu_at untouched';
+end $$;
+
+-- Even the ADMIN who issued it cannot mark someone else's avertissement
+-- vu -- self-only really means the RECIPIENT, not "anyone privileged".
+select set_config('app.current_user_id', '53000000-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform marquer_avertissement_vu(current_setting('app.tmp_avert_id_1')::uuid);
+    raise exception 'TEST FAILED: the issuing admin was able to mark the recipient''s avertissement as vu';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm != 'avertissement not found or already vu' then
+      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: marquer_avertissement_vu() rejects the issuing admin too -- only the RECIPIENT can mark their own avertissement as vu';
+  end;
+end $$;
+reset role;
+
+-- The real recipient (créateur A) CAN mark their own avertissement vu.
+select set_config('app.current_user_id', '53000000-0000-0000-0000-000000000002', false);
+set role authenticated;
+do $$
+begin
+  perform marquer_avertissement_vu(current_setting('app.tmp_avert_id_1')::uuid);
+end $$;
+reset role;
+
+do $$
+begin
+  if (select vu_at from avertissements where id = (select id from avertissements limit 1)) is null then
+    raise exception 'TEST FAILED: the recipient''s own marquer_avertissement_vu() call did not set vu_at';
+  end if;
+  raise notice 'PASS: the real recipient can mark their own avertissement as vu';
+end $$;
+
+-- A second call on an already-vu avertissement is rejected (re-entrancy
+-- guard), not silently re-applied.
+select set_config('app.current_user_id', '53000000-0000-0000-0000-000000000002', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform marquer_avertissement_vu(current_setting('app.tmp_avert_id_1')::uuid);
+    raise exception 'TEST FAILED: a second marquer_avertissement_vu() on an already-vu row was accepted';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm != 'avertissement not found or already vu' then
+      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: a second marquer_avertissement_vu() on an already-vu avertissement is rejected';
+  end;
+end $$;
+reset role;
+
+-- Correct display order across several pending avertissements: the
+-- exact query getAvertissementsNonVus() runs (order by emis_at asc),
+-- proven directly against real, deliberately-scrambled-insertion-order
+-- rows, backdated the same "disable/backdate directly" way this file
+-- already uses elsewhere (there is no other way to control emis_at
+-- precisely).
+insert into avertissements (id, user_id, raison, emis_par, emis_at) values
+  ('53000000-0000-0000-0000-00000000a002', '53000000-0000-0000-0000-000000000002', 'Deuxieme (plus recent)', '53000000-0000-0000-0000-000000000001', now() - interval '1 day'),
+  ('53000000-0000-0000-0000-00000000a003', '53000000-0000-0000-0000-000000000002', 'Troisieme (le plus ancien)', '53000000-0000-0000-0000-000000000001', now() - interval '10 days'),
+  ('53000000-0000-0000-0000-00000000a004', '53000000-0000-0000-0000-000000000002', 'Quatrieme (le plus recent)', '53000000-0000-0000-0000-000000000001', now() - interval '1 hour');
+
+do $$
+declare
+  v_ordered uuid[];
+begin
+  select array_agg(id order by emis_at asc) into v_ordered
+    from avertissements
+    where user_id = '53000000-0000-0000-0000-000000000002' and vu_at is null;
+
+  if v_ordered != array[
+    '53000000-0000-0000-0000-00000000a003'::uuid,
+    '53000000-0000-0000-0000-00000000a002'::uuid,
+    '53000000-0000-0000-0000-00000000a004'::uuid
+  ] then
+    raise exception 'TEST FAILED: oldest-first ordering is wrong, got %', v_ordered;
+  end if;
+  raise notice 'PASS: several pending avertissements sort oldest-first, matching getAvertissementsNonVus()''s own query';
+end $$;
+
+-- ===========================================================================
+-- The gap this migration closes: suspendre_compte()/bannir_compte() now
+-- BOTH create their own notification (compte_suspendu/compte_banni),
+-- via the shared appliquer_statut_compte() helper -- explicitly tested
+-- here since migration 0052 never covered this at all.
+-- ===========================================================================
+
+select set_config('app.current_user_id', '53000000-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+begin
+  perform suspendre_compte('53000000-0000-0000-0000-000000000002', 'raison suspension');
+end $$;
+reset role;
+
+do $$
+declare
+  v_type text;
+  v_acteur uuid;
+begin
+  select type, acteur_id into v_type, v_acteur
+    from notifications
+    where destinataire_id = '53000000-0000-0000-0000-000000000002'
+      and type = 'compte_suspendu';
+  if v_type is null then
+    raise exception 'TEST FAILED: no compte_suspendu notification was created -- this is the exact gap this migration must close';
+  end if;
+  if v_acteur != '53000000-0000-0000-0000-000000000001' then
+    raise exception 'TEST FAILED: acteur_id should be the admin who suspended the account, got %', v_acteur;
+  end if;
+  raise notice 'PASS: suspendre_compte() now creates a real compte_suspendu notification (the gap migration 0052 left is closed)';
+end $$;
+
+select set_config('app.current_user_id', '53000000-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+begin
+  perform bannir_compte('53000000-0000-0000-0000-000000000002', 'raison bannissement');
+end $$;
+reset role;
+
+do $$
+declare
+  v_type text;
+  v_acteur uuid;
+begin
+  select type, acteur_id into v_type, v_acteur
+    from notifications
+    where destinataire_id = '53000000-0000-0000-0000-000000000002'
+      and type = 'compte_banni';
+  if v_type is null then
+    raise exception 'TEST FAILED: no compte_banni notification was created -- this is the exact gap this migration must close';
+  end if;
+  if v_acteur != '53000000-0000-0000-0000-000000000001' then
+    raise exception 'TEST FAILED: acteur_id should be the admin who banned the account, got %', v_acteur;
+  end if;
+  raise notice 'PASS: bannir_compte() now creates a real compte_banni notification (the gap migration 0052 left is closed)';
+end $$;
+
+-- ===========================================================================
+-- Grant audit -- same 0020/0021 pattern as every write RPC in this
+-- project.
+-- ===========================================================================
+
+select set_config('app.current_user_id', '', false);
+set role anon;
+do $$
+begin
+  begin
+    perform emettre_avertissement('00000000-0000-0000-0000-000000000000', 'x');
+    raise exception 'TEST FAILED: anon could call emettre_avertissement()';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE on emettre_avertissement()';
+  end;
+  begin
+    perform marquer_avertissement_vu('00000000-0000-0000-0000-000000000000');
+    raise exception 'TEST FAILED: anon could call marquer_avertissement_vu()';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE on marquer_avertissement_vu()';
+  end;
+end $$;
+reset role;
+
+select set_config('app.current_user_id', '', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform emettre_avertissement('00000000-0000-0000-0000-000000000000', 'x');
+    raise exception 'TEST FAILED: authenticated with a NULL auth.uid() could call emettre_avertissement()';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm != 'not authorized' then
+      raise exception 'TEST FAILED: unexpected error: %', sqlerrm;
+    end if;
+    raise notice 'PASS: emettre_avertissement() rejects a NULL auth.uid() (NULL-safe est_admin check)';
+  end;
+  begin
+    perform marquer_avertissement_vu('00000000-0000-0000-0000-000000000000');
+    raise exception 'TEST FAILED: authenticated with a NULL auth.uid() could call marquer_avertissement_vu()';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm != 'not authenticated' then
+      raise exception 'TEST FAILED: unexpected error: %', sqlerrm;
+    end if;
+    raise notice 'PASS: marquer_avertissement_vu() rejects a NULL auth.uid()';
+  end;
+end $$;
+reset role;
+
+do $$
+begin
+  if not has_function_privilege('authenticated', 'emettre_avertissement(uuid,text)', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lost EXECUTE on emettre_avertissement()';
+  end if;
+  if not has_function_privilege('authenticated', 'marquer_avertissement_vu(uuid)', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lost EXECUTE on marquer_avertissement_vu()';
+  end if;
+  raise notice 'PASS: authenticated still holds EXECUTE on both new functions';
+end $$;
+
+-- Self-only RLS on the raw table, positively confirmed the same way
+-- demandes_retrait_select_own/reservations_stock_select_own are noted
+-- elsewhere in this file: this stub_auth.sql harness grants no
+-- table-level privilege at all to authenticated/anon (only RLS
+-- policies), so a live SELECT-as-authenticated can't be exercised here
+-- directly -- verified manually against a real throwaway database with
+-- the real Supabase base grants replicated before writing this
+-- migration; not re-asserted here since no other table's RLS policy is
+-- verified this way in this file either.
+
 do $$
 begin
   raise notice 'ALL SQL CHECKLIST TESTS PASSED';

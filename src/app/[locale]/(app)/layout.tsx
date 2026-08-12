@@ -1,6 +1,8 @@
 import { AppTabBar } from "@/components/AppTabBar";
 import { AccountBlockedScreen } from "@/components/AccountBlockedScreen";
+import { AvertissementBanner } from "@/components/AvertissementBanner";
 import { getAccountBlockInfo } from "@/lib/accountStatus";
+import { getAvertissementsNonVus } from "@/lib/avertissements";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 // Lot 3: shared layout for the (app)-group tab-bar destinations still
@@ -35,6 +37,12 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 // layout keeps its own existing !user -> /login redirect untouched; a
 // blocked account is still a real, logged-in session, so that guard
 // alone would never catch it -- this is a second, independent check.
+//
+// Admin warning mechanism (migration 0053): AvertissementBanner is
+// deliberately fetched only in the NOT-blocked branch -- a blocked
+// session never reaches this far (it returns AccountBlockedScreen
+// first), so there's no point querying avertissements for it; the
+// banner would have nowhere to render anyway.
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createSupabaseServerClient();
   const {
@@ -47,8 +55,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     return <AccountBlockedScreen info={blockInfo} />;
   }
 
+  const avertissements = user ? await getAvertissementsNonVus(supabase) : [];
+
   return (
     <div className="flex flex-1 flex-col">
+      {avertissements.length > 0 && <AvertissementBanner avertissements={avertissements} />}
       <div className="flex-1 pb-24">{children}</div>
       <AppTabBar />
     </div>

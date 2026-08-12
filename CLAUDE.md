@@ -6721,6 +6721,234 @@ compte" performs a real RPC round trip against the mock server and the
 row visibly updates to Actif on the same page — confirmed in both `fr`
 (light) and `/en/` (dark).
 
+> **Revised by migration `0053` — corrected in place here per this
+> file's own "the code is correct, update the doc" rule.** This lot
+> shipped `appliquer_statut_compte()` with every side effect the brief
+> asked for (`statut_compte`, offres, publications, transactions) except
+> one: it never called `creer_notification()`, even though the
+> notification system (migration `0034`) already existed and every other
+> admin-triggered state change in this project wires one in. A suspended
+> or banned user had no in-app record telling them so beyond the block
+> screen itself. See "Admin warning mechanism + suspension/ban
+> notifications" below for the fix — one additional `perform
+> creer_notification(...)` call in this same shared helper, nothing else
+> about this lot's own design changed.
+
+## Admin warning mechanism + suspension/ban notifications (migration `0053`)
+
+Two things in one migration, because both touch the exact same code path:
+a new, lighter admin tool — a plain warning, never blocking access — and
+the `creer_notification()` call migration `0052` should have made for
+`suspendre_compte()`/`bannir_compte()` but didn't (see the revision note
+just above).
+
+### Why a separate table, not a fourth `statut_compte` value
+
+**The one design question worth answering plainly, since it's the
+obvious-looking alternative that turns out to be wrong.** `statut_compte`
+(migration `0052`) is a single *current* state — `actif`/`suspendu`/
+`banni` — and every public view, every layout's block-screen check, and
+`appliquer_statut_compte()`'s own side effects all key off "what is this
+account's state *right now*". A warning doesn't fit that shape at all:
+
+- **It never blocks access.** Adding `'averti'` as a fourth
+  `statut_compte` value would mean every one of migration `0052`'s own
+  block-screen checks (`getAccountBlockInfo()`, three separate layouts)
+  and the whole `statut_compte != 'actif'` exclusion clause repeated
+  across 15 public views would all need a special case carving this one
+  value back *out* again — turning one clean invariant ("blocked unless
+  `actif`") into a leakier one ("blocked unless `actif` or `averti`").
+  A separate table needs none of that: nothing that checks
+  `statut_compte` has any reason to know warnings exist at all.
+- **A user can accumulate several warnings over time while staying fully
+  active.** `statut_compte` is deliberately a single column — there is no
+  history of *how* an account arrived at `suspendu`, only that it's
+  there now (`statut_compte_change_par`/`_at` record the *last* change,
+  not every one). A warning is the opposite: the whole point is a
+  growing log an admin can review (`GestionComptesManager`'s own history
+  list), not a single current value that overwrites itself. That's a
+  table with one row per event, not a column.
+
+`avertissements` (`id, user_id, raison, emis_par, emis_at, vu_at`) is
+that table — RLS self-only (`avertissements_select_own`), no INSERT/
+UPDATE/DELETE policy for `authenticated` at all, same "state machine only
+via a vetted RPC" shape as every other user-owned table in this project.
+`raison` is **required** (`not null`, plus an explicit blank/whitespace
+check in `emettre_avertissement()` for a friendlier error than a raw
+constraint violation) — unlike `statut_compte_raison` (migration `0052`,
+nullable), a warning *is* its reason; a blank one would be a warning
+about nothing.
+
+### RPCs
+
+**`emettre_avertissement(p_user_id, p_raison)`** — admin-only, same
+`est_admin` re-check shape as every admin RPC since migration `0015`.
+Inserts the row, then calls `creer_notification(p_user_id,
+'avertissement_recu', null, null, auth.uid())` — same "call from inside
+an already-elevated `SECURITY DEFINER` context" mechanism every other
+`creer_notification()` caller already relies on (migration `0034`), no
+new grant needed.
+
+**`marquer_avertissement_vu(p_avertissement_id)`** — self-only. The
+guard (`not exists (... and user_id = auth.uid() and vu_at is null)`)
+does three jobs with one message, same "not found or already handled"
+idiom as every other state RPC in this project: a genuinely unknown id,
+someone else's avertissement (never distinguishable from "unknown" in
+the error — not even the *admin who issued it* can mark a recipient's
+own avertissement as vu, verified directly), and an already-seen one are
+all rejected identically, never a silent no-op.
+
+### `appliquer_statut_compte()` extended — the actual gap closed
+
+`create or replace function appliquer_statut_compte(p_user_id uuid,
+p_statut text, p_raison text)` — identical signature, so
+`suspendre_compte()`/`bannir_compte()` (migration `0052`) needed **zero**
+changes of their own; both already `perform appliquer_statut_compte(...)`,
+and this is the one shared place every one of that helper's side effects
+already lives. One line added, last, after the transactions-refund step:
+
+```sql
+perform creer_notification(
+  p_user_id,
+  case when p_statut = 'suspendu' then 'compte_suspendu' else 'compte_banni' end,
+  null, null, auth.uid()
+);
+```
+
+`notifications.type` gains three values: `avertissement_recu`,
+`compte_suspendu`, `compte_banni` (verified the real constraint name,
+`notifications_type_check` — Postgres's own default naming for an
+inline column `CHECK` — against a throwaway database before assuming it,
+rather than guessing). **Deliberately no `'compte_reactive'` type and no
+notification call in `reactiver_compte_admin()`** — that function never
+called `appliquer_statut_compte()` to begin with (it's a separate,
+simpler inline function, see migration `0052`), and nothing asked for a
+reactivation notification; adding one would be scope creep this lot
+doesn't take.
+
+**Why the block screen already makes the `compte_suspendu`/`compte_banni`
+notifications practically unreachable via the bell, and why that's fine
+anyway**: `AccountBlockedScreen` (migration `0052`) replaces the entire
+page — bell included — the instant a blocked session loads any of the 5
+`AppTabBar` routes, so a suspended/banned user can never actually open
+the notification panel to see this row. The notification still exists,
+on purpose: it's the same `creer_notification()` call every other
+admin-triggered event makes, kept for record-keeping/consistency (an
+admin reviewing `notifications` directly, or a future UI surface, can
+see exactly when and by whom an account was blocked) — not because
+today's UI can display it to that user. `notificationHref()`
+(`src/lib/notifications.ts`) returns `null` for all three new types —
+`avertissement_recu` has its own dedicated banner instead of routing
+through the bell at all, and the other two have nowhere useful to
+navigate to regardless.
+
+### UI — non-blocking banner
+
+**`AvertissementBanner.tsx`**, deliberately **not** `AccountBlockedScreen`
+— rendered *above* `{children}` in the exact same 3 layouts
+(`(app)/layout.tsx`, `home/layout.tsx`, `explorer/layout.tsx`) rather
+than in place of them, since a warning never blocks the page underneath
+it. Fetched only in each layout's not-blocked branch (`getAvertissementsNonVus()`,
+`src/lib/avertissements.ts`, a plain self-only read mirroring
+`getNotifications()`'s own "no destinataire parameter needed, RLS alone
+scopes it" shape) — a blocked session never reaches that far, so there's
+no point querying warnings for a page that will never render them.
+
+Several pending warnings show **one at a time, oldest first** — the
+query itself already sorts that way (`order by emis_at asc`), and the
+banner just pops the front of that pre-fetched local array on each close,
+never re-fetching mid-session. Closing calls `marquer_avertissement_vu()`
+via `/api/avertissements/marquer-vu`; only on a **successful** response
+does the local list actually advance — a failed request leaves the
+current warning in place (with an inline error) rather than optimistically
+dismissing something the server never actually marked seen, matching
+`NotificationBell`'s own revert-on-failure discipline for its unread
+count.
+
+### Admin UI
+
+**"Avertir" joins `AccountQuickActions`** (the same shared component
+already reused across `GestionComptesManager`/`LitigesManager`/
+`PublicationsSignaleesManager` since migration `0052`) — deliberately
+shown **regardless of `currentStatus`**, unlike Suspendre (actif-only)/
+Bannir (not-already-banni)/Réactiver (not-already-actif): a warning
+never depends on the account's current block state, so there's no status
+it doesn't make sense for. This is also why the raison text field is now
+**always** rendered (previously hidden for a `banni` account, back when
+only Bannir/Réactiver needed it and neither used the field) — Avertir
+needs it in every state, including `banni`. The button itself is
+disabled until `raison.trim()` is non-blank, a client-side courtesy on
+top of the RPC's own real "raison is required" guarantee; Suspendre/
+Bannir's own raison stays optional, unchanged from migration `0052`.
+
+A successful "Avertir" shows a brief "Avertissement envoyé." confirmation
+(2.5s, same ephemeral-message shape as `CopyProfileLinkButton`'s "Lien
+copié !") and, like every other action in this component,
+`router.refresh()`s — which is also what makes a freshly-issued warning
+appear immediately in `GestionComptesManager`'s own history list below,
+without that component needing any state of its own to reconcile.
+
+**Avertissement history, "Gestion des comptes" only** (not `LitigesManager`/
+`PublicationsSignaleesManager` — the brief only asked for a history view
+in the dedicated account tool, and those two rows already show enough
+per-litige/per-signalement context without also carrying another
+account's full warning log). `admin/page.tsx` reads the raw
+`avertissements` table via the service-role client (same "verify
+`est_admin` once at the top of the page, service-role for everything
+below" pattern as every other admin query), groups by `user_id`, and
+hands each `AccountManageableUser` its own `avertissements` array
+(most-recent-first) — empty, never `undefined`, for an account with none,
+so `GestionComptesManager` only needs a `.length` check, never a
+"was this even fetched" distinction. Each entry shows the date, the
+raison, and vu/non-vu — the admin's own read of whether the recipient
+has actually seen it yet.
+
+### Testing
+
+Tested end-to-end in `checklist_2_3.sql` with a dedicated fixture (admin
+D, créateur A — warned, then suspended, then banned, proving a plain
+warning never touches `statut_compte`; fan B — a genuinely uninvolved
+bystander, used to prove `marquer_avertissement_vu()` is self-only):
+`emettre_avertissement()` rejects a non-admin (leaving no row behind), a
+blank/whitespace-only raison, a `NULL` raison, and an unknown target user
+individually; a real success records the correct user/raison/`emis_par`
+with `vu_at` still null and creates a genuine `avertissement_recu`
+notification (`acteur_id` = the admin); a plain warning is confirmed to
+leave `statut_compte` at `actif`; `marquer_avertissement_vu()` rejects an
+uninvolved bystander **and** the issuing admin themselves (self-only
+really means the recipient, not "anyone privileged"), succeeds for the
+genuine recipient, and rejects a second call on an already-vu row; three
+deliberately-scrambled-insertion-order, backdated avertissements
+(the only way to control `emis_at` precisely, same "disable/backdate
+directly" pattern used elsewhere in this file) sort oldest-first exactly
+matching `getAvertissementsNonVus()`'s own query; **the actual gap this
+migration closes is proven directly** — a real `suspendre_compte()` call
+now creates a `compte_suspendu` notification and a real `bannir_compte()`
+call creates a `compte_banni` one, both with `acteur_id` = the acting
+admin; and the full `0020`/`0021` grant-audit pattern holds for both new
+RPCs (`anon` has no `EXECUTE`, `authenticated` with a `NULL auth.uid()`
+is rejected by each function's own check, `authenticated` still holds
+`EXECUTE`). Vitest covers `notificationHref()`'s three new `null`-routing
+cases and `getAvertissementsNonVus()`'s row-mapping directly, plus route
+tests for both new `/api/*` wrappers (auth required, validation before
+ever reaching the RPC — `emettre-avertissement` in particular rejects a
+missing or blank raison client-side, mirroring the RPC's own guarantee).
+
+Verified visually end-to-end (same throwaway mock-Supabase/Playwright
+technique used throughout this file): a warned-but-active account shows
+the tab bar (never blocked) with the banner rendered above the page
+content, the **oldest** of two pending warnings shown first with a
+"1 autre avertissement en attente" count, closing it reveals the second
+and the count disappears, and closing that one too removes the banner
+entirely — confirmed in `fr` (light) and `/en/` (dark, single-warning
+account, no count). On `/admin`: "Avertir" is disabled with a blank
+raison and enables the instant one is typed, a real click drives the
+full `/api/admin/emettre-avertissement` → `emettre_avertissement()` round
+trip, shows "Avertissement envoyé.", and the new entry appears
+immediately in that account's own history list marked "non vu" — the
+account's status badge stays "Actif" throughout, confirming visually
+(not just at the SQL level) that a warning never blocks anything.
+
 ## Admin dashboard (`/admin`, migration `0015`)
 
 Business-only page, gated by `users.est_admin` — see the schema entry
