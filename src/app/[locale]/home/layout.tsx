@@ -1,6 +1,8 @@
 import { AppTabBar } from "@/components/AppTabBar";
 import { AccountBlockedScreen } from "@/components/AccountBlockedScreen";
+import { AvertissementBanner } from "@/components/AvertissementBanner";
 import { getAccountBlockInfo } from "@/lib/accountStatus";
+import { getAvertissementsNonVus } from "@/lib/avertissements";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 // Nav reorg lot: /home used to share (app)/layout.tsx with the other 4
@@ -31,8 +33,13 @@ export default async function HomeLayout({ children }: { children: React.ReactNo
     return <AccountBlockedScreen info={blockInfo} />;
   }
 
+  // Admin warning mechanism (migration 0053): see (app)/layout.tsx's own
+  // comment for why this is only fetched here, in the not-blocked branch.
+  const avertissements = user ? await getAvertissementsNonVus(supabase) : [];
+
   return (
     <div className="flex flex-1 flex-col">
+      {avertissements.length > 0 && <AvertissementBanner avertissements={avertissements} />}
       <div className="flex-1 pb-24">{children}</div>
       <AppTabBar />
     </div>

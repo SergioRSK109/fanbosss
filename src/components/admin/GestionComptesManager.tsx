@@ -1,9 +1,24 @@
 "use client";
 
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useMemo, useState } from "react";
 import { AccountQuickActions, type StatutCompte } from "@/components/admin/AccountQuickActions";
 import { inputClass } from "@/components/ui/field-styles";
+
+function formatDate(iso: string, locale: string): string {
+  return new Date(iso).toLocaleDateString(locale, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+export interface AvertissementHistoryRow {
+  id: string;
+  raison: string;
+  emisAt: string;
+  vuAt: string | null;
+}
 
 export interface AccountManageableUser {
   id: string;
@@ -11,6 +26,14 @@ export interface AccountManageableUser {
   label: string;
   statutCompte: StatutCompte;
   statutCompteRaison: string | null;
+  // Admin warning mechanism (migration 0053) -- every avertissement ever
+  // issued to this account, most recent first (already sorted that way
+  // by the admin page's own query, same "oldest-worklist-item-first vs.
+  // newest-history-item-first" split every other admin history list in
+  // this project already makes). Empty, never undefined, for an account
+  // with no warnings -- so this section can just check .length rather
+  // than distinguishing "no data fetched" from "genuinely none".
+  avertissements: AvertissementHistoryRow[];
 }
 
 const STATUT_BADGE_CLASS: Record<StatutCompte, string> = {
@@ -29,6 +52,7 @@ const STATUT_BADGE_CLASS: Record<StatutCompte, string> = {
 // second "browse every account" list sitting next to it.
 export function GestionComptesManager({ users }: { users: AccountManageableUser[] }) {
   const t = useTranslations("Admin.gestionComptes");
+  const locale = useLocale();
   const [query, setQuery] = useState("");
 
   const results = useMemo(() => {
@@ -75,6 +99,21 @@ export function GestionComptesManager({ users }: { users: AccountManageableUser[
               <p className="text-xs text-foreground-muted">
                 {t("raisonLabel", { raison: u.statutCompteRaison })}
               </p>
+            )}
+            {u.avertissements.length > 0 && (
+              <div className="rounded-2xl bg-surface-muted px-3 py-2">
+                <p className="text-xs font-semibold text-foreground-muted">
+                  {t("avertissementsHeading", { count: u.avertissements.length })}
+                </p>
+                <ul className="mt-1 flex flex-col gap-1">
+                  {u.avertissements.map((a) => (
+                    <li key={a.id} className="text-xs text-foreground-muted">
+                      {formatDate(a.emisAt, locale)} — {a.raison} (
+                      {a.vuAt ? t("avertissementVu") : t("avertissementNonVu")})
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
             <AccountQuickActions userId={u.id} currentStatus={u.statutCompte} />
           </li>

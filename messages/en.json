@@ -33,7 +33,10 @@
       "litige_tranche_fan": "A dispute was resolved in your favor.",
       "retrait_traite": "Your withdrawal request was processed.",
       "retrait_refuse": "Your withdrawal request was declined.",
-      "publication_aimee": "{acteur} liked your publication."
+      "publication_aimee": "{acteur} liked your publication.",
+      "avertissement_recu": "You received a warning from an administrator.",
+      "compte_suspendu": "Your account was suspended.",
+      "compte_banni": "Your account was banned."
     }
   },
   "HomePage": {
@@ -382,6 +385,12 @@
     "banniMessage": "Your account has been banned by a FanBoss administrator, per the Terms of Service. You can no longer use the platform.",
     "raisonLabel": "Reason: {raison}"
   },
+  "AvertissementBanner": {
+    "heading": "Warning from an administrator",
+    "moreCount": "{count, plural, one {# more pending warning} other {# more pending warnings}}",
+    "closeAriaLabel": "Dismiss this warning",
+    "closeError": "Couldn't dismiss this warning right now."
+  },
   "Dashboard": {
     "heading": "Performance",
     "demandesHeading": "Requests awaiting your response",
@@ -660,11 +669,16 @@
         "banni": "Banned"
       },
       "raisonLabel": "Reason: {raison}",
-      "raisonPlaceholder": "Reason (optional)",
+      "raisonPlaceholder": "Reason (required to warn, optional otherwise)",
       "quickActionsFor": "{label}'s account",
+      "quickAvertir": "Warn",
+      "avertissementEnvoye": "Warning sent.",
       "quickSuspendre": "Suspend this account",
       "quickBannir": "Ban this account",
-      "quickReactiver": "Reactivate this account"
+      "quickReactiver": "Reactivate this account",
+      "avertissementsHeading": "Warnings ({count})",
+      "avertissementVu": "seen",
+      "avertissementNonVu": "not seen"
     },
     "remboursements": {
       "empty": "No manual refund pending.",

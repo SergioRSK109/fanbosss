@@ -19,6 +19,9 @@ export const NOTIFICATION_TYPES = [
   "retrait_traite",
   "retrait_refuse",
   "publication_aimee",
+  "avertissement_recu",
+  "compte_suspendu",
+  "compte_banni",
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
@@ -78,6 +81,18 @@ export function notificationHref(
     case "retrait_traite":
     case "retrait_refuse":
       return "/finance";
+    // avertissement_recu/compte_suspendu/compte_banni: no navigation
+    // target. A warning has its own dedicated, non-blocking banner
+    // (AvertissementBanner.tsx, migration 0053) rather than routing
+    // through the bell at all; a suspension/ban notification exists for
+    // record-keeping (the same creer_notification() call every other
+    // admin-triggered event already makes) but the destinataire can
+    // never actually reach the bell to see it while blocked --
+    // AccountBlockedScreen replaces the whole page, bell included.
+    case "avertissement_recu":
+    case "compte_suspendu":
+    case "compte_banni":
+      return null;
     default:
       return null;
   }

@@ -33,7 +33,10 @@
       "litige_tranche_fan": "Un litige a été tranché en ta faveur.",
       "retrait_traite": "Ta demande de retrait a été traitée.",
       "retrait_refuse": "Ta demande de retrait a été refusée.",
-      "publication_aimee": "{acteur} a aimé ta publication."
+      "publication_aimee": "{acteur} a aimé ta publication.",
+      "avertissement_recu": "Tu as reçu un avertissement d'un administrateur.",
+      "compte_suspendu": "Ton compte a été suspendu.",
+      "compte_banni": "Ton compte a été banni."
     }
   },
   "HomePage": {
@@ -382,6 +385,12 @@
     "banniMessage": "Ton compte a été banni par un administrateur de FanBoss, en application des CGU. Tu ne peux plus utiliser la plateforme.",
     "raisonLabel": "Raison : {raison}"
   },
+  "AvertissementBanner": {
+    "heading": "Avertissement de la part d'un administrateur",
+    "moreCount": "{count, plural, one {# autre avertissement en attente} other {# autres avertissements en attente}}",
+    "closeAriaLabel": "Fermer cet avertissement",
+    "closeError": "Impossible de fermer cet avertissement pour le moment."
+  },
   "Dashboard": {
     "heading": "Performance",
     "demandesHeading": "Demandes en attente de votre réponse",
@@ -660,11 +669,16 @@
         "banni": "Banni"
       },
       "raisonLabel": "Raison : {raison}",
-      "raisonPlaceholder": "Raison (optionnelle)",
+      "raisonPlaceholder": "Raison (obligatoire pour avertir, optionnelle sinon)",
       "quickActionsFor": "Compte de {label}",
+      "quickAvertir": "Avertir",
+      "avertissementEnvoye": "Avertissement envoyé.",
       "quickSuspendre": "Suspendre ce compte",
       "quickBannir": "Bannir ce compte",
-      "quickReactiver": "Réactiver ce compte"
+      "quickReactiver": "Réactiver ce compte",
+      "avertissementsHeading": "Avertissements ({count})",
+      "avertissementVu": "vu",
+      "avertissementNonVu": "non vu"
     },
     "remboursements": {
       "empty": "Aucun remboursement manuel en attente.",

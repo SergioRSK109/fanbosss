@@ -53,4 +53,10 @@ describe("notificationHref", () => {
       notificationHref("publication_aimee", { publicationId: null, viewerPseudo: "sergio" }),
     ).toBeNull();
   });
+
+  it("returns null for avertissement_recu/compte_suspendu/compte_banni -- no bell navigation target, migration 0053", () => {
+    expect(notificationHref("avertissement_recu", { publicationId: null, viewerPseudo: null })).toBeNull();
+    expect(notificationHref("compte_suspendu", { publicationId: null, viewerPseudo: null })).toBeNull();
+    expect(notificationHref("compte_banni", { publicationId: null, viewerPseudo: null })).toBeNull();
+  });
 });

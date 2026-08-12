@@ -75,6 +75,7 @@ export default async function AdminPage() {
     { data: verificationRows },
     { data: signalementRows },
     { data: paiementsReussisRows },
+    { data: avertissementRows },
   ] = await Promise.all([
     serviceSupabase
       .from("transactions")
@@ -155,6 +156,17 @@ export default async function AdminPage() {
       .from("paiements")
       .select("montant_brut, transactions(fan_id)")
       .eq("statut_paiement", "reussi"),
+    // Admin warning mechanism (migration 0053) -- every avertissement
+    // ever issued, most recent first, grouped by user below for
+    // GestionComptesManager's own history display. Unlike the worklists
+    // above, this isn't a queue an admin works through (there's no
+    // "pending" state to clear -- vu_at is the RECIPIENT's own read
+    // marker, not an admin action), so it's read in full rather than
+    // filtered to some "en_attente"-equivalent status.
+    serviceSupabase
+      .from("avertissements")
+      .select("id, user_id, raison, emis_at, vu_at")
+      .order("emis_at", { ascending: false }),
   ]);
 
   const userLabelById = new Map(
@@ -265,6 +277,18 @@ export default async function AdminPage() {
     }))
     .sort((a, b) => a.label.localeCompare(b.label));
 
+  // Admin warning mechanism (migration 0053) -- grouped by user_id,
+  // already sorted most-recent-first by the query itself above.
+  const avertissementsByUserId = new Map<
+    string,
+    { id: string; raison: string; emisAt: string; vuAt: string | null }[]
+  >();
+  for (const row of avertissementRows ?? []) {
+    const list = avertissementsByUserId.get(row.user_id) ?? [];
+    list.push({ id: row.id, raison: row.raison, emisAt: row.emis_at, vuAt: row.vu_at });
+    avertissementsByUserId.set(row.user_id, list);
+  }
+
   // Account suspension/ban (migration 0052) -- "Gestion des comptes",
   // same full-user-list-as-props shape as manageableUsers above
   // (GestionComptesManager itself filters client-side by pseudo/label,
@@ -276,6 +300,7 @@ export default async function AdminPage() {
       label: resolveDisplayName(u.nom_affichage, u.pseudo) ?? u.id,
       statutCompte: u.statut_compte as StatutCompte,
       statutCompteRaison: u.statut_compte_raison,
+      avertissements: avertissementsByUserId.get(u.id) ?? [],
     }))
     .sort((a, b) => a.label.localeCompare(b.label));
 
