@@ -1,7 +1,9 @@
 import { notFound } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { AdminTabs } from "@/components/admin/AdminTabs";
+import type { StatutCompte } from "@/components/admin/AccountQuickActions";
 import { GestionAdminsManager, type AdminManageableUser } from "@/components/admin/GestionAdminsManager";
+import { GestionComptesManager, type AccountManageableUser } from "@/components/admin/GestionComptesManager";
 import { LitigesManager, type LitigeEnAttente } from "@/components/admin/LitigesManager";
 import { PublicationsSignaleesManager } from "@/components/admin/PublicationsSignaleesManager";
 import {
@@ -112,7 +114,9 @@ export default async function AdminPage() {
       .select("id, montant, createur_id, demande_at")
       .eq("statut", "en_attente")
       .order("demande_at", { ascending: true }),
-    serviceSupabase.from("users").select("id, pseudo, nom_affichage, est_admin"),
+    serviceSupabase
+      .from("users")
+      .select("id, pseudo, nom_affichage, est_admin, statut_compte, statut_compte_raison"),
     serviceSupabase.auth.admin.listUsers({ page: 1, perPage: 1000 }),
     // Only the two actionable statuses -- an approved/refused demande no
     // longer needs an admin decision, see VerificationsManager.
@@ -160,6 +164,13 @@ export default async function AdminPage() {
     ]),
   );
   const pseudoById = new Map((allUsers ?? []).map((u) => [u.id, u.pseudo]));
+  // Account suspension/ban (migration 0052) -- current statut_compte per
+  // user, feeding both AccountQuickActions call sites (Litiges,
+  // Publications signalées) and the standalone "Gestion des comptes"
+  // tool below.
+  const statutCompteById = new Map(
+    (allUsers ?? []).map((u) => [u.id, u.statut_compte as StatutCompte]),
+  );
 
   // Vue d'ensemble du mois en cours -- gross (all statuses, including
   // refused/refunded): "brut" is deliberately unadjusted, see CLAUDE.md.
@@ -225,8 +236,12 @@ export default async function AdminPage() {
       offreType: (offre?.type ?? "video") as OffreType,
       createdAt: row.created_at,
       contesteAt: row.conteste_at,
+      createurId: row.createur_id,
       createurLabel: userLabelById.get(row.createur_id) ?? t("deletedUser"),
+      createurStatutCompte: statutCompteById.get(row.createur_id) ?? "actif",
+      fanId: row.fan_id,
       fanLabel: userLabelById.get(row.fan_id) ?? t("deletedUser"),
+      fanStatutCompte: statutCompteById.get(row.fan_id) ?? "actif",
     };
   });
 
@@ -249,6 +264,24 @@ export default async function AdminPage() {
       estAdmin: u.est_admin,
     }))
     .sort((a, b) => a.label.localeCompare(b.label));
+
+  // Account suspension/ban (migration 0052) -- "Gestion des comptes",
+  // same full-user-list-as-props shape as manageableUsers above
+  // (GestionComptesManager itself filters client-side by pseudo/label,
+  // see its own comment for why a dedicated search route wasn't built).
+  const manageableAccounts: AccountManageableUser[] = (allUsers ?? [])
+    .map((u) => ({
+      id: u.id,
+      pseudo: u.pseudo,
+      label: resolveDisplayName(u.nom_affichage, u.pseudo) ?? u.id,
+      statutCompte: u.statut_compte as StatutCompte,
+      statutCompteRaison: u.statut_compte_raison,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+
+  const statutComptesByIdRecord: Record<string, StatutCompte> = Object.fromEntries(
+    statutCompteById,
+  );
 
   const verifications: DemandeVerificationAdmin[] = (verificationRows ?? []).map((d) => ({
     id: d.id,
@@ -444,16 +477,27 @@ export default async function AdminPage() {
           )}
         </h2>
         <p className="mb-3 text-sm text-foreground-muted">{t("publicationsSignaleesIntro")}</p>
-        <PublicationsSignaleesManager signalements={publicationsSignalees} />
+        <PublicationsSignaleesManager
+          signalements={publicationsSignalees}
+          statutComptesById={statutComptesByIdRecord}
+        />
       </section>
     </>
   );
 
   const administrationContent = (
-    <section>
-      <h2 className="mb-3 text-lg font-bold">{t("gestionAdminsHeading")}</h2>
-      <GestionAdminsManager users={manageableUsers} />
-    </section>
+    <>
+      <section>
+        <h2 className="mb-3 text-lg font-bold">{t("gestionAdminsHeading")}</h2>
+        <GestionAdminsManager users={manageableUsers} />
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-lg font-bold">{t("gestionComptesHeading")}</h2>
+        <p className="mb-3 text-sm text-foreground-muted">{t("gestionComptesIntro")}</p>
+        <GestionComptesManager users={manageableAccounts} />
+      </section>
+    </>
   );
 
   return (

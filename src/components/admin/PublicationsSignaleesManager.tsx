@@ -3,6 +3,7 @@
 import { useLocale, useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { AccountQuickActions, type StatutCompte } from "@/components/admin/AccountQuickActions";
 import { buttonClass } from "@/components/ui/button-styles";
 import { Link } from "@/i18n/navigation";
 import type { PublicationSignalee } from "@/lib/adminPublicationsSignalees";
@@ -28,11 +29,20 @@ function formatDate(iso: string, locale: string): string {
 // for an admin note to be persisted here.
 export function PublicationsSignaleesManager({
   signalements,
+  statutComptesById,
 }: {
   signalements: PublicationSignalee[];
+  // Account suspension/ban (migration 0052) -- the reported auteur's
+  // CURRENT statut_compte, so AccountQuickActions shows the right button
+  // set (a second click on an already-suspended account shouldn't offer
+  // "Suspendre" again). Keyed by user id rather than embedded on each
+  // PublicationSignalee row so buildPublicationSignalee() (pure,
+  // unit-tested) never needed a new parameter for this.
+  statutComptesById: Record<string, StatutCompte>;
 }) {
   const t = useTranslations("Admin.publicationsSignalees");
   const tCommon = useTranslations("Common");
+  const tComptes = useTranslations("Admin.gestionComptes");
   const locale = useLocale();
   const router = useRouter();
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -123,6 +133,19 @@ export function PublicationsSignaleesManager({
           {errorById[signalement.id] && (
             <p className="text-sm text-danger-600">{errorById[signalement.id]}</p>
           )}
+          {/* Account suspension/ban (migration 0052) -- quick actions on
+              the reported publication's own auteur, so an admin who's
+              already looking at this row never has to re-type its
+              pseudo into "Gestion des comptes" separately. */}
+          <div className="flex flex-col gap-1.5 border-t border-border pt-2">
+            <span className="text-xs font-semibold text-foreground-muted">
+              {tComptes("quickActionsFor", { label: signalement.auteurLabel })}
+            </span>
+            <AccountQuickActions
+              userId={signalement.auteurId}
+              currentStatus={statutComptesById[signalement.auteurId] ?? "actif"}
+            />
+          </div>
         </li>
       ))}
     </ul>

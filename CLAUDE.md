@@ -6369,6 +6369,358 @@ question above), test it against a real CinetPay sandbox account, then
 flip the flag — no redeploy needed for the flag itself, only for the
 real implementation replacing the stub.
 
+## Account suspension/ban by an admin (migration `0052`)
+
+FanBoss's CGU (article 3.5) promises that *"FanBoss se réserve le droit
+de suspendre ou de fermer le compte d'un utilisateur en cas de violation
+des présentes CGU"* — until this migration nothing in the codebase could
+actually do that: even a repeatedly-signalled publication (Lot 5b) or a
+litige lost outright (Lot 2a-bis) left the account fully able to keep
+using the platform indefinitely. This migration builds the missing
+mechanism.
+
+**Deliberately not the same thing as "deactivate my own account"** (a
+separately-designed, never-sent-to-Claude-Code feature) — that one is
+reversible by the user themselves and blocks on an undelivered paid
+order. This one is admin-only, never reversible by the affected user, and
+— the one already-settled product principle worth restating plainly,
+since it's the opposite of voluntary deactivation's own rule — **must
+always be possible, even with transactions in flight**: otherwise any
+account could shield itself from a ban by simply accepting a pending
+order the moment it senses trouble. In-flight transactions are refunded
+automatically (into the existing manual-refund queue) rather than ever
+blocking the admin's action.
+
+### Schema
+
+```sql
+alter table users add column statut_compte text not null default 'actif'
+  check (statut_compte in ('actif', 'suspendu', 'banni'));
+alter table users add column statut_compte_raison text;
+alter table users add column statut_compte_change_par uuid references users(id);
+alter table users add column statut_compte_change_at timestamptz;
+```
+
+Suspension and bannissement are two points on the same `statut_compte`
+enum, not two unrelated flags — "the two block access identically, the
+distinction is severity shown to the user/admin, not two different
+blocking mechanisms" per the brief. `statut_compte_change_par`/`_at`
+record whoever last changed it (an admin suspending, banning, *or*
+reactivating), the same "who/when" audit shape as
+`litige_resolu_par`/`_at` (migration `0026`).
+
+### RPCs
+
+**`appliquer_statut_compte(p_user_id, p_statut, p_raison)`** is a
+private, *non*-`SECURITY DEFINER`, ungranted helper — never callable by
+any role directly (verified: `SET ROLE authenticated` gets a real
+`insufficient_privilege` calling it), only from inside another
+`SECURITY DEFINER` function's already-elevated, already-admin-verified
+execution context. Same reuse shape as `verifier_campagne_du_createur()`
+(migration `0046`): the brief asked for **two distinct, explicitly-named
+RPCs** (`suspendre_compte`/`bannir_compte`), not one function with a
+level parameter — clearer in logs/audits, matching `resoudre_litige()`'s
+own two-named-branches-not-one-generic-parameter choice — but the actual
+state-change logic (write `statut_compte`/`raison`/`change_par`/
+`change_at`, deactivate offres, mask publications, refund in-flight
+transactions) is identical for both, so it lives once, here, shared.
+
+Re-entrancy guard: `not exists (select 1 from users where id = p_user_id
+and statut_compte is distinct from p_statut)` doubles as both "user not
+found" (zero rows) and "already in that exact status" (a row exists but
+doesn't satisfy the `is distinct from` filter) — same "not found or
+already handled" shape as every other admin RPC in this project
+(`mark_remboursement_manuel_traite`, `resoudre_litige`,
+`traiter_signalement_publication`). A `suspendu → banni` (or vice versa)
+transition is a real status *change*, not a re-application, so it's
+never rejected by this guard — verified directly: a suspended fixture
+account is successfully escalated to `banni` in the same test run that
+also proves `banni → banni` is rejected.
+
+Side effects, all inside the one call:
+1. Every `offres` row this account owns gets `actif = false` — the exact
+   same toggle the créateur's own désactiver/réactiver button already
+   uses, just applied in bulk. `desactive_manuellement` (migration
+   `0049`) is deliberately left untouched — this is an admin action, not
+   the créateur manually pausing a campagne, and `campagnes_publiques`
+   (below) is independently filtered on `statut_compte` regardless of
+   that column's value, so leaving it `false` doesn't leak anything back
+   once the account is reactivated.
+2. Every `publications` row this account authored gets `masque = true` —
+   the same flag admin moderation (`masquer_publication()`, migration
+   `0030`) already uses.
+3. **Every transaction where this account is the *créateur*, `statut in
+   ('en_attente', 'validee')`, is pushed straight to `remboursee`.**
+   Never the fan side — refunding a créateur's transaction because their
+   *fan* got suspended would make no sense, and the brief only ever asks
+   about the créateur's own in-flight commitments. This is the one design
+   decision worth flagging as plainly as the brief itself asked for:
+   **this reuses the exact same `handle_transaction_remboursement()`
+   trigger (migration `0002`/`0014`) every other refund path in this
+   project already fires through — `resoudre_litige()`'s own
+   `faveur_fan` branch does the identical `statut = 'remboursee'` write
+   for the identical reason.** No new refund mechanism was built, and
+   none should be — a second, parallel way to mark a transaction refunded
+   would only risk drifting out of sync with the one the rest of the app
+   already trusts (`paiements.statut_paiement = 'rembourse'`,
+   `necessite_remboursement_manuel = true`, landing in the existing
+   manual-refund worklist). Verified with `en_attente` and `validee`
+   tested *separately*: the `validee` case also has a real `paiements`
+   row (via `create_paiement_on_validation()`) that the same trigger
+   correctly flips too; an already-`livree` transaction is confirmed left
+   completely untouched (suspension only ever refunds what's still
+   *pending*, never something already delivered).
+
+**`reactiver_compte_admin(p_user_id)`** sets `statut_compte = 'actif'`
+and clears `statut_compte_raison`. **Admin-only, with no counterpart the
+affected user could ever call on their own account — the second design
+decision the brief asked to be stated plainly.** This is the direct
+opposite of voluntary account deactivation elsewhere in this project
+(which *does* let the user reactivate themselves): an admin decision must
+never be something the sanctioned party can undo on their own, or the
+whole mechanism would be theatre. There is no boolean parameter, no
+alternate code path, nothing for a suspended/banned user to call instead
+— verified directly: the affected account itself attempting
+`reactiver_compte_admin()` on its own id gets the exact same
+`'not authorized'` a genuinely uninvolved non-admin would. Deliberately
+does **not** restore `offres.actif`/`publications.masque` — reactivating
+an account is not the same as un-reviewing every content decision it
+triggered; the créateur (offres) or an admin (`masquer_publication()`)
+restores those separately if that's actually wanted. Verified directly,
+not assumed: reactivating a previously-suspended fixture leaves every one
+of its offres `actif = false` and every publication `masque = true`.
+
+All three: `revoke all ... from public` + `grant execute ... to
+authenticated` only (never `anon`, never `service_role` — an admin action
+always requires a real session), same discipline as every write RPC
+since migration `0020`.
+
+### Public-view audit
+
+**The brief's own explicit warning — "c'est le point le plus facile à
+rater silencieusement dans ce lot" — is why this was done by grepping
+every migration for `create (or replace) view`, not by trusting the
+brief's own (labelled non-exhaustive) list carried over from memory.**
+That grep turned up the complete set of 17 views this project has ever
+defined; each one that exposes a user's identity (directly, or
+transitively through a join) was patched to exclude a suspended/banned
+account, "exactement comme si le compte n'existait plus":
+
+- **`profils_publics`** — was a bare `select ... from users` with no
+  `where` clause at all; gained `where statut_compte = 'actif'`.
+  `profils_explorables`/`profils_recherchables` both already select
+  *from* `profils_publics` rather than the raw table, so neither needed
+  its own `create or replace` at all — the exclusion is inherited the
+  instant the view underneath them shrinks, with no column-list change
+  either.
+- **`offres_publiques`** — gained a `join users u on u.id = o.createur_id`
+  it never had (it was a bare `select ... from offres` before), filtered
+  `and u.statut_compte = 'actif'`.
+- **`offres_disponibilite_produit`** — same missing join added. Exposes
+  no identity column at all (`offre_id` + numbers only), but a
+  suspended/banned créateur's stock/availability must still stop being
+  computable through it.
+- **`campagnes_publiques`** — same missing join added, layered on top of
+  its own already-established "never filter on `actif`" exception
+  (migration `0017`) and `desactive_manuellement` (migration `0049`):
+  `statut_compte` is a *third*, independent reason a row can disappear,
+  and it's the one that actually matters here — a naturally-closed or
+  manually-paused campagne still belongs to a real, active account, but
+  a suspended/banned one's campaign must vanish regardless of how it got
+  to `actif = false`.
+- **`publications_visibles`** — needed **two** identities checked, not
+  one: the publication's own `auteur_id` (direct exclusion) *and* — for
+  a repost row — the referenced *original's* own author. This extends
+  the exact masking cascade already established for `orig.masque = true`
+  (a repost of a masked post disappears too, migrations `0031`/`0032`):
+  a repost of a suspended/banned créateur's content is excluded the same
+  way, not left dangling with a still-visible repost wrapper around an
+  author who no longer exists publicly. `publications_accueil`/
+  `publications_explorables` both still read `select v.*` off this view
+  with an unchanged column list, so neither needed recreating — same
+  "inherits the exclusion automatically" reasoning as `profils_publics`'
+  two dependents.
+- **`badges_fidelite_publics`** — needed **two** identities too: the
+  opted-in *fan* (already gated by `badge_fidelite_public`, now also by
+  their own account status) **and** the créateur being supported — a
+  suspended/banned créateur's "Supporters" section must not exist, and a
+  fan's own "badges de fidélité" list must not keep naming a créateur
+  who's been removed from the platform either. Verified as two
+  independent checks, not one: suspending only the fan hides the row via
+  the fan-side join; a separate test (in the CRE_A section) proves the
+  créateur-side join alone already does the same.
+- **`badges_donateur_publics`** — one identity (the donor), same missing
+  `and u.statut_compte = 'actif'` added to its existing `u.badge_donateur_public
+  = true` filter.
+- **`classement_volume`/`classement_reactivite`/`classement_progression`**
+  (migration `0008`, never redefined since) — each already joined `users`
+  and filtered `classement_public = true`; `statut_compte` is a second,
+  independent gate on that same join.
+- **`concours_publics`** (migration `0048`'s `LEFT JOIN` shape) — needed
+  **two separate exclusion branches**, the most involved case in this
+  audit: an accepted **participant** being suspended/banned must drop
+  only *their own* row (a plain `LEFT JOIN ... and u.statut_compte =
+  'actif'` in the join condition would have merely nulled out their
+  display columns while still leaking `createur_id`/`campagne_id`/
+  `montant_collecte` — wrong, the row must disappear entirely, so the
+  check lives in the `WHERE` clause instead: `cp.createur_id is null or
+  u.statut_compte = 'actif'`, the `is null` half preserving migration
+  `0047`'s own "phantom row for zero accepted participants" case); the
+  **organisateur** being suspended/banned must drop the *entire*
+  concours, even if every other participant is perfectly active — a
+  `maitre_du_jeu` concours can exist with zero participants at all
+  (migration `0047`), making the organisateur the only identity such a
+  row has. Verified as genuinely distinct branches, not one masquerading
+  as the other: a participant-suspended concours still shows its other,
+  still-active co-participant; an organisateur-suspended concours
+  disappears completely regardless of that same still-active
+  co-participant.
+- **`concours_vainqueur_objectif`** (migration `0048`) — **not in the
+  brief's own minimal list, found by the same grep and genuinely in
+  scope**: this view crowns a tournament winner purely from summed
+  transaction totals per créateur, with no `users` join at all as
+  originally written. Left unpatched, a suspended/banned participant's
+  own past contributions could still name them winner even though
+  `concours_publics` no longer lists them as a participant at all —
+  extended with the identical join-and-filter for the same "as if the
+  account didn't exist" reasoning, not left as a silent gap. Verified
+  directly: a fixture winner (crossed the objectif before suspension)
+  loses that status the instant their account is suspended.
+
+Every view fix above was verified **individually**, per the brief's own
+explicit instruction (`checklist_2_3.sql`) — not inferred from one
+passing assertion, and always alongside a still-active control account
+(a second créateur, a second participant) proving the exclusion is
+real and scoped, not an accidental blanket one.
+
+### Application-level access block
+
+A suspended/banned session sees a dedicated block screen on its **next**
+navigation/page load — there's no forced real-time logout, consistent
+with this project having no realtime/push infrastructure at all (see
+`/admin`'s own "no forced real-time logout" precedent for `est_admin`
+changes). The check lives in **three separate layouts**
+(`(app)/layout.tsx` — covers `/offres`/`/finance`/`/parametres`;
+`home/layout.tsx`; `explorer/layout.tsx`) rather than one shared place
+higher up, because Next's App Router gives sibling layouts no prop
+channel from a parent — each of the 3 files independently calls
+`auth.getUser()` + `getAccountBlockInfo()` (`src/lib/accountStatus.ts`,
+a plain self-only read — `users_select_self` RLS already lets an
+authenticated caller read every column of their own row, no
+service-role client needed) and renders `AccountBlockedScreen` in place
+of the page + `AppTabBar` when blocked. `/explorer` is the one of the 5
+AppTabBar destinations that's otherwise fully public (no login redirect
+of its own) — the block still applies there too: a suspended/banned
+visitor who still happens to hold a live session gets the block screen
+on that route as well, not treated as an anonymous visitor just because
+the page itself doesn't require a session. Each page's own existing
+`!user → /login` redirect is completely untouched — a blocked account is
+still a real, logged-in session, so that guard alone would never catch
+it; this is a second, independent check layered on top.
+
+`AccountBlockedScreen.tsx` shows a distinct heading/message for
+`suspendu` vs `banni`, the `statut_compte_raison` when one was given (a
+`null` raison renders no line at all, never a blank one), and carries its
+**own `LogoutButton`** — `/parametres`, the only page that normally hosts
+one, is itself one of the blocked pages, so without this a suspended/
+banned user would have no in-app way to sign out at all.
+
+### Admin UI
+
+**"Gestion des comptes"** (`GestionComptesManager.tsx`, in `/admin`'s
+Administration tab, alongside the pre-existing "Gestion des admins")
+searches by pseudo or display name — client-side substring filtering
+over the same full user list `GestionAdminsManager` already receives as
+props (no new search route; this project's own scale doesn't warrant
+one, same reasoning that already justifies that sibling tool's own
+full-list-as-props shape), with results only rendering once at least 2
+characters are typed so this reads as a search tool, not a second
+"browse every account" list sitting next to it. Each result shows a
+status badge (Actif/Suspendu/Banni) and the raison if one's set, plus
+`AccountQuickActions`.
+
+**`AccountQuickActions.tsx`** is one small, shared, self-contained
+component — reused in **three** places: `GestionComptesManager`, and as
+"quick actions" dropped directly into `LitigesManager`/
+`PublicationsSignaleesManager` rows, per explicit instruction, so an
+admin who already has a problematic account's row in front of them never
+has to re-type its pseudo into a second tool. It renders the right
+button set for the account's *current* `statut_compte` (Suspendre+Bannir
+when `actif`; Bannir+Réactiver when `suspendu`; only Réactiver when
+`banni`), collects an optional raison via its own text field (hidden
+once nothing more can be suspended/banned into), and calls the matching
+`/api/admin/{suspendre,bannir,reactiver}-compte` route —
+`router.refresh()` on success, same pattern as every other admin
+`*Manager` in this project.
+
+`LitigesManager` shows **two** `AccountQuickActions` instances per
+litige row (créateur and fan, each clearly labelled) — a litige can mean
+either "the créateur delivered badly" or "the fan is disputing in bad
+faith", so this tool doesn't presume which side is the problematic one,
+it just puts both already-visible accounts one click away.
+`PublicationsSignaleesManager` shows **one**, for the reported
+publication's own `auteur_id` (`row.reportedUserId`, already available
+— `buildPublicationSignalee()` itself needed no new parameter, just to
+start returning a field it already had access to). Both call sites
+receive a `statutComptesById` map (built once in `admin/page.tsx`
+alongside the pre-existing `userLabelById`/`pseudoById`) so
+`AccountQuickActions` always renders the button set matching each
+account's *real, current* status, not a stale assumption.
+
+The three API routes (`/api/admin/suspendre-compte`,
+`/api/admin/bannir-compte`, `/api/admin/reactiver-compte`) are thin RPC
+wrappers, same shape as every other `/api/admin/*` route in this project
+— all real authorization lives in the RPCs themselves.
+
+### Testing
+
+Tested end-to-end in `checklist_2_3.sql` with a dedicated fixture (admin
+D; créateur A — suspended then reactivated, carrying one `don`, one
+`produit`, one `campagne`, and one `video` offre, a public publication,
+an `en_attente` and a `validee` transaction plus an already-`livree`
+one, and two concours — one A organizes, one A merely participates in
+alongside a second, always-active participant; créateur B — organizes
+the second concours, control throughout; créateur C — a second control,
+an accepted participant in both concours; fan A — supports créateur A,
+independently suspended → banned → reactivated later in the same run to
+prove the *fan*-side exclusion and the full status-transition cycle;
+créateur D — a second, dedicated fixture proving `bannir_compte()`'s own
+side effects directly, not just inferred from `suspendre_compte()`'s):
+suspension and bannissement tested **separately**, each rejecting a
+repeat application on the same status while accepting a genuine
+`suspendu → banni` escalation; every side effect (offres deactivated,
+publications masked, `en_attente`/`validee` transactions refunded
+separately, an already-`livree` one left untouched) verified with real
+rows, not assumed; **every one of the 15 exclusion-relevant views tested
+individually**, each alongside a still-active control account;
+`reactiver_compte_admin()` proven admin-only (the affected account's own
+self-reactivation attempt rejected with the same `'not authorized'` a
+stranger would get) and confirmed not to auto-restore offres/
+publications; `anon`/a `NULL auth.uid()` rejected on all three new RPCs,
+plus `appliquer_statut_compte()` confirmed to have no `EXECUTE` grant for
+any role at all (checked under a real non-superuser role — the
+migration-applying superuser bypasses every privilege check
+unconditionally, which would have made this assertion pass even if the
+grant were mistakenly present).
+
+Verified visually end-to-end (same throwaway mock-Supabase/Playwright
+technique used throughout this file): the block screen renders correctly
+for `suspendu` (with raison) and `banni` (without one), in both `fr`
+(light) and `/en/` (dark), with the raison line present/absent exactly as
+expected, a working "Se déconnecter"/"Log out" button, and no `AppTabBar`
+underneath it; all 5 AppTabBar-connected routes (`/home`, `/offres`,
+`/finance`, `/explorer`, `/parametres`) confirmed individually to show
+the block screen for a suspended session, while a genuinely `actif` admin
+session is confirmed *not* blocked on the same route. On `/admin`'s
+Administration tab: "Gestion des comptes" search finds a fixture account
+by pseudo substring scoped correctly (not confused with the unrelated
+"Gestion des admins" list directly above it, which lists the same
+display names for a different purpose), shows the right badge and
+button set for an already-suspended account, and clicking "Réactiver ce
+compte" performs a real RPC round trip against the mock server and the
+row visibly updates to Actif on the same page — confirmed in both `fr`
+(light) and `/en/` (dark).
+
 ## Admin dashboard (`/admin`, migration `0015`)
 
 Business-only page, gated by `users.est_admin` — see the schema entry

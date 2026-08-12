@@ -3,6 +3,7 @@
 import { useLocale, useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { AccountQuickActions, type StatutCompte } from "@/components/admin/AccountQuickActions";
 import { buttonClass } from "@/components/ui/button-styles";
 import { inputClass } from "@/components/ui/field-styles";
 import {
@@ -23,8 +24,12 @@ export interface LitigeEnAttente {
   // disputed before that migration shipped has no real dispute timestamp
   // -- see the urgency badge below for how that's handled.
   contesteAt: string | null;
+  createurId: string;
   createurLabel: string;
+  createurStatutCompte: StatutCompte;
+  fanId: string;
   fanLabel: string;
+  fanStatutCompte: StatutCompte;
 }
 
 const URGENCE_BADGE_CLASS: Record<LitigeUrgence, string> = {
@@ -57,6 +62,7 @@ export function LitigesManager({ litiges }: { litiges: LitigeEnAttente[] }) {
   const t = useTranslations("Admin.litiges");
   const tCommon = useTranslations("Common");
   const tOffers = useTranslations("CreateurProfile.offerTypes");
+  const tComptes = useTranslations("Admin.gestionComptes");
   const locale = useLocale();
   const router = useRouter();
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -142,6 +148,27 @@ export function LitigesManager({ litiges }: { litiges: LitigeEnAttente[] }) {
             {errorById[litige.id] && (
               <p className="text-sm text-danger-600">{errorById[litige.id]}</p>
             )}
+            {/* Account suspension/ban (migration 0052) -- quick actions on
+                whichever side of this litige turns out to be the
+                problematic one, so an admin who's already looking at
+                this row never has to re-type a pseudo into "Gestion des
+                comptes" separately. Both sides are shown -- a litige can
+                mean either a créateur delivered badly or a fan is
+                disputing in bad faith, this tool doesn't presume which. */}
+            <div className="grid grid-cols-1 gap-3 border-t border-border pt-2 sm:grid-cols-2">
+              <div className="flex flex-col gap-1.5">
+                <span className="text-xs font-semibold text-foreground-muted">
+                  {tComptes("quickActionsFor", { label: litige.createurLabel })}
+                </span>
+                <AccountQuickActions userId={litige.createurId} currentStatus={litige.createurStatutCompte} />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <span className="text-xs font-semibold text-foreground-muted">
+                  {tComptes("quickActionsFor", { label: litige.fanLabel })}
+                </span>
+                <AccountQuickActions userId={litige.fanId} currentStatus={litige.fanStatutCompte} />
+              </div>
+            </div>
           </li>
         );
       })}

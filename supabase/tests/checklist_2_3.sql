@@ -8933,6 +8933,950 @@ begin
   raise notice 'PASS: the underlying paiements/transactions rows an admin query reads directly are completely unaffected by the opt-in toggle -- the admin ranking''s "always complete" guarantee holds';
 end $$;
 
+-- =========================================================================
+-- Account suspension/ban by an admin (migration 0052). Fixture: admin D,
+-- créateur A (suspended, then reactivated -- the full offres/
+-- publications/transactions side-effect proof plus every public view in
+-- section 4's list), créateur B (organizes one of the two concours used
+-- below, control throughout), créateur C (a second control, an accepted
+-- participant in both concours), fan A (supports créateur A -- also
+-- independently suspended/banned/reactivated further down to prove the
+-- FAN side of badges_donateur_publics/badges_fidelite_publics, and to
+-- run the full actif->suspendu->banni->actif cycle with each
+-- already-in-that-status rejection along the way), créateur D (a second,
+-- dedicated fixture for bannir_compte's own direct side-effect proof).
+-- =========================================================================
+
+insert into users (
+  id, est_admin
+) values
+  ('52000000-0000-0000-0000-000000000001', true); -- ADMIN
+
+insert into users (
+  id, pseudo, nom_affichage, bio, classement_public, masque_exploration,
+  createur_verifie, badge_donateur_public, badge_fidelite_public, date_creation
+) values
+  ('52000000-0000-0000-0000-000000000002', 'crea52', 'Créateur A', 'bio A',
+   true, false, true, false, false, now()), -- CRE_A (to be suspended)
+  ('52000000-0000-0000-0000-000000000004', 'creb52', 'Créateur B', 'bio B',
+   true, false, true, false, false, now()), -- CRE_B (control, stays active)
+  ('52000000-0000-0000-0000-000000000005', 'crec52', 'Créateur C', 'bio C',
+   true, false, true, false, false, now()); -- CRE_C (control participant)
+
+insert into users (
+  id, pseudo, nom_affichage, badge_donateur_public, badge_fidelite_public
+) values
+  ('52000000-0000-0000-0000-000000000003', 'fana52', 'Fan A', true, true); -- FAN_A
+
+-- Offres for CRE_A: one `don` (offres_publiques), one `produit`
+-- (offres_disponibilite_produit), one `campagne` (campagnes_publiques).
+insert into offres (id, createur_id, type, prix, actif) values
+  ('52000000-0000-0000-0000-000000000010', '52000000-0000-0000-0000-000000000002', 'don', null, true);
+
+insert into offres (id, createur_id, type, prix, actif, stock_total, libelle) values
+  ('52000000-0000-0000-0000-000000000011', '52000000-0000-0000-0000-000000000002', 'produit', 15, true, 5, 'Produit A');
+
+insert into offres (id, createur_id, type, prix, actif, libelle, config) values
+  ('52000000-0000-0000-0000-000000000012', '52000000-0000-0000-0000-000000000002', 'campagne', null, true,
+   'Campagne A', '{"description": "desc", "objectif": 1000}'::jsonb);
+
+-- A publication for CRE_A (public, so it's eligible for
+-- publications_accueil/publications_explorables too, since CRE_A is
+-- createur_verifie).
+insert into publications (id, auteur_id, type, contenu, visibilite) values
+  ('52000000-0000-0000-0000-000000000020', '52000000-0000-0000-0000-000000000002', 'createur', 'Post de A', 'public');
+
+-- Two transactions for CRE_A, one en_attente and one validee, to prove
+-- the refund path handles both distinctly.
+insert into offres (id, createur_id, type, prix, actif) values
+  ('52000000-0000-0000-0000-000000000013', '52000000-0000-0000-0000-000000000002', 'video', 40, true);
+
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('52000000-0000-0000-0000-000000000030', '52000000-0000-0000-0000-000000000003',
+   '52000000-0000-0000-0000-000000000002', '52000000-0000-0000-0000-000000000013', 40, 'en_attente');
+
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('52000000-0000-0000-0000-000000000031', '52000000-0000-0000-0000-000000000003',
+   '52000000-0000-0000-0000-000000000002', '52000000-0000-0000-0000-000000000010', 50, 'en_attente');
+update transactions set statut = 'validee' where id = '52000000-0000-0000-0000-000000000031';
+
+-- A separate, already-delivered transaction (don) so CRE_A shows up in
+-- classement_volume/reactivite/progression and badges_fidelite_publics/
+-- FAN_A's own donor spend -- this one must NOT be swept into
+-- remboursee (only en_attente/validee are), so it stays livree
+-- throughout, letting the classement/badge tests exercise a genuinely
+-- delivered transaction's own createur-side exclusion.
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('52000000-0000-0000-0000-000000000032', '52000000-0000-0000-0000-000000000003',
+   '52000000-0000-0000-0000-000000000002', '52000000-0000-0000-0000-000000000010', 60, 'en_attente');
+update transactions set statut = 'validee' where id = '52000000-0000-0000-0000-000000000032';
+update transactions set statut = 'livree' where id = '52000000-0000-0000-0000-000000000032';
+
+-- Concours: CRE_A as ORGANISATEUR of one (participant CRE_C, active) and
+-- as an accepted PARTICIPANT of another (organized by CRE_B, alongside
+-- CRE_C) -- the two distinct exclusion branches concours_publics needs.
+select set_config('app.current_user_id', '52000000-0000-0000-0000-000000000002', false);
+set role authenticated;
+select creer_concours('Concours organisé par A', now() + interval '10 days', null, null, null);
+reset role;
+
+do $$
+declare
+  v_id uuid;
+begin
+  select id into v_id from concours where organisateur_id = '52000000-0000-0000-0000-000000000002';
+  perform set_config('app.tmp_concours_org_a', v_id::text, false);
+end $$;
+
+-- CRE_C's own campagne to link as a participant (both concours reuse it).
+insert into offres (id, createur_id, type, prix, actif, libelle) values
+  ('52000000-0000-0000-0000-000000000014', '52000000-0000-0000-0000-000000000005', 'campagne', null, true, 'Campagne C');
+
+insert into concours_participants (concours_id, createur_id, campagne_id, invite_statut, conditions_acceptees) values
+  ((select id from concours where organisateur_id = '52000000-0000-0000-0000-000000000002'),
+   '52000000-0000-0000-0000-000000000005', '52000000-0000-0000-0000-000000000014', 'accepte', false);
+
+insert into concours (id, nom, organisateur_id, date_fin) values
+  ('52000000-0000-0000-0000-000000000040', 'Concours organisé par B',
+   '52000000-0000-0000-0000-000000000004', now() + interval '10 days');
+
+insert into concours_participants (concours_id, createur_id, campagne_id, invite_statut, conditions_acceptees) values
+  ('52000000-0000-0000-0000-000000000040', '52000000-0000-0000-0000-000000000002',
+   '52000000-0000-0000-0000-000000000012', 'accepte', false),
+  ('52000000-0000-0000-0000-000000000040', '52000000-0000-0000-0000-000000000005',
+   '52000000-0000-0000-0000-000000000014', 'accepte', false);
+
+-- A dedicated objectif-based concours to prove concours_vainqueur_objectif
+-- loses its winner once that winner's account is suspended. CRE_A alone
+-- crosses the objectif via a real livree contribution to their own
+-- campagne offre.
+insert into concours (id, nom, organisateur_id, date_fin, objectif_points) values
+  ('52000000-0000-0000-0000-000000000041', 'Concours objectif',
+   '52000000-0000-0000-0000-000000000004', now() + interval '10 days', 100);
+
+insert into concours_participants (concours_id, createur_id, campagne_id, invite_statut, conditions_acceptees) values
+  ('52000000-0000-0000-0000-000000000041', '52000000-0000-0000-0000-000000000002',
+   '52000000-0000-0000-0000-000000000012', 'accepte', false);
+
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('52000000-0000-0000-0000-000000000033', '52000000-0000-0000-0000-000000000003',
+   '52000000-0000-0000-0000-000000000002', '52000000-0000-0000-0000-000000000012', 150, 'en_attente');
+update transactions set statut = 'validee' where id = '52000000-0000-0000-0000-000000000033';
+update transactions set statut = 'livree' where id = '52000000-0000-0000-0000-000000000033';
+
+do $$
+declare
+  v_winner uuid;
+begin
+  select createur_id into v_winner from concours_vainqueur_objectif
+    where concours_id = '52000000-0000-0000-0000-000000000041';
+  if v_winner is distinct from '52000000-0000-0000-0000-000000000002' then
+    raise exception 'SETUP FAILED: expected CRE_A to be the winner before suspension, got %', v_winner;
+  end if;
+  raise notice 'SETUP OK: CRE_A is the concours_vainqueur_objectif winner before suspension';
+end $$;
+
+-- ===========================================================================
+-- suspendre_compte(): rejection cases first.
+-- ===========================================================================
+
+-- Non-admin rejected.
+select set_config('app.current_user_id', '52000000-0000-0000-0000-000000000003', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform suspendre_compte('52000000-0000-0000-0000-000000000002', 'test');
+    raise exception 'TEST FAILED: a non-admin was able to call suspendre_compte()';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm != 'not authorized' then
+      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: suspendre_compte() rejects a non-admin caller';
+  end;
+end $$;
+reset role;
+
+do $$
+begin
+  if exists (select 1 from users where id = '52000000-0000-0000-0000-000000000002' and statut_compte != 'actif') then
+    raise exception 'TEST FAILED: a rejected suspendre_compte() attempt still changed statut_compte';
+  end if;
+  raise notice 'PASS: the rejected non-admin attempt left statut_compte untouched';
+end $$;
+
+-- Real success, as the admin.
+select set_config('app.current_user_id', '52000000-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+begin
+  perform suspendre_compte('52000000-0000-0000-0000-000000000002', 'Contenu inapproprié répété');
+end $$;
+reset role;
+
+do $$
+declare
+  v_row record;
+begin
+  select statut_compte, statut_compte_raison, statut_compte_change_par, statut_compte_change_at
+    into v_row
+    from users where id = '52000000-0000-0000-0000-000000000002';
+  if v_row.statut_compte != 'suspendu' then
+    raise exception 'TEST FAILED: expected statut_compte=suspendu, got %', v_row.statut_compte;
+  end if;
+  if v_row.statut_compte_raison != 'Contenu inapproprié répété' then
+    raise exception 'TEST FAILED: statut_compte_raison not recorded correctly, got %', v_row.statut_compte_raison;
+  end if;
+  if v_row.statut_compte_change_par != '52000000-0000-0000-0000-000000000001' then
+    raise exception 'TEST FAILED: statut_compte_change_par should be the admin who acted, got %', v_row.statut_compte_change_par;
+  end if;
+  if v_row.statut_compte_change_at is null then
+    raise exception 'TEST FAILED: statut_compte_change_at was not stamped';
+  end if;
+  raise notice 'PASS: suspendre_compte() records the correct statut/raison/change_par/change_at';
+end $$;
+
+-- Re-entrancy guard: a second suspendre_compte() on an already-suspended
+-- account is rejected, not silently re-applied.
+select set_config('app.current_user_id', '52000000-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform suspendre_compte('52000000-0000-0000-0000-000000000002', 'again');
+    raise exception 'TEST FAILED: suspending an already-suspended account was accepted';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm not like '%already suspendu%' then
+      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: a second suspendre_compte() on an already-suspended account is rejected';
+  end;
+end $$;
+reset role;
+
+do $$
+begin
+  if (select statut_compte_raison from users where id = '52000000-0000-0000-0000-000000000002') = 'again' then
+    raise exception 'TEST FAILED: the rejected re-suspension silently overwrote statut_compte_raison';
+  end if;
+  raise notice 'PASS: the rejected re-suspension left the original raison untouched';
+end $$;
+
+-- ===========================================================================
+-- Side effects: offres deactivated, publications masked, in-flight
+-- transactions (en_attente AND validee, tested separately) refunded via
+-- the pre-existing handle_transaction_remboursement() trigger -- no new
+-- refund mechanism.
+-- ===========================================================================
+
+do $$
+declare
+  v_actif_don boolean;
+  v_actif_produit boolean;
+  v_actif_campagne boolean;
+  v_actif_video boolean;
+begin
+  select actif into v_actif_don from offres where id = '52000000-0000-0000-0000-000000000010';
+  select actif into v_actif_produit from offres where id = '52000000-0000-0000-0000-000000000011';
+  select actif into v_actif_campagne from offres where id = '52000000-0000-0000-0000-000000000012';
+  select actif into v_actif_video from offres where id = '52000000-0000-0000-0000-000000000013';
+  if v_actif_don or v_actif_produit or v_actif_campagne or v_actif_video then
+    raise exception 'TEST FAILED: not every offre was deactivated (don=%, produit=%, campagne=%, video=%)',
+      v_actif_don, v_actif_produit, v_actif_campagne, v_actif_video;
+  end if;
+  raise notice 'PASS: every offre belonging to the suspended créateur was deactivated (actif=false)';
+end $$;
+
+do $$
+declare
+  v_masque boolean;
+begin
+  select masque into v_masque from publications where id = '52000000-0000-0000-0000-000000000020';
+  if v_masque is distinct from true then
+    raise exception 'TEST FAILED: the suspended créateur''s publication was not masked, masque=%', v_masque;
+  end if;
+  raise notice 'PASS: every publication belonging to the suspended créateur was masked';
+end $$;
+
+do $$
+declare
+  v_row record;
+begin
+  -- en_attente transaction.
+  select statut, necessite_remboursement_manuel into v_row
+    from transactions where id = '52000000-0000-0000-0000-000000000030';
+  if v_row.statut != 'remboursee' or v_row.necessite_remboursement_manuel != true then
+    raise exception 'TEST FAILED: the en_attente transaction was not refunded correctly (statut=%, necessite=%)',
+      v_row.statut, v_row.necessite_remboursement_manuel;
+  end if;
+  raise notice 'PASS: an en_attente transaction is pushed to remboursee with necessite_remboursement_manuel=true';
+end $$;
+
+do $$
+declare
+  v_row record;
+  v_paiement_statut text;
+begin
+  -- validee transaction -- also has a real paiements row via
+  -- create_paiement_on_validation(), so the SAME
+  -- handle_transaction_remboursement() trigger must also flip that.
+  select statut, necessite_remboursement_manuel into v_row
+    from transactions where id = '52000000-0000-0000-0000-000000000031';
+  if v_row.statut != 'remboursee' or v_row.necessite_remboursement_manuel != true then
+    raise exception 'TEST FAILED: the validee transaction was not refunded correctly (statut=%, necessite=%)',
+      v_row.statut, v_row.necessite_remboursement_manuel;
+  end if;
+  select statut_paiement into v_paiement_statut from paiements
+    where transaction_id = '52000000-0000-0000-0000-000000000031';
+  if v_paiement_statut != 'rembourse' then
+    raise exception 'TEST FAILED: the linked paiements row was not marked rembourse, got %', v_paiement_statut;
+  end if;
+  raise notice 'PASS: a validee transaction is pushed to remboursee, its paiements row set to rembourse -- same trigger resoudre_litige() already relies on, no new refund mechanism';
+end $$;
+
+do $$
+declare
+  v_statut text;
+begin
+  -- The already-delivered (livree) transaction must be left completely
+  -- untouched -- suspension only ever refunds en_attente/validee.
+  select statut into v_statut from transactions where id = '52000000-0000-0000-0000-000000000032';
+  if v_statut != 'livree' then
+    raise exception 'TEST FAILED: an already-delivered transaction was touched by suspension, statut=%', v_statut;
+  end if;
+  raise notice 'PASS: an already-livree transaction is left untouched by suspension';
+end $$;
+
+-- ===========================================================================
+-- Public-view audit: CRE_A must be gone from every one of these views
+-- (section 4), tested individually. CRE_B/CRE_C stay untouched throughout
+-- as controls, so each assertion also proves this isn't an accidental
+-- blanket exclusion.
+-- ===========================================================================
+
+do $$
+begin
+  if exists (select 1 from profils_publics where id = '52000000-0000-0000-0000-000000000002') then
+    raise exception 'TEST FAILED: suspended CRE_A still appears in profils_publics';
+  end if;
+  if not exists (select 1 from profils_publics where id = '52000000-0000-0000-0000-000000000004') then
+    raise exception 'TEST FAILED: control CRE_B disappeared from profils_publics too';
+  end if;
+  raise notice 'PASS: profils_publics excludes the suspended CRE_A while the active control CRE_B stays visible';
+end $$;
+
+do $$
+begin
+  if exists (select 1 from profils_explorables where id = '52000000-0000-0000-0000-000000000002') then
+    raise exception 'TEST FAILED: suspended CRE_A still appears in profils_explorables';
+  end if;
+  raise notice 'PASS: profils_explorables excludes the suspended CRE_A (inherited from profils_publics)';
+end $$;
+
+do $$
+begin
+  if exists (select 1 from profils_recherchables where id = '52000000-0000-0000-0000-000000000002') then
+    raise exception 'TEST FAILED: suspended CRE_A still appears in profils_recherchables';
+  end if;
+  raise notice 'PASS: profils_recherchables excludes the suspended CRE_A (inherited from profils_publics)';
+end $$;
+
+do $$
+begin
+  if exists (select 1 from offres_publiques where createur_id = '52000000-0000-0000-0000-000000000002') then
+    raise exception 'TEST FAILED: suspended CRE_A still has offres in offres_publiques';
+  end if;
+  raise notice 'PASS: offres_publiques excludes every offre belonging to the suspended CRE_A';
+end $$;
+
+do $$
+begin
+  if exists (
+    select 1 from offres_disponibilite_produit
+    where offre_id = '52000000-0000-0000-0000-000000000011'
+  ) then
+    raise exception 'TEST FAILED: suspended CRE_A''s produit offre still appears in offres_disponibilite_produit';
+  end if;
+  raise notice 'PASS: offres_disponibilite_produit excludes the suspended CRE_A''s produit offre';
+end $$;
+
+do $$
+begin
+  if exists (
+    select 1 from campagnes_publiques where createur_id = '52000000-0000-0000-0000-000000000002'
+  ) then
+    raise exception 'TEST FAILED: suspended CRE_A still has campagnes in campagnes_publiques';
+  end if;
+  raise notice 'PASS: campagnes_publiques excludes the suspended CRE_A''s campagne, even though it deliberately never filters on actif';
+end $$;
+
+do $$
+begin
+  if exists (
+    select 1 from publications_visibles where auteur_id = '52000000-0000-0000-0000-000000000002'
+  ) then
+    raise exception 'TEST FAILED: suspended CRE_A''s publication still appears in publications_visibles';
+  end if;
+  raise notice 'PASS: publications_visibles excludes the suspended CRE_A''s publication';
+end $$;
+
+-- publications_accueil/publications_explorables need `authenticated`, not
+-- superuser context, same as every other test in this file that reads
+-- them -- but they're just plain views (select v.*), reading as the
+-- superuser directly still works and is enough to prove the row is gone
+-- (this file already proves the anon-grant distinction elsewhere).
+do $$
+begin
+  if exists (
+    select 1 from publications_accueil where auteur_id = '52000000-0000-0000-0000-000000000002'
+  ) then
+    raise exception 'TEST FAILED: suspended CRE_A''s publication still appears in publications_accueil';
+  end if;
+  if exists (
+    select 1 from publications_explorables where auteur_id = '52000000-0000-0000-0000-000000000002'
+  ) then
+    raise exception 'TEST FAILED: suspended CRE_A''s publication still appears in publications_explorables';
+  end if;
+  raise notice 'PASS: publications_accueil and publications_explorables both exclude the suspended CRE_A''s publication (inherited from publications_visibles)';
+end $$;
+
+do $$
+begin
+  if exists (
+    select 1 from classement_volume where createur_id = '52000000-0000-0000-0000-000000000002'
+  ) then
+    raise exception 'TEST FAILED: suspended CRE_A still appears in classement_volume';
+  end if;
+  if not exists (
+    select 1 from classement_volume where createur_id = '52000000-0000-0000-0000-000000000004'
+  ) then
+    raise exception 'TEST FAILED: control CRE_B disappeared from classement_volume too';
+  end if;
+  raise notice 'PASS: classement_volume excludes the suspended CRE_A while the active control CRE_B still ranks';
+end $$;
+
+do $$
+begin
+  if exists (
+    select 1 from classement_reactivite where createur_id = '52000000-0000-0000-0000-000000000002'
+  ) then
+    raise exception 'TEST FAILED: suspended CRE_A still appears in classement_reactivite';
+  end if;
+  raise notice 'PASS: classement_reactivite excludes the suspended CRE_A';
+end $$;
+
+do $$
+begin
+  if exists (
+    select 1 from classement_progression where createur_id = '52000000-0000-0000-0000-000000000002'
+  ) then
+    raise exception 'TEST FAILED: suspended CRE_A still appears in classement_progression';
+  end if;
+  raise notice 'PASS: classement_progression excludes the suspended CRE_A';
+end $$;
+
+do $$
+begin
+  if exists (
+    select 1 from badges_fidelite_publics where createur_id = '52000000-0000-0000-0000-000000000002'
+  ) then
+    raise exception 'TEST FAILED: badges_fidelite_publics still shows FAN_A supporting the suspended CRE_A';
+  end if;
+  raise notice 'PASS: badges_fidelite_publics excludes a row whose créateur side is suspended';
+end $$;
+
+-- concours_publics: the PARTICIPANT-exclusion branch. CRE_A's own row in
+-- concours 0040 (organized by the still-active CRE_B) must disappear,
+-- while CRE_C's row in that SAME concours stays -- proving this is a
+-- per-row exclusion, not the whole concours vanishing.
+do $$
+begin
+  if exists (
+    select 1 from concours_publics
+    where concours_id = '52000000-0000-0000-0000-000000000040'
+      and createur_id = '52000000-0000-0000-0000-000000000002'
+  ) then
+    raise exception 'TEST FAILED: suspended CRE_A''s participant row still appears in concours_publics';
+  end if;
+  if not exists (
+    select 1 from concours_publics
+    where concours_id = '52000000-0000-0000-0000-000000000040'
+      and createur_id = '52000000-0000-0000-0000-000000000005'
+  ) then
+    raise exception 'TEST FAILED: control CRE_C''s participant row disappeared too';
+  end if;
+  raise notice 'PASS: concours_publics excludes only the suspended participant''s own row, leaving a still-active co-participant visible';
+end $$;
+
+-- concours_publics: the ORGANISATEUR-exclusion branch. The ENTIRE
+-- concours CRE_A organizes must disappear, even though its other
+-- participant (CRE_C) is perfectly active.
+do $$
+begin
+  if exists (
+    select 1 from concours_publics where concours_id = current_setting('app.tmp_concours_org_a')::uuid
+  ) then
+    raise exception 'TEST FAILED: a concours organized by the suspended CRE_A still appears in concours_publics';
+  end if;
+  raise notice 'PASS: concours_publics excludes an entire concours once its organisateur is suspended, regardless of its other participants'' own status';
+end $$;
+
+-- concours_vainqueur_objectif: CRE_A was the winner before suspension
+-- (asserted at setup time); the winner row must be gone now.
+do $$
+declare
+  v_exists boolean;
+begin
+  select exists(
+    select 1 from concours_vainqueur_objectif
+    where concours_id = '52000000-0000-0000-0000-000000000041'
+  ) into v_exists;
+  if v_exists then
+    raise exception 'TEST FAILED: concours_vainqueur_objectif still names a winner for a concours whose only qualifying participant is now suspended';
+  end if;
+  raise notice 'PASS: concours_vainqueur_objectif loses its winner once that participant is suspended';
+end $$;
+
+-- badges_donateur_publics: exercised via FAN_A (the donor side), not
+-- CRE_A -- see the dedicated FAN_A suspend/ban section further below,
+-- which is also where "rejected if already in that status" is proven
+-- for both suspendre_compte and bannir_compte end to end.
+
+-- ===========================================================================
+-- reactiver_compte_admin(): admin-only, never self-service. CRE_A (still
+-- suspended from above) tries to reactivate themselves first.
+-- ===========================================================================
+
+select set_config('app.current_user_id', '52000000-0000-0000-0000-000000000002', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform reactiver_compte_admin('52000000-0000-0000-0000-000000000002');
+    raise exception 'TEST FAILED: a suspended user was able to reactivate their own account';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm != 'not authorized' then
+      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: reactiver_compte_admin() rejects the affected user trying to reactivate themselves -- admin-only, by design';
+  end;
+end $$;
+reset role;
+
+do $$
+begin
+  if (select statut_compte from users where id = '52000000-0000-0000-0000-000000000002') != 'suspendu' then
+    raise exception 'TEST FAILED: the rejected self-reactivation attempt still changed statut_compte';
+  end if;
+  raise notice 'PASS: the rejected self-reactivation attempt left statut_compte untouched';
+end $$;
+
+-- A real admin reactivates CRE_A.
+select set_config('app.current_user_id', '52000000-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+begin
+  perform reactiver_compte_admin('52000000-0000-0000-0000-000000000002');
+end $$;
+reset role;
+
+do $$
+declare
+  v_row record;
+begin
+  select statut_compte, statut_compte_raison into v_row
+    from users where id = '52000000-0000-0000-0000-000000000002';
+  if v_row.statut_compte != 'actif' then
+    raise exception 'TEST FAILED: expected statut_compte=actif after reactivation, got %', v_row.statut_compte;
+  end if;
+  if v_row.statut_compte_raison is not null then
+    raise exception 'TEST FAILED: statut_compte_raison should be cleared on reactivation, got %', v_row.statut_compte_raison;
+  end if;
+  raise notice 'PASS: reactiver_compte_admin() sets statut_compte=actif and clears statut_compte_raison';
+end $$;
+
+do $$
+begin
+  if not exists (select 1 from profils_publics where id = '52000000-0000-0000-0000-000000000002') then
+    raise exception 'TEST FAILED: CRE_A did not reappear in profils_publics after reactivation';
+  end if;
+  raise notice 'PASS: CRE_A reappears in profils_publics the instant they are reactivated';
+end $$;
+
+do $$
+begin
+  -- Deliberately NOT restored: offres.actif/publications.masque stay as
+  -- suspendre_compte() left them -- reactivating an account is not the
+  -- same as un-reviewing every content decision it triggered.
+  if exists (select 1 from offres where createur_id = '52000000-0000-0000-0000-000000000002' and actif = true) then
+    raise exception 'TEST FAILED: reactivating the account silently re-activated its offres too';
+  end if;
+  if exists (select 1 from publications where auteur_id = '52000000-0000-0000-0000-000000000002' and masque = false) then
+    raise exception 'TEST FAILED: reactivating the account silently unmasked its publications too';
+  end if;
+  raise notice 'PASS: reactivation does not auto-restore offres.actif or publications.masque -- the créateur/an admin must do that separately';
+end $$;
+
+-- Re-entrancy guard: reactivating an already-active account is rejected.
+select set_config('app.current_user_id', '52000000-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform reactiver_compte_admin('52000000-0000-0000-0000-000000000002');
+    raise exception 'TEST FAILED: reactivating an already-active account was accepted';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm not like '%already active%' then
+      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: a second reactiver_compte_admin() on an already-active account is rejected';
+  end;
+end $$;
+reset role;
+
+-- ===========================================================================
+-- bannir_compte(): tested separately from suspendre_compte, own
+-- side-effect proof (same shared appliquer_statut_compte() helper, but a
+-- distinct entry point deserves its own direct check, not just an
+-- inference from suspendre_compte's).
+-- ===========================================================================
+
+insert into users (id, pseudo, nom_affichage) values
+  ('52000000-0000-0000-0000-000000000006', 'cred52', 'Créateur D (banni)');
+insert into offres (id, createur_id, type, prix, actif) values
+  ('52000000-0000-0000-0000-000000000015', '52000000-0000-0000-0000-000000000006', 'don', null, true);
+insert into publications (id, auteur_id, type, contenu, visibilite) values
+  ('52000000-0000-0000-0000-000000000021', '52000000-0000-0000-0000-000000000006', 'createur', 'Post de D', 'public');
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('52000000-0000-0000-0000-000000000034', '52000000-0000-0000-0000-000000000003',
+   '52000000-0000-0000-0000-000000000006', '52000000-0000-0000-0000-000000000015', 20, 'en_attente');
+
+-- Non-admin rejected.
+select set_config('app.current_user_id', '52000000-0000-0000-0000-000000000006', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform bannir_compte('52000000-0000-0000-0000-000000000006', 'fraude');
+    raise exception 'TEST FAILED: a non-admin was able to call bannir_compte()';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm != 'not authorized' then
+      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: bannir_compte() rejects a non-admin caller';
+  end;
+end $$;
+reset role;
+
+select set_config('app.current_user_id', '52000000-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+begin
+  perform bannir_compte('52000000-0000-0000-0000-000000000006', 'fraude confirmée');
+end $$;
+reset role;
+
+do $$
+declare
+  v_row record;
+begin
+  select statut_compte, statut_compte_raison into v_row
+    from users where id = '52000000-0000-0000-0000-000000000006';
+  if v_row.statut_compte != 'banni' or v_row.statut_compte_raison != 'fraude confirmée' then
+    raise exception 'TEST FAILED: bannir_compte() did not record the right statut/raison (statut=%, raison=%)',
+      v_row.statut_compte, v_row.statut_compte_raison;
+  end if;
+  if exists (select 1 from offres where id = '52000000-0000-0000-0000-000000000015' and actif = true) then
+    raise exception 'TEST FAILED: bannir_compte() did not deactivate the offre';
+  end if;
+  if exists (select 1 from publications where id = '52000000-0000-0000-0000-000000000021' and masque = false) then
+    raise exception 'TEST FAILED: bannir_compte() did not mask the publication';
+  end if;
+  if (select statut from transactions where id = '52000000-0000-0000-0000-000000000034') != 'remboursee' then
+    raise exception 'TEST FAILED: bannir_compte() did not refund the in-flight transaction';
+  end if;
+  raise notice 'PASS: bannir_compte() applies the exact same side effects as suspendre_compte() (statut/raison, offres, publications, transactions)';
+end $$;
+
+do $$
+begin
+  if exists (select 1 from profils_publics where id = '52000000-0000-0000-0000-000000000006') then
+    raise exception 'TEST FAILED: a banned account still appears in profils_publics';
+  end if;
+  raise notice 'PASS: a banned account disappears from profils_publics too, same as a suspended one';
+end $$;
+
+-- Re-entrancy guard for bannir_compte specifically.
+select set_config('app.current_user_id', '52000000-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform bannir_compte('52000000-0000-0000-0000-000000000006', 'again');
+    raise exception 'TEST FAILED: banning an already-banned account was accepted';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm not like '%already banni%' then
+      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: a second bannir_compte() on an already-banned account is rejected';
+  end;
+end $$;
+reset role;
+
+-- ===========================================================================
+-- FAN_A: full statut_compte transition cycle (actif -> suspendu -> banni
+-- -> actif), each step's "already in that status" rejection proven, plus
+-- the fan-side exclusion for badges_donateur_publics and
+-- badges_fidelite_publics (a SEPARATE créateur, CRE_B, still active
+-- throughout, so this isolates the fan-side check from CRE_A's own
+-- créateur-side exclusion proven above).
+-- ===========================================================================
+
+insert into offres (id, createur_id, type, prix, actif) values
+  ('52000000-0000-0000-0000-000000000016', '52000000-0000-0000-0000-000000000004', 'don', null, true);
+insert into transactions (id, fan_id, createur_id, offre_id, montant, statut) values
+  ('52000000-0000-0000-0000-000000000035', '52000000-0000-0000-0000-000000000003',
+   '52000000-0000-0000-0000-000000000004', '52000000-0000-0000-0000-000000000016', 30, 'en_attente');
+update transactions set statut = 'validee' where id = '52000000-0000-0000-0000-000000000035';
+update transactions set statut = 'livree' where id = '52000000-0000-0000-0000-000000000035';
+
+do $$
+begin
+  if not exists (
+    select 1 from badges_donateur_publics where user_id = '52000000-0000-0000-0000-000000000003'
+  ) then
+    raise exception 'SETUP FAILED: FAN_A should have a donor badge before being suspended';
+  end if;
+  if not exists (
+    select 1 from badges_fidelite_publics
+    where fan_id = '52000000-0000-0000-0000-000000000003' and createur_id = '52000000-0000-0000-0000-000000000004'
+  ) then
+    raise exception 'SETUP FAILED: FAN_A should have a loyalty badge for CRE_B before being suspended';
+  end if;
+  raise notice 'SETUP OK: FAN_A has both a donor badge and a loyalty badge (for CRE_B) before suspension';
+end $$;
+
+select set_config('app.current_user_id', '52000000-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+begin
+  perform suspendre_compte('52000000-0000-0000-0000-000000000003', 'suspicion');
+end $$;
+reset role;
+
+do $$
+begin
+  if exists (select 1 from badges_donateur_publics where user_id = '52000000-0000-0000-0000-000000000003') then
+    raise exception 'TEST FAILED: badges_donateur_publics still shows the suspended FAN_A';
+  end if;
+  raise notice 'PASS: badges_donateur_publics excludes a suspended fan''s own donor badge';
+end $$;
+
+do $$
+begin
+  if exists (
+    select 1 from badges_fidelite_publics
+    where fan_id = '52000000-0000-0000-0000-000000000003' and createur_id = '52000000-0000-0000-0000-000000000004'
+  ) then
+    raise exception 'TEST FAILED: badges_fidelite_publics still shows the suspended FAN_A supporting the still-active CRE_B';
+  end if;
+  raise notice 'PASS: badges_fidelite_publics excludes a row whose FAN side is suspended, independent of the créateur-side check proven earlier';
+end $$;
+
+-- Suspending the already-suspended FAN_A again is rejected.
+select set_config('app.current_user_id', '52000000-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform suspendre_compte('52000000-0000-0000-0000-000000000003', 'again');
+    raise exception 'TEST FAILED: suspending an already-suspended FAN_A was accepted';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm not like '%already suspendu%' then
+      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: re-suspending an already-suspended fan is rejected the same way as for a créateur';
+  end;
+end $$;
+
+-- suspendu -> banni succeeds (a DIFFERENT target status, so this is a
+-- legitimate transition, not a re-application).
+do $$
+begin
+  perform bannir_compte('52000000-0000-0000-0000-000000000003', 'confirmé');
+end $$;
+reset role;
+
+do $$
+begin
+  if (select statut_compte from users where id = '52000000-0000-0000-0000-000000000003') != 'banni' then
+    raise exception 'TEST FAILED: FAN_A should now be banni';
+  end if;
+  raise notice 'PASS: a suspendu account can be escalated to banni (a real status change, not a no-op)';
+end $$;
+
+-- banni -> banni rejected.
+select set_config('app.current_user_id', '52000000-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform bannir_compte('52000000-0000-0000-0000-000000000003', 'again');
+    raise exception 'TEST FAILED: banning an already-banned FAN_A was accepted';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm not like '%already banni%' then
+      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: re-banning an already-banned fan is rejected';
+  end;
+end $$;
+
+-- banni -> actif succeeds via reactiver_compte_admin.
+do $$
+begin
+  perform reactiver_compte_admin('52000000-0000-0000-0000-000000000003');
+end $$;
+reset role;
+
+do $$
+begin
+  if (select statut_compte from users where id = '52000000-0000-0000-0000-000000000003') != 'actif' then
+    raise exception 'TEST FAILED: FAN_A should be actif again';
+  end if;
+  if not exists (select 1 from badges_donateur_publics where user_id = '52000000-0000-0000-0000-000000000003') then
+    raise exception 'TEST FAILED: FAN_A''s donor badge did not reappear after reactivation';
+  end if;
+  raise notice 'PASS: reactivating FAN_A restores their donor badge visibility immediately (no separate opt-in needed again)';
+end $$;
+
+-- actif -> actif (reactivating an already-active FAN_A) rejected.
+select set_config('app.current_user_id', '52000000-0000-0000-0000-000000000001', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform reactiver_compte_admin('52000000-0000-0000-0000-000000000003');
+    raise exception 'TEST FAILED: reactivating an already-active FAN_A was accepted';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm not like '%already active%' then
+      raise exception 'TEST FAILED: rejected for the wrong reason: %', sqlerrm;
+    end if;
+    raise notice 'PASS: reactivating an already-active fan is rejected too';
+  end;
+end $$;
+reset role;
+
+-- ===========================================================================
+-- Grant audit -- same 0020/0021 pattern as every write RPC in this
+-- project: anon has no EXECUTE at all, authenticated with a NULL
+-- auth.uid() is rejected by each function's own check, and authenticated
+-- still holds EXECUTE positively.
+-- ===========================================================================
+
+select set_config('app.current_user_id', '', false);
+set role anon;
+do $$
+begin
+  begin
+    perform suspendre_compte('00000000-0000-0000-0000-000000000000', 'x');
+    raise exception 'TEST FAILED: anon could call suspendre_compte()';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE on suspendre_compte()';
+  end;
+  begin
+    perform bannir_compte('00000000-0000-0000-0000-000000000000', 'x');
+    raise exception 'TEST FAILED: anon could call bannir_compte()';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE on bannir_compte()';
+  end;
+  begin
+    perform reactiver_compte_admin('00000000-0000-0000-0000-000000000000');
+    raise exception 'TEST FAILED: anon could call reactiver_compte_admin()';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE on reactiver_compte_admin()';
+  end;
+end $$;
+reset role;
+
+select set_config('app.current_user_id', '', false);
+set role authenticated;
+do $$
+begin
+  begin
+    perform suspendre_compte('00000000-0000-0000-0000-000000000000', 'x');
+    raise exception 'TEST FAILED: authenticated with a NULL auth.uid() could call suspendre_compte()';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm != 'not authorized' then
+      raise exception 'TEST FAILED: unexpected error: %', sqlerrm;
+    end if;
+    raise notice 'PASS: suspendre_compte() rejects a NULL auth.uid() (NULL-safe est_admin check)';
+  end;
+  begin
+    perform bannir_compte('00000000-0000-0000-0000-000000000000', 'x');
+    raise exception 'TEST FAILED: authenticated with a NULL auth.uid() could call bannir_compte()';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm != 'not authorized' then
+      raise exception 'TEST FAILED: unexpected error: %', sqlerrm;
+    end if;
+    raise notice 'PASS: bannir_compte() rejects a NULL auth.uid()';
+  end;
+  begin
+    perform reactiver_compte_admin('00000000-0000-0000-0000-000000000000');
+    raise exception 'TEST FAILED: authenticated with a NULL auth.uid() could call reactiver_compte_admin()';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm != 'not authorized' then
+      raise exception 'TEST FAILED: unexpected error: %', sqlerrm;
+    end if;
+    raise notice 'PASS: reactiver_compte_admin() rejects a NULL auth.uid()';
+  end;
+end $$;
+reset role;
+
+do $$
+begin
+  if not has_function_privilege('authenticated', 'suspendre_compte(uuid,text)', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lost EXECUTE on suspendre_compte()';
+  end if;
+  if not has_function_privilege('authenticated', 'bannir_compte(uuid,text)', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lost EXECUTE on bannir_compte()';
+  end if;
+  if not has_function_privilege('authenticated', 'reactiver_compte_admin(uuid)', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lost EXECUTE on reactiver_compte_admin()';
+  end if;
+  raise notice 'PASS: authenticated still holds EXECUTE on all three new functions';
+end $$;
+
+-- appliquer_statut_compte() is a private, non-granted helper -- never
+-- meant to be callable by any role directly, same "internal-only"
+-- discipline as verifier_campagne_du_createur() (migration 0046). Must
+-- be checked under a real non-superuser role -- the default session role
+-- this test file otherwise runs as (the migration-applying superuser)
+-- bypasses every privilege check unconditionally, which would make this
+-- assertion pass even if the grant were mistakenly present.
+set role authenticated;
+do $$
+begin
+  begin
+    perform appliquer_statut_compte('00000000-0000-0000-0000-000000000000', 'suspendu', 'x');
+    raise exception 'TEST FAILED: authenticated could call the internal appliquer_statut_compte() directly';
+  exception when insufficient_privilege then
+    raise notice 'PASS: appliquer_statut_compte() has no EXECUTE grant for any role -- internal-only, callable only from inside suspendre_compte()/bannir_compte()''s own execution context';
+  end;
+end $$;
+reset role;
+
 do $$
 begin
   raise notice 'ALL SQL CHECKLIST TESTS PASSED';
