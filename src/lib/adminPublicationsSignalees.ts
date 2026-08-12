@@ -28,6 +28,12 @@ export interface PublicationSignalee {
   // the admin actually saw and flagged, and what the permalink must
   // point at (see PublicationsSignaleesManager.tsx).
   id: string;
+  // The reported publication's own auteur -- always row.reportedUserId,
+  // the same id signaler_publication() itself sets `reported_user_id`
+  // to (migration 0030). Added for the account suspension/ban "quick
+  // actions" (migration 0052): the admin acts on this account, never the
+  // repost-original's author (that's a different, unrelated account).
+  auteurId: string;
   // What to display: the original's contenu when the reported
   // publication is a repost (a repost's own contenu is always null --
   // see publications_contenu_coherent), else the publication's own.
@@ -76,6 +82,7 @@ export function buildPublicationSignalee(
 
   return {
     id: publication?.id ?? row.reportId,
+    auteurId: row.reportedUserId,
     contenu,
     pseudo: publication ? (pseudoById.get(row.reportedUserId) ?? null) : null,
     isRepost,

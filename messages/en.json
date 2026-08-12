@@ -375,6 +375,13 @@
     "button": "🚪 Log out",
     "loading": "Logging out..."
   },
+  "AccountBlocked": {
+    "suspenduHeading": "Account suspended",
+    "suspenduMessage": "Your account has been temporarily suspended by a FanBoss administrator. You can't use the platform until your account is reactivated.",
+    "banniHeading": "Account banned",
+    "banniMessage": "Your account has been banned by a FanBoss administrator, per the Terms of Service. You can no longer use the platform.",
+    "raisonLabel": "Reason: {raison}"
+  },
   "Dashboard": {
     "heading": "Performance",
     "demandesHeading": "Requests awaiting your response",
@@ -641,6 +648,23 @@
     "gestionAdmins": {
       "grant": "Grant admin status",
       "revoke": "Revoke admin status"
+    },
+    "gestionComptesHeading": "Manage accounts",
+    "gestionComptesIntro": "Suspending or banning an account is always possible, even with transactions in flight -- they're automatically refunded (manual-refund queue).",
+    "gestionComptes": {
+      "searchPlaceholder": "Search by pseudo or name...",
+      "searchEmpty": "No account matches this search.",
+      "statut": {
+        "actif": "Active",
+        "suspendu": "Suspended",
+        "banni": "Banned"
+      },
+      "raisonLabel": "Reason: {raison}",
+      "raisonPlaceholder": "Reason (optional)",
+      "quickActionsFor": "{label}'s account",
+      "quickSuspendre": "Suspend this account",
+      "quickBannir": "Ban this account",
+      "quickReactiver": "Reactivate this account"
     },
     "remboursements": {
       "empty": "No manual refund pending.",

@@ -375,6 +375,13 @@
     "button": "🚪 Se déconnecter",
     "loading": "Déconnexion..."
   },
+  "AccountBlocked": {
+    "suspenduHeading": "Compte suspendu",
+    "suspenduMessage": "Ton compte a été temporairement suspendu par un administrateur de FanBoss. Tu ne peux pas utiliser la plateforme tant que ton compte n'a pas été réactivé.",
+    "banniHeading": "Compte banni",
+    "banniMessage": "Ton compte a été banni par un administrateur de FanBoss, en application des CGU. Tu ne peux plus utiliser la plateforme.",
+    "raisonLabel": "Raison : {raison}"
+  },
   "Dashboard": {
     "heading": "Performance",
     "demandesHeading": "Demandes en attente de votre réponse",
@@ -641,6 +648,23 @@
     "gestionAdmins": {
       "grant": "Accorder le statut admin",
       "revoke": "Retirer le statut admin"
+    },
+    "gestionComptesHeading": "Gestion des comptes",
+    "gestionComptesIntro": "Suspendre ou bannir un compte reste toujours possible, même avec des transactions en cours -- elles sont automatiquement remboursées (file de remboursements manuels).",
+    "gestionComptes": {
+      "searchPlaceholder": "Rechercher par pseudo ou nom...",
+      "searchEmpty": "Aucun compte ne correspond à cette recherche.",
+      "statut": {
+        "actif": "Actif",
+        "suspendu": "Suspendu",
+        "banni": "Banni"
+      },
+      "raisonLabel": "Raison : {raison}",
+      "raisonPlaceholder": "Raison (optionnelle)",
+      "quickActionsFor": "Compte de {label}",
+      "quickSuspendre": "Suspendre ce compte",
+      "quickBannir": "Bannir ce compte",
+      "quickReactiver": "Réactiver ce compte"
     },
     "remboursements": {
       "empty": "Aucun remboursement manuel en attente.",
