@@ -177,7 +177,8 @@
       "shoutout": "Shoutout",
       "contenu_debloque": "Exclusive content",
       "evenement_live": "Private live access",
-      "campagne": "Fundraising campaign"
+      "campagne": "Fundraising campaign",
+      "produit": "Physical product"
     },
     "reassurance": {
       "whatsapp": "Automatically refunded if the creator doesn't accept your request within 48h.",
@@ -633,6 +634,22 @@
     "statTransactions": "Transactions",
     "statGmvBrut": "Gross GMV",
     "statCreateursActifs": "Active créateurs",
+    "usersHeading": "Users",
+    "statTotalInscrits": "Total registered",
+    "statUtilisateursActifs": "Active (last 30 days)",
+    "chartInscriptionsTitle": "New signups / day",
+    "argentHeading": "Money",
+    "chartGmvTitle": "Total transacted volume (GMV) / day",
+    "chartRevenuTitle": "Real FanBoss revenue (commission) / day",
+    "chartBreakdownTitle": "Breakdown by offer type (last 30 days)",
+    "activiteHeading": "Activity",
+    "chartPublicationsTitle": "Publications created / day",
+    "statCreateursProduit": "Créateurs with an active physical product",
+    "statConcours": "Contests created (total)",
+    "charts": {
+      "today": "Today",
+      "breakdownEmpty": "No transactions in this period."
+    },
     "remboursementsHeading": "Manual refunds pending",
     "remboursementsIntro": "Transactions refunded on FanBoss's side but not yet actually refunded via CinetPay (see CLAUDE.md “Automatic CinetPay refunds”). Once the refund has been done manually in the CinetPay dashboard, mark it as processed here.",
     "verificationHeading": "Verifications",
