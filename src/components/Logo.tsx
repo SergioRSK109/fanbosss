@@ -11,8 +11,8 @@
 // 3-path outline below, verbatim, per explicit instruction not to
 // redraw it. Its own native coordinate space is a 48x48 box (the same
 // slot the old mark occupied at x=4,y=4 in this component's outer
-// viewBox), so it's nested here via its own `<svg viewBox="0 0 48 48">`
-// rather than transformed/rescaled. Outline only -- `fill="none"`,
+// viewBox), so it's nested here via its own `<svg>` rather than
+// transformed/rescaled. Outline only -- `fill="none"`,
 // `stroke="currentColor"` -- same "no color baked into the path itself"
 // discipline as every icon in navIcons.tsx/icons.tsx: currentColor is
 // resolved here via an explicit `style={{ color: ... }}` on the nested
@@ -21,6 +21,20 @@
 // No more `<linearGradient>`/`useId()` (the old mark's only reason to be
 // a client component at all, despite having no interactivity) -- this
 // is a plain, deterministic Server Component now.
+//
+// strokeWidth="2" -- lost during the original integration (fell back to
+// the SVG default of 1), reintroduced to match the Claude Design source.
+//
+// The nested viewBox is NOT the path's own "0 0 48 48" native box --
+// the 3 paths' real geometry only occupies a fraction of that (the 3
+// crown arcs are exact semicircles, since each chord length equals the
+// radius*2 diameter: 9.7 = 2*4.85), so the true bounding box of the 3
+// paths combined is x:[9.3, 38.4] y:[18.15, 39], not [0,48]x[0,48].
+// Tightened to that real box plus a small margin (>= half the 2px
+// stroke width, so the stroke itself is never clipped) so the symbol
+// visually fills its 48x48 slot instead of floating in mostly-empty
+// space -- verified by computing each arc's center/radius by hand, not
+// eyeballed.
 export function Logo({ className = "h-8 w-auto" }: { className?: string }) {
   return (
     <svg
@@ -35,9 +49,10 @@ export function Logo({ className = "h-8 w-auto" }: { className?: string }) {
         y="4"
         width="48"
         height="48"
-        viewBox="0 0 48 48"
+        viewBox="7.8 16.65 32.1 23.85"
         fill="none"
         stroke="currentColor"
+        strokeWidth="2"
         strokeLinecap="round"
         strokeLinejoin="round"
         style={{ color: "var(--color-brand-500)" }}

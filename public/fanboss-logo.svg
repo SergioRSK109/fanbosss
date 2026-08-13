@@ -1,10 +1,10 @@
 <svg width="220" height="56" viewBox="0 0 220 56" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="FanBoss">
   <title>FanBoss</title>
-  <g transform="translate(4,4)" fill="none" stroke="#7c3aed" stroke-linecap="round" stroke-linejoin="round">
+  <svg x="4" y="4" width="48" height="48" viewBox="7.8 16.65 32.1 23.85" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <path d="M9.3 31V23A4.85 4.85 0 0 1 19 23A4.85 4.85 0 0 1 28.7 23A4.85 4.85 0 0 1 38.4 23V31"/>
     <path d="M9.3 31H38.4V36.4A2.6 2.6 0 0 1 35.8 39H11.9A2.6 2.6 0 0 1 9.3 36.4Z"/>
     <path d="M23.85 32.7C21.35 34.2 21.35 36.4 23.85 37.9C26.35 36.4 26.35 34.2 23.85 32.7Z"/>
-  </g>
+  </svg>
   <text x="64" y="37" font-family="Poppins, 'Segoe UI', sans-serif" font-size="26" font-weight="600" letter-spacing="0.2">
     <tspan fill="#7c3aed">Fan</tspan><tspan fill="#ff6b5e">Boss</tspan>
   </text>
