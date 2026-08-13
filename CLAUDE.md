@@ -8296,22 +8296,49 @@ and renders `Logo` there directly, since `TopNav` never reaches it.
 **Crown symbol, replacing the original gradient-filled rounded square +
 lightning bolt (validated in Claude Design, "Option 3").** The 3-path
 outline is used verbatim in both artifacts — nested inside its own
-native `viewBox="0 0 48 48"` coordinate space (a plain `<g
-transform="translate(4,4)">` in the static file, an equivalent nested
-`<svg x="4" y="4" width="48" height="48" viewBox="0 0 48 48">` in the
-inline component, both landing in the exact same 48×48 slot the old mark
-occupied), rather than rescaled to fit — the path's own proportions
-already assume that box. Outline only: `fill="none"`,
-`stroke="currentColor"`, `stroke-linecap="round"`,
-`stroke-linejoin="round"` — no gradient, no filled background, same
-"no color baked into the path itself" discipline as every hand-made icon
-in `navIcons.tsx`/`icons.tsx`. `currentColor` is resolved via an
-explicit `color: var(--color-brand-500)` (inline `style` in the
-component, a plain hex in the static file) rather than left to whatever
-ambient text color happens to surround it — unlike a `navIcons.tsx` icon,
-`Logo` isn't always wrapped in a caller-supplied `text-*` class, so it
-needs to set its own default, the same way the wordmark's own `tspan`
-fills already do.
+48×48 coordinate slot (a nested `<svg x="4" y="4" width="48"
+height="48">` in both the static file and the inline component, landing
+in the exact same 48×48 area the old mark occupied). Outline only:
+`fill="none"`, `stroke="currentColor"`, `stroke-width="2"`,
+`stroke-linecap="round"`, `stroke-linejoin="round"` — no gradient, no
+filled background, same "no color baked into the path itself" discipline
+as every hand-made icon in `navIcons.tsx`/`icons.tsx`. `currentColor` is
+resolved via an explicit `color: var(--color-brand-500)` (inline `style`
+in the component, a plain hex in the static file) rather than left to
+whatever ambient text color happens to surround it — unlike a
+`navIcons.tsx` icon, `Logo` isn't always wrapped in a caller-supplied
+`text-*` class, so it needs to set its own default, the same way the
+wordmark's own `tspan` fills already do.
+
+**The nested `<svg>`'s `viewBox` is deliberately NOT the path's own
+native `"0 0 48 48"` coordinate space** — that box is what the 3 paths
+were originally drawn against, but it is not what they actually occupy.
+Computed by hand from the path data (each of the crown's 3 arcs is an
+exact semicircle — the chord between consecutive bump endpoints is 9.7
+units and the radius is 4.85, so `2×radius = chord` exactly, meaning the
+`large-arc-flag`/`sweep-flag` pair traces a clean half-circle, not an
+ambiguous partial arc): the real combined bounding box of all 3 paths is
+`x:[9.3, 38.4]` × `y:[18.15, 39]` — only ~44% of the nominal 48×48 box's
+area. `viewBox="0 0 48 48"` therefore left the crown floating in a
+mostly-empty square, visually much smaller than the wordmark beside it
+despite both occupying the same 48×48/220×56 *nominal* slot ratio. Fixed
+by tightening the nested viewBox to `"7.8 16.65 32.1 23.85"` — the real
+bounding box plus a 1.5-unit margin on every side (comfortably ≥ half the
+2-unit stroke width, so the stroke itself is never clipped at the crop
+edge) — which raises the ink-to-viewBox area ratio from ~26% to ~79%,
+verified by reading each path's real `getBBox()` in the browser rather
+than eyeballing it. The default `preserveAspectRatio="xMidYMid meet"`
+(unchanged, not set explicitly) is what makes this "just work" without
+any extra centering code: since the tightened viewBox's aspect ratio
+(32.1:23.85, wider than tall) differs from its 48×48 square slot, the
+symbol is automatically scaled up to the slot's own limiting dimension
+and centered, with a small vertical letterbox rather than the previous
+large all-around margin.
+
+`stroke-width="2"` was lost during the original integration of this
+symbol (silently fell back to the SVG default of `1`) — restored to
+match the Claude Design source, verified via `getAttribute("stroke-width")`
+against the real rendered DOM (not just re-read from the source).
 
 **`Logo.tsx` dropped `"use client"`/`useId()` in the same change** — both
 existed solely for the old mark's `<linearGradient id>` collision-safety;
@@ -8341,6 +8368,30 @@ build time — confirmed by grep (nothing in `src/app` derives them from
 `fanboss-logo.svg`) — so they're unaffected by this change and out of
 this task's own explicit file scope; regenerating them from the new mark
 would need real rasterization tooling this environment doesn't have.
+
+**Follow-up fix: stroke width + crop, both regressions from the original
+integration.** Re-verified with the same throwaway mock-Supabase/
+Playwright technique, this time reading real DOM geometry rather than
+just eyeballing screenshots: an 8×-`deviceScaleFactor` capture of the
+live `/login` nav logo, in both `fr` (light) and `/en/` (dark), confirms
+the crown now visually fills its slot next to "FanBoss" instead of
+floating with a large empty margin, and the stroke reads as a close
+visual match to the wordmark's own 600-weight thickness rather than the
+previous hairline. Backed by actual numbers, not just a screenshot
+impression: `nested.getAttribute("stroke-width")` is confirmed `"2"` on
+the live rendered element; each path's real `getBBox()` is summed into a
+combined bounding box and compared against the new viewBox's own area,
+confirming the ink-to-viewBox fill ratio rose from ~26% (the original
+`"0 0 48 48"` box) to ~79% (the tightened `"7.8 16.65 32.1 23.85"` box)
+— in both locale/theme combinations, with identical numbers either way
+(color is the only thing `light-dark()` touches, never geometry). The
+original full-page sweep (`/login`, `/signup`, `/home`, all 4 locale ×
+theme combinations) was re-run afterward and still passes unchanged:
+exactly 3 paths, no leftover `<rect>`, correct rendered nav-bar pixel
+size (125.7×32.0 via `TopNav`, 110.0×28.0 via `/home`'s own header) —
+confirming the crop/stroke fix changed nothing about where or how large
+the logo's own outer slot renders, only how much of that slot the ink
+inside it actually fills.
 
 ## Logo-click "logout" bug — investigated and fixed
 
