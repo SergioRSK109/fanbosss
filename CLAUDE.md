@@ -8274,26 +8274,73 @@ also verified, as real assertions rather than visual spot-checks:
 
 Two separate artifacts, deliberately not the same thing:
 - `public/fanboss-logo.svg` — the static brand asset, hardcoded colors
-  (`#7c3aed`/`#ff6b5e`/white), for contexts that need a real standalone
-  file (social previews, email, sharing outside the app).
-- `src/components/Logo.tsx` — the nav logo, same mark/wordmark but
-  **inline SVG** using `var(--color-brand-500)`/`var(--color-accent-500)`
-  for its fills. An externally-referenced `<img src="...">` can't inherit
-  the host page's CSS custom properties, so it's the only way for the
-  logo to follow `--color-brand-500`'s dark-mode override automatically
-  -- rendering the static file via `<img>` would have frozen it at the
-  light-mode color forever. Uses `useId()` for its gradient's `<linearGradient
-  id>` so it stays collision-safe if ever rendered more than once on a
-  page; that's also why it's a client component (`"use client"`) despite
-  having no interactivity -- Server Components can't call hooks.
+  (`#7c3aed`/`#ff6b5e`), for contexts that need a real standalone file
+  (social previews, email, sharing outside the app).
+- `src/components/Logo.tsx` — the same mark/wordmark but **inline SVG**
+  using `var(--color-brand-500)`/`var(--color-accent-500)`. An
+  externally-referenced `<img src="...">` can't inherit the host page's
+  CSS custom properties, so it's the only way for the logo to follow
+  `--color-brand-500`'s dark-mode override automatically — rendering the
+  static file via `<img>` would have frozen it at the light-mode color
+  forever.
 
-Rendered in `src/app/[locale]/layout.tsx`'s nav bar, wrapped in a
-locale-aware `Link` to `/`, on the opposite side from the Explorer
-link + language switcher (grouped together on the right). Explorer is
-only rendered there for an already-authenticated visitor (`layout.tsx`
-calls `createSupabaseServerClient().auth.getUser()` itself) — a
-logged-out visitor on `/signup`/`/login` shouldn't see it pulling them
-away from finishing that flow.
+**Rendered in two places**, not just the shared nav: `TopNav.tsx`
+(itself rendered from `[locale]/layout.tsx`'s nav bar, wrapped in a
+locale-aware `Link` to `/`, on the opposite side from the Explorer link +
+language switcher) covers every page *except* the 5 `AppTabBar`
+destinations (that route group hides `TopNav` entirely, see the nav
+reorg lot); `/home` is the one exception among those 5 — it builds its
+own bespoke 3-zone header (leaderboard icon / logo / notification bell)
+and renders `Logo` there directly, since `TopNav` never reaches it.
+
+**Crown symbol, replacing the original gradient-filled rounded square +
+lightning bolt (validated in Claude Design, "Option 3").** The 3-path
+outline is used verbatim in both artifacts — nested inside its own
+native `viewBox="0 0 48 48"` coordinate space (a plain `<g
+transform="translate(4,4)">` in the static file, an equivalent nested
+`<svg x="4" y="4" width="48" height="48" viewBox="0 0 48 48">` in the
+inline component, both landing in the exact same 48×48 slot the old mark
+occupied), rather than rescaled to fit — the path's own proportions
+already assume that box. Outline only: `fill="none"`,
+`stroke="currentColor"`, `stroke-linecap="round"`,
+`stroke-linejoin="round"` — no gradient, no filled background, same
+"no color baked into the path itself" discipline as every hand-made icon
+in `navIcons.tsx`/`icons.tsx`. `currentColor` is resolved via an
+explicit `color: var(--color-brand-500)` (inline `style` in the
+component, a plain hex in the static file) rather than left to whatever
+ambient text color happens to surround it — unlike a `navIcons.tsx` icon,
+`Logo` isn't always wrapped in a caller-supplied `text-*` class, so it
+needs to set its own default, the same way the wordmark's own `tspan`
+fills already do.
+
+**`Logo.tsx` dropped `"use client"`/`useId()` in the same change** — both
+existed solely for the old mark's `<linearGradient id>` collision-safety;
+with no gradient left at all, there's nothing left requiring a hook, so
+the component is a plain, deterministic Server Component now. This is a
+real, verified improvement for one of its two call sites specifically:
+`home/page.tsx` is a Server Component, so `Logo` now renders there
+without being pulled into the client bundle at all; `TopNav.tsx` is
+already `"use client"` itself (for `usePathname`), so `Logo` was always
+client-executed there regardless, unaffected either way.
+
+Verified visually end-to-end (throwaway mock-Supabase/Playwright
+technique used throughout this file): the crown renders correctly on
+`/login`, `/signup` (both via `TopNav`) and `/home` (its own bespoke
+header), confirmed to be exactly the 3 given paths with no leftover
+`<rect>` background from the old mark; a 6×-`deviceScaleFactor`
+screenshot of the real rendered nav-bar-size logo (not an isolated
+blown-up copy) confirms the crown + jewel detail stays crisp and legible
+at its actual small size, in the correct brand purple in both `fr`
+(light) and `/en/` (dark) — the dark-mode screenshot specifically
+confirms `--brand-500`'s `light-dark()` override (migration-era CSS, not
+something this change touched) still applies automatically to the crown
+exactly as it already did to "Fan", with zero extra code needed for that.
+`favicon.ico`/`manifest.json`'s `icon-192.png`/`icon-512.png` are
+separate, pre-rendered raster files never generated from this SVG at
+build time — confirmed by grep (nothing in `src/app` derives them from
+`fanboss-logo.svg`) — so they're unaffected by this change and out of
+this task's own explicit file scope; regenerating them from the new mark
+would need real rasterization tooling this environment doesn't have.
 
 ## Logo-click "logout" bug — investigated and fixed
 
