@@ -7,10 +7,16 @@ import { buttonClass } from "@/components/ui/button-styles";
 import { inputClass, labelClass } from "@/components/ui/field-styles";
 import { PUBLICATION_CONTENU_MAX_LENGTH } from "@/lib/validation";
 import {
+  extractVideoFrames,
   isVideoDurationAllowed,
   MAX_VIDEO_DURATION_SECONDS,
   readVideoDurationSeconds,
 } from "@/lib/videoDuration";
+
+// Defensive fallback only -- moderatePublication() always returns a real
+// "raison" string for an "ambigu" classification (the structured-output
+// schema requires it), this is never expected to actually fire.
+const AMBIGU_RAISON_PAR_DEFAUT = "Contenu jugé ambigu par la modération automatique.";
 
 // Visible only when the caller is an admin or a créateur_verifie (checked
 // server-side by the page rendering this, per the brief) -- but
@@ -28,7 +34,7 @@ export function PublicationComposer() {
   // this component just never has a way to attach a second file anyway
   // (a single native file input, replaced wholesale on every selection).
   const [file, setFile] = useState<File | null>(null);
-  const [status, setStatus] = useState<"idle" | "checking" | "saving" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "checking" | "moderating" | "saving" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState("");
   const [fileInputKey, setFileInputKey] = useState(0);
 
@@ -40,7 +46,8 @@ export function PublicationComposer() {
     (trimmed.length > 0 || file !== null) &&
     trimmed.length <= PUBLICATION_CONTENU_MAX_LENGTH &&
     status !== "saving" &&
-    status !== "checking";
+    status !== "checking" &&
+    status !== "moderating";
 
   // Video support (additive alongside the existing image upload, migration
   // 0037): checked at file *selection* time, before any upload starts --
@@ -86,8 +93,27 @@ export function PublicationComposer() {
     try {
       let imageR2Key: string | null = null;
       let videoR2Key: string | null = null;
+      // Extracted client-side, before any upload -- these 2-3 JPEGs are
+      // the only thing ever sent for a video's moderation; the video
+      // itself never leaves the browser for this purpose (this codebase
+      // never processes video server-side at all, see
+      // src/lib/videoDuration.ts).
+      let videoFramesBase64: string[] | null = null;
 
       if (file) {
+        if (file.type.startsWith("video/")) {
+          try {
+            videoFramesBase64 = await extractVideoFrames(file);
+          } catch {
+            // Best-effort: a frame-extraction failure never blocks
+            // publishing -- moderation simply runs text-only in that
+            // case, same "additional layer, never a new point of
+            // failure" posture as moderatePublication()'s own fail-open
+            // discipline server-side.
+            videoFramesBase64 = null;
+          }
+        }
+
         const uploadUrlResponse = await fetch("/api/publications/upload-url", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -114,6 +140,40 @@ export function PublicationComposer() {
         }
       }
 
+      // Automatic moderation, before the real publish -- the two-level
+      // principle this feature is built around (see CLAUDE.md): a clear
+      // violation blocks the publish outright, right here, before
+      // publier_message() is ever called, so the content never exists
+      // even briefly. An "ambigu" classification still publishes
+      // normally, just with an extra field that makes publier_message()
+      // also record an automatic signalement, atomically. A failed
+      // moderation call (network error, non-2xx) is treated exactly like
+      // "ok" -- fail open, publish normally -- the same posture
+      // moderatePublication() itself already takes one layer down for an
+      // Anthropic API failure.
+      let signalementAutomatiqueRaison: string | null = null;
+      setStatus("moderating");
+      const moderationResponse = await fetch("/api/publications/moderer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ texte: trimmed || null, imageR2Key, videoFramesBase64 }),
+      });
+      if (moderationResponse.ok) {
+        const moderationBody = await moderationResponse.json();
+        if (moderationBody.classification === "violation_claire") {
+          setStatus("error");
+          setErrorMessage(t("violationClaire"));
+          return;
+        }
+        if (moderationBody.classification === "ambigu") {
+          signalementAutomatiqueRaison =
+            typeof moderationBody.raison === "string" && moderationBody.raison.trim()
+              ? moderationBody.raison
+              : AMBIGU_RAISON_PAR_DEFAUT;
+        }
+      }
+
+      setStatus("saving");
       const response = await fetch("/api/publications", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -127,6 +187,7 @@ export function PublicationComposer() {
           // toggler_repost_publication()'s own visibilite check), so there's
           // nothing to send differently when the checkbox is hidden.
           autorise_repost: autoriseRepost ? "tous" : "personne",
+          signalement_automatique_raison: signalementAutomatiqueRaison,
         }),
       });
       const body = await response.json();
@@ -203,7 +264,13 @@ export function PublicationComposer() {
           disabled={!canSubmit}
           className={`${buttonClass("primary", "sm")} ml-auto`}
         >
-          {status === "saving" ? t("sending") : status === "checking" ? t("checking") : t("submit")}
+          {status === "saving"
+            ? t("sending")
+            : status === "checking"
+              ? t("checking")
+              : status === "moderating"
+                ? t("moderating")
+                : t("submit")}
         </button>
       </div>
 

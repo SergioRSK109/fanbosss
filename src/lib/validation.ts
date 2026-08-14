@@ -344,6 +344,16 @@ export const publierMessageSchema = z
     // target). Forced to 'tous' server-side for an admin post either
     // way, same as visibilite itself -- see publier_message().
     autorise_repost: z.enum(["personne", "tous"]).optional(),
+    // Migration 0054 -- set by PublicationComposer.tsx only after its own
+    // call to /api/publications/moderer classified the content as
+    // "ambigu", never sent by the client for an "ok" classification (or
+    // when the moderation call itself failed, which is treated the exact
+    // same way as "ok" -- see moderatePublication()'s own fail-open
+    // discipline). Threaded straight into publier_message()'s own
+    // p_signalement_automatique_raison, which is what actually creates
+    // the automatic signalement, atomically, alongside the publication
+    // itself -- this route never talks to the moderation API directly.
+    signalement_automatique_raison: z.string().trim().min(1).nullable().optional(),
   })
   .strict()
   .refine((body) => !(body.image_r2_key && body.video_r2_key), {

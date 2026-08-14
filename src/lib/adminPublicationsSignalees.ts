@@ -6,9 +6,20 @@
 
 export interface PublicationSignaleeRow {
   reportId: string;
+  // "signalement" or "signalement_automatique" (migration 0054) -- the
+  // explicit, real signal for isAutomatique below, never inferred from
+  // reporterId's own nullability (which happens to be null only for the
+  // automatic case in this schema today, but the type column is what
+  // actually means it, the same "explicit flag, never a guess from
+  // nullability" discipline peut_voir_publication_complete()'s own
+  // contenu_complet already established for a different feature).
+  type: string;
   raison: string | null;
   createdAt: string;
-  reporterId: string;
+  // Null for an automatic signalement -- no real user reported the
+  // publication, a report row was inserted directly by
+  // signaler_publication_automatique() instead of signaler_publication().
+  reporterId: string | null;
   reportedUserId: string;
   // Null only if the publication itself was somehow deleted -- this
   // codebase has no delete path for anything but a repost row, so this
@@ -50,8 +61,20 @@ export interface PublicationSignalee {
   repostOriginalLabel: string | null;
   raison: string | null;
   createdAt: string;
+  // "🤖 Modération automatique" (or whatever automatiqueLabel resolves
+  // to) when isAutomatique, otherwise the reporting user's real label --
+  // never deletedUserLabel for an automatic row, which would misread as
+  // "a real user reported this, but their account is gone."
   reporterLabel: string;
   auteurLabel: string;
+  // migration 0054 -- true for a report signaler_publication_automatique()
+  // inserted (reporterId null, type=signalement_automatique), never
+  // inferred from reporterId alone elsewhere in this codebase (a
+  // genuinely deleted reporter account is a different, unrelated case
+  // this schema doesn't actually produce, since users are never deleted
+  // -- but this flag is the real, explicit signal either way, not a
+  // guess from nullability).
+  isAutomatique: boolean;
 }
 
 export function buildPublicationSignalee(
@@ -60,6 +83,7 @@ export function buildPublicationSignalee(
   pseudoById: Map<string, string | null>,
   labelById: Map<string, string>,
   deletedUserLabel: string,
+  automatiqueLabel: string,
 ): PublicationSignalee {
   const { publication } = row;
   const isRepost = Boolean(publication?.repostDeId);
@@ -80,6 +104,8 @@ export function buildPublicationSignalee(
     }
   }
 
+  const isAutomatique = row.type === "signalement_automatique";
+
   return {
     id: publication?.id ?? row.reportId,
     auteurId: row.reportedUserId,
@@ -89,7 +115,10 @@ export function buildPublicationSignalee(
     repostOriginalLabel,
     raison: row.raison,
     createdAt: row.createdAt,
-    reporterLabel: labelById.get(row.reporterId) ?? deletedUserLabel,
+    reporterLabel: isAutomatique
+      ? automatiqueLabel
+      : (row.reporterId ? (labelById.get(row.reporterId) ?? deletedUserLabel) : deletedUserLabel),
     auteurLabel: labelById.get(row.reportedUserId) ?? deletedUserLabel,
+    isAutomatique,
   };
 }

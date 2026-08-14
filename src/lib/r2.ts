@@ -101,3 +101,24 @@ export async function getSignedDownloadUrl(
   });
   return getSignedUrl(client, command, { expiresIn: expiresInSeconds });
 }
+
+// Automatic publication moderation (src/lib/moderation.ts) is the first
+// place in this codebase that needs the actual object bytes server-side
+// -- every other read path (delivery routes) only ever mints a signed
+// URL for the browser to fetch directly, R2 is otherwise never touched
+// from application code after upload. `ContentType` set at upload time
+// (getSignedUploadUrl above) is what the moderation route trusts for the
+// image's media type, since nothing else in this pipeline records it.
+export async function getObjectBase64(key: string): Promise<{ data: string; contentType: string | undefined }> {
+  const client = getR2Client();
+  const command = new GetObjectCommand({
+    Bucket: getBucketName(),
+    Key: key,
+  });
+  const response = await client.send(command);
+  if (!response.Body) {
+    throw new Error("R2 object has no body");
+  }
+  const bytes = await response.Body.transformToByteArray();
+  return { data: Buffer.from(bytes).toString("base64"), contentType: response.ContentType };
+}

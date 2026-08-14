@@ -394,6 +394,39 @@ describe("publierMessageSchema", () => {
     expect(publierMessageSchema.safeParse({}).success).toBe(false);
     expect(publierMessageSchema.safeParse({ contenu: null }).success).toBe(false);
   });
+
+  // Migration 0054 -- set by PublicationComposer.tsx only after its own
+  // moderation call classified the content as "ambigu".
+  describe("signalement_automatique_raison", () => {
+    it("accepts a publication with a real raison", () => {
+      const result = publierMessageSchema.safeParse({
+        contenu: "un message ambigu",
+        signalement_automatique_raison: "ton potentiellement agressif",
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.signalement_automatique_raison).toBe("ton potentiellement agressif");
+      }
+    });
+
+    it("accepts a publication with the field entirely omitted (the overwhelmingly common case)", () => {
+      expect(publierMessageSchema.safeParse({ contenu: "un message normal" }).success).toBe(true);
+    });
+
+    it("accepts an explicit null", () => {
+      expect(
+        publierMessageSchema.safeParse({ contenu: "un message", signalement_automatique_raison: null })
+          .success,
+      ).toBe(true);
+    });
+
+    it("rejects a blank/whitespace-only raison", () => {
+      expect(
+        publierMessageSchema.safeParse({ contenu: "un message", signalement_automatique_raison: "   " })
+          .success,
+      ).toBe(false);
+    });
+  });
 });
 
 // Concours entre créateurs (migration 0045), extended with the points

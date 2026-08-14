@@ -6,11 +6,13 @@ import {
 } from "@/lib/adminPublicationsSignalees";
 
 const DELETED_USER_LABEL = "(utilisateur supprimé)";
+const AUTOMATIQUE_LABEL = "Modération automatique";
 
 describe("buildPublicationSignalee", () => {
   it("shows the publication's own contenu for a plain (non-repost) signalement", () => {
     const row: PublicationSignaleeRow = {
       reportId: "report-1",
+      type: "signalement",
       raison: "spam",
       createdAt: "2026-01-01T00:00:00Z",
       reporterId: "fan-1",
@@ -30,6 +32,7 @@ describe("buildPublicationSignalee", () => {
       pseudoById,
       labelById,
       DELETED_USER_LABEL,
+      AUTOMATIQUE_LABEL,
     );
 
     expect(result.id).toBe("pub-1");
@@ -39,6 +42,7 @@ describe("buildPublicationSignalee", () => {
     expect(result.pseudo).toBe("sergio");
     expect(result.auteurLabel).toBe("Sergio Créateur");
     expect(result.reporterLabel).toBe("Fan Un");
+    expect(result.isAutomatique).toBe(false);
   });
 
   // The real bug this fix addresses: a repost's own `contenu` column is
@@ -49,6 +53,7 @@ describe("buildPublicationSignalee", () => {
   it("shows the ORIGINAL's contenu for a repost signalement, never blank", () => {
     const row: PublicationSignaleeRow = {
       reportId: "report-2",
+      type: "signalement",
       raison: null,
       createdAt: "2026-01-02T00:00:00Z",
       reporterId: "fan-1",
@@ -77,6 +82,7 @@ describe("buildPublicationSignalee", () => {
       pseudoById,
       labelById,
       DELETED_USER_LABEL,
+      AUTOMATIQUE_LABEL,
     );
 
     // The permalink must point at the REPOST (what was actually reported
@@ -95,6 +101,7 @@ describe("buildPublicationSignalee", () => {
   it("falls back to a display-name label when the original's author has no pseudo", () => {
     const row: PublicationSignaleeRow = {
       reportId: "report-3",
+      type: "signalement",
       raison: null,
       createdAt: "2026-01-03T00:00:00Z",
       reporterId: "fan-1",
@@ -113,6 +120,7 @@ describe("buildPublicationSignalee", () => {
       pseudoById,
       labelById,
       DELETED_USER_LABEL,
+      AUTOMATIQUE_LABEL,
     );
 
     expect(result.repostOriginalLabel).toBe("Créateur Sans Pseudo");
@@ -121,6 +129,7 @@ describe("buildPublicationSignalee", () => {
   it("falls back to the deleted-user label when the original can't be found", () => {
     const row: PublicationSignaleeRow = {
       reportId: "report-4",
+      type: "signalement",
       raison: null,
       createdAt: "2026-01-04T00:00:00Z",
       reporterId: "fan-1",
@@ -134,6 +143,7 @@ describe("buildPublicationSignalee", () => {
       new Map(),
       new Map(),
       DELETED_USER_LABEL,
+      AUTOMATIQUE_LABEL,
     );
 
     expect(result.contenu).toBe("");
@@ -144,6 +154,7 @@ describe("buildPublicationSignalee", () => {
   it("has no permalink pseudo when the reported author never set one", () => {
     const row: PublicationSignaleeRow = {
       reportId: "report-5",
+      type: "signalement",
       raison: null,
       createdAt: "2026-01-05T00:00:00Z",
       reporterId: "fan-1",
@@ -158,8 +169,65 @@ describe("buildPublicationSignalee", () => {
       pseudoById,
       new Map(),
       DELETED_USER_LABEL,
+      AUTOMATIQUE_LABEL,
     );
 
     expect(result.pseudo).toBeNull();
+  });
+
+  // Automatic moderation (migration 0054) -- signaler_publication_automatique()
+  // always inserts with reporter_id null and type='signalement_automatique'.
+  describe("automatic signalements", () => {
+    it("uses the automatique label as reporterLabel and sets isAutomatique, never falling back to deletedUserLabel", () => {
+      const row: PublicationSignaleeRow = {
+        reportId: "report-6",
+        type: "signalement_automatique",
+        raison: "ton potentiellement agressif",
+        createdAt: "2026-01-06T00:00:00Z",
+        reporterId: null,
+        reportedUserId: "createur-1",
+        publication: { id: "pub-6", contenu: "Contenu ambigu.", repostDeId: null },
+      };
+      const labelById = new Map<string, string>([["createur-1", "Sergio Créateur"]]);
+
+      const result = buildPublicationSignalee(
+        row,
+        new Map(),
+        new Map(),
+        labelById,
+        DELETED_USER_LABEL,
+        AUTOMATIQUE_LABEL,
+      );
+
+      expect(result.isAutomatique).toBe(true);
+      expect(result.reporterLabel).toBe(AUTOMATIQUE_LABEL);
+      expect(result.reporterLabel).not.toBe(DELETED_USER_LABEL);
+      expect(result.raison).toBe("ton potentiellement agressif");
+      expect(result.auteurLabel).toBe("Sergio Créateur");
+    });
+
+    it("is false for a real, non-automatic signalement even when the reporter's own label happens to be missing", () => {
+      const row: PublicationSignaleeRow = {
+        reportId: "report-7",
+        type: "signalement",
+        raison: "spam",
+        createdAt: "2026-01-07T00:00:00Z",
+        reporterId: "fan-deleted",
+        reportedUserId: "createur-1",
+        publication: { id: "pub-7", contenu: "Contenu.", repostDeId: null },
+      };
+
+      const result = buildPublicationSignalee(
+        row,
+        new Map(),
+        new Map(),
+        new Map(),
+        DELETED_USER_LABEL,
+        AUTOMATIQUE_LABEL,
+      );
+
+      expect(result.isAutomatique).toBe(false);
+      expect(result.reporterLabel).toBe(DELETED_USER_LABEL);
+    });
   });
 });
