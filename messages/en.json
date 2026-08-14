@@ -62,9 +62,11 @@
       "submit": "Post",
       "sending": "Posting...",
       "checking": "Checking...",
+      "moderating": "Reviewing content...",
       "uploadError": "couldn't upload the file",
       "dureeTropLongue": "Video too long ({duree}s) -- the maximum duration is {max} seconds.",
       "lectureImpossible": "Couldn't read this video's duration. Try a different file.",
+      "violationClaire": "This publication violates FanBoss's content rules and can't be posted.",
       "unknownError": "something went wrong"
     },
     "actions": {
@@ -659,6 +661,8 @@
     "publicationsSignalees": {
       "empty": "No reported publications pending.",
       "reportedBy": "reported by {reporter}",
+      "automatique": "Automatic moderation",
+      "automatiqueBadge": "🤖 Automatic report",
       "raisonLabel": "Reason: {raison}",
       "repostIndicator": "Repost of {auteur}:",
       "openPublication": "View the reported publication",

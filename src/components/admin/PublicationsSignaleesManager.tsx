@@ -78,8 +78,17 @@ export function PublicationsSignaleesManager({
       {signalements.map((signalement) => (
         <li key={signalement.id} className="card flex flex-col gap-2 px-4 py-3">
           <div className="flex items-center justify-between gap-3">
-            <span className="text-sm font-medium">
+            <span className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
               {signalement.auteurLabel} · {t("reportedBy", { reporter: signalement.reporterLabel })}
+              {/* Clear visual distinction from a real user's report
+                  (migration 0054) -- not just the reporterLabel text
+                  above, which an admin skimming the list could easily
+                  read past. */}
+              {signalement.isAutomatique && (
+                <span className="shrink-0 rounded-full bg-brand-500/15 px-2 py-0.5 text-xs font-bold text-brand-600 dark:text-brand-300">
+                  {t("automatiqueBadge")}
+                </span>
+              )}
             </span>
             <span className="shrink-0 text-xs text-foreground-muted">
               {formatDate(signalement.createdAt, locale)}

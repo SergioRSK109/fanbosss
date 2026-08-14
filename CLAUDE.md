@@ -6949,6 +6949,327 @@ immediately in that account's own history list marked "non vu" — the
 account's status badge stays "Actif" throughout, confirming visually
 (not just at the SQL level) that a warning never blocks anything.
 
+## Automatic moderation of publications via the Claude API (migration `0054`)
+
+FanBoss had no automatic moderation at all until this migration — only
+user signalement (Lot 5b, migration `0030`) and manual admin masquage
+existed. This adds a first automatic line of defense using the Claude
+API (Anthropic), which analyzes text **and** image(s) in the same call —
+no second vision provider needed. `src/lib/moderation.ts`'s
+`moderatePublication({texte, imageBase64?, framesBase64?})` calls
+`claude-haiku-4-5` (Anthropic's own recommended model for high-volume
+classification) with a JSON-schema structured output
+(`output_config.format`, per Anthropic's documented structured-outputs
+pattern — never a free-text response parsed by hand) requesting
+`{classification: "ok" | "violation_claire" | "ambigu", raison: string}`.
+
+**The two-level principle — the one rule this whole feature is built
+around, never simplified to "everything automatic" or "nothing
+automatic":**
+- **`violation_claire`** (an evident, severe violation — explicit sexual
+  content above all, the hardest line in the CGU, article 8.1) blocks
+  the publication **before it is ever created at all**. There is no
+  window where the content exists in the database even briefly:
+  `PublicationComposer.tsx` calls `/api/publications/moderer` *before*
+  `publier_message()`, and on `violation_claire` it simply never makes
+  that second call.
+- **`ambigu`** (a potentially aggressive tone, borderline content, or
+  anything the model can't classify with real confidence) is published
+  **normally** — never auto-masked — and automatically flagged into the
+  exact same "Publications signalées" admin queue a real user's report
+  already lands in (Lot 5b), for a human to actually decide.
+
+This mirrors what Meta's own Oversight Board and OSCE/UN post-mortems on
+over-automated moderation have both converged on after their own
+mistakes: a fully-automated moderation *action* (silently deleting or
+shadow-banning content) is where these systems go wrong, while
+automated *triage* into a human review queue is safe and useful. This
+codebase treats that as a hard design constraint, not a preference — an
+"ambigu" classification must never result in `masquer_publication()`
+being called automatically, only in a row entering the same queue an
+admin already reviews for user reports.
+
+**Why video frame extraction happens client-side, never server-side —
+same root cause as the pre-existing 90s video duration cap
+(`src/lib/videoDuration.ts`, security audit fixes above):** this
+deployment target has no ffmpeg, and this codebase's standing rule is to
+never attempt video processing on the server at all. `extractVideoFrames()`
+(added to `videoDuration.ts` rather than a new file, reusing the exact
+same hidden-`<video>`+`<canvas>` mechanism `readVideoDurationSeconds()`
+already established) extracts `MODERATION_FRAME_COUNT` (3) key frames in
+the browser: `computeFrameTimestamps()` (pure, unit-tested) spreads them
+evenly across the clip, nudged off the very first/last instant by a
+small margin (capped at a tenth of the clip's own duration, so a very
+short clip never gets a margin larger than the clip itself) since a
+video's first/last frame is often black or empty. Each frame is drawn to
+an off-screen canvas, downscaled to at most 512px on its long edge (a
+moderation classifier needs a legible frame, not full resolution — and
+this keeps the request payload small, which matters more here than for
+the video file itself, which is **never** sent anywhere for this
+purpose), and exported as a raw base64 JPEG string (no `data:` URI
+prefix — `canvas.toDataURL()`'s prefix is stripped before sending, same
+convention every other base64 field in this codebase already uses).
+Only these 2-3 JPEGs — never the video — ever leave the browser for
+moderation.
+
+**A still image goes through R2, a video's frames go straight over the
+wire — deliberately two different paths, not an inconsistency.**
+`PublicationComposer.tsx` already uploads a selected image to R2 before
+publishing (to get `image_r2_key`); moderation reuses that same
+already-uploaded object rather than sending the image bytes a second
+time redundantly — `/api/publications/moderer` receives `imageR2Key`
+and fetches the bytes server-side via a new `getObjectBase64()`
+(`src/lib/r2.ts`, using `GetObjectCommand` + the AWS SDK v3 stream
+mixin's `transformToByteArray()` — the first place in this codebase that
+ever reads R2 object *bytes* server-side; every other read path only
+ever mints a signed URL for the browser to fetch directly). A video has
+no equivalent already-uploaded-before-moderation step to reuse (the
+video itself is never needed for moderation at all, only its extracted
+frames), so those frames are simply included directly in the same
+request body as base64 strings — there was never a reason to round-trip
+them through R2 first. The route re-checks `imageR2Key` starts with
+`publications/{callingUserId}/` before ever fetching it — the same
+"never trust client input blindly" ownership discipline as every other
+route in this project — since a raw image is genuinely private data,
+unlike a video's already-tiny, disposable moderation frames.
+
+**Fail-open, at every layer, deliberately — automatic moderation is an
+additional layer on top of the existing manual system, never a new
+single point of failure for the core publishing feature:**
+`moderatePublication()` catches everything — a missing
+`ANTHROPIC_API_KEY`, a network error, a timeout (a real
+`timeout: 15_000` request-level override, distinct from the SDK's own
+10-minute default, since this call sits in the middle of a publish
+request a real user is waiting on), a `stop_reason: "refusal"`, an
+unparseable or unrecognized response — and always falls back to
+`{classification: "ok", raison: ""}` rather than ever blocking a
+publish because the moderation layer itself is having trouble. The same
+posture repeats one layer up: `/api/publications/moderer` degrades to
+text-only moderation (never a 500) if the R2 image fetch itself fails,
+and `PublicationComposer.tsx` treats a non-2xx response from
+`/api/publications/moderer` exactly like an "ok" classification.
+
+**Why `reports.reporter_id` became nullable instead of attributing an
+automatic flag to a fictional system account or an admin who did
+nothing — the third thing worth documenting plainly.** `reports` already
+had a `reporter_id uuid not null references users(id)` column (a real
+user who actually clicked "Signaler") long before this migration. Two
+alternatives were rejected: creating a synthetic "FanBoss Moderation"
+user row just to satisfy the `NOT NULL` constraint would misrepresent
+what happened (no such account exists, and it would show up everywhere
+`users` is joined — leaderboards, admin user lists — as if it were a
+real participant), and attributing the report to whichever admin happens
+to review it later gets the causality backwards (the admin didn't flag
+it, the model did, before any admin ever saw it). Dropping `NOT NULL`
+and adding `reports_reporter_ou_automatique check (reporter_id is not
+null or type = 'signalement_automatique')` is the honest option: NULL
+means exactly "no real user reported this," constrained so it can
+*only* mean that for the one type that's actually allowed to have no
+reporter. Every pre-existing report row (and the entire pre-existing
+`reports_select_own`/`reports_insert_own` RLS shape) is completely
+unaffected — nullable is additive, and `reports_insert_own`'s own
+`reporter_id = auth.uid()` check structurally can never be satisfied by
+a NULL value regardless (`null = auth.uid()` is never `TRUE`), so a
+direct authenticated REST insert could never fake an automatic
+signalement even if `signaler_publication_automatique()` didn't exist
+at all.
+
+**`signaler_publication_automatique(p_publication_id, p_raison)`** is a
+private, **non-`SECURITY DEFINER`** helper — never granted to any role
+at all, callable only from inside another already-elevated `SECURITY
+DEFINER` function's execution context. Same exact "propagation de
+propriété" mechanism `appliquer_statut_compte()` established (migration
+`0052`): a plain (invoker-rights) function called from inside
+`publier_message()` (itself `SECURITY DEFINER`, owned by the migration
+role that bypasses RLS in a real Supabase project) runs under that same
+elevated context for the call's duration, with no separate grant needed
+or given.
+
+**Publishing and the automatic signalement happen atomically, in the
+same RPC call — not two separate steps from the route layer.**
+`publier_message()` gained a 6th, trailing-default parameter,
+`p_signalement_automatique_raison text default null`; when set, it
+calls `signaler_publication_automatique()` internally, right after the
+`INSERT`, in the same transaction. `PublicationComposer.tsx` still
+performs two real HTTP calls (moderate, then publish) — but the second
+call carries the moderation raison as a plain field, so there is no
+window where a publication exists without its accompanying automatic
+report, or vice versa, regardless of whether the two HTTP round trips
+themselves could fail independently. `/api/publications`'s
+`publierMessageSchema` gained a matching optional, nullable
+`signalement_automatique_raison` field (rejecting a blank/whitespace-only
+string the same way every other user-supplied text field in this file
+does) and threads it straight into `p_signalement_automatique_raison` —
+this route never talks to the moderation API itself.
+
+**A real bug caught empirically before it shipped, the same "reproduce
+before trusting" discipline this file has followed since the
+pseudo-cooldown/`0020` bugs**: a plain `create or replace function
+publier_message(...)` with a *different* parameter list does **not**
+replace the existing 5-arg function — Postgres treats a different arity
+as a distinct overload, so the pre-existing 5-arg version stayed
+callable side by side with the new 6-arg one, and every 3-positional-
+argument call already in `checklist_2_3.sql` became genuinely ambiguous
+("function publier_message(unknown, unknown, unknown) is not unique").
+Fixed by creating the new 6-arg function fresh, explicitly re-stating
+`revoke all ... from public` + `grant execute ... to authenticated`
+(a fresh signature carries **no** grant at all until this is done — the
+exact class of gap migration `0020` first found, since Postgres grants
+`EXECUTE` to `PUBLIC` by default on any newly-created function), and
+only then dropping the old 5-arg signature by its exact name+types — no
+overload kept, this project doesn't carry backwards-compatibility
+shims. Every pre-existing `has_function_privilege(...,
+'publier_message(text,text,text,text,text)', ...)` assertion in the SQL
+checklist had to be updated to the new 6-arg signature string in place,
+same "a later migration invalidates an earlier test's assumption, so the
+old test itself gets updated" discipline already established for the
+Lot 5c repost-toggle test rewrite (migration `0032`).
+
+**The five content categories moderated against (CGU article 8.1) are
+read verbatim from this feature's own task brief, not a literal CGU
+quote** — flagged the same way this project already flags an
+unverifiable external source (the CinetPay refund API research, the
+GoTrue wrapper-text guess): this codebase ships no CGU document
+anywhere (confirmed by grep before writing the system prompt), so
+`SYSTEM_PROMPT` in `moderation.ts` states the five categories the brief
+itself names (contenu sexuel explicite, incitation à la haine/violence/
+discrimination, harcèlement, usurpation d'identité, activité
+frauduleuse) rather than fabricating legal text and presenting it as the
+real CGU.
+
+**Admin UI**: `PublicationsSignaleesManager.tsx` (Lot 5b/5c-follow-up)
+gained a visually distinct badge ("🤖 Signalement automatique") on any
+row whose report is `type = 'signalement_automatique'` — computed as an
+explicit `isAutomatique` boolean in `buildPublicationSignalee()`
+(`src/lib/adminPublicationsSignalees.ts`), never inferred from
+`reporterId`'s own nullability (a real, explicit DB column value is the
+signal, the same "explicit flag, never a guess from nullability"
+discipline `peut_voir_publication_complete()`'s own `contenu_complet`
+already established for a different feature). `reporterLabel` reads
+"Modération automatique" for these rows instead of falling back to the
+deleted-user label a `NULL` `reporterId` would otherwise suggest — those
+are genuinely different situations (no reporter ever existed vs. a real
+reporter whose account is gone) and must never read the same way to an
+admin. Claude's own `raison` still renders through the existing
+`raisonLabel` line unchanged, since `reports.raison` was already a
+plain nullable text column with no schema change needed for this.
+
+### Testing
+
+`src/lib/__tests__/moderation.test.ts` mocks the `@anthropic-ai/sdk`
+package entirely (never the real API, same discipline as
+`cinetpay.test.ts`'s own always-throws stub test) and covers: clear
+fixtures for each of the three classifications; the API-call-throws,
+missing-`ANTHROPIC_API_KEY` (confirmed to never even attempt a call),
+`stop_reason: "refusal"`, unparseable-response, and unrecognized-
+classification-value cases all falling back to `ok`; that image and
+video-frame content blocks are sent correctly alongside a trailing text
+block (with a placeholder text block when no `texte` is given at all);
+that structured output (`output_config.format`, `json_schema`) is
+requested rather than a free-text prompt parsed blindly; and that a
+real, bounded request timeout is set. `src/lib/__tests__/videoDuration.test.ts`
+covers `computeFrameTimestamps()` directly: the default frame count, the
+evenly-spread-with-margin shape, the single-midpoint case, the margin
+cap on a very short clip, and the empty-array result for a zero/
+negative/NaN/Infinity duration. `moderer/__tests__/route.test.ts` covers
+auth, the `imageR2Key` ownership-prefix rejection (before ever calling
+R2), fetching+forwarding a real R2 image, degrading to text-only
+moderation on an R2 fetch failure, dropping an image with an
+unsupported content-type, filtering non-string entries out of
+`videoFramesBase64`, and returning `moderatePublication()`'s result
+body verbatim. `src/app/api/publications/__tests__/route.test.ts` (new
+— no test file existed for this route before this migration) covers
+auth, the RPC's own rejection surfaced as 400, and specifically that
+`signalement_automatique_raison` is threaded through to
+`p_signalement_automatique_raison` when the client sends one, sent as
+`null` when omitted (the default, common case), and rejected client-side
+with a 400 (before ever reaching the RPC) when blank/whitespace-only.
+`adminPublicationsSignalees.test.ts` gained cases for `isAutomatique`
+and the "Modération automatique" reporterLabel, plus a control case
+proving a real, non-automatic signalement with a missing reporter label
+still falls back to `deletedUserLabel` as before (never confused with
+the automatic case).
+
+`checklist_2_3.sql`: the raw `reports_reporter_ou_automatique` /
+redefined `reports_type_check` constraints tested directly (a NULL
+`reporter_id` rejected for `type='signalement'`, accepted for
+`type='signalement_automatique'`, and an invalid `type` still rejected
+after the constraint was redefined); `signaler_publication_automatique()`
+rejects an unknown publication id; a plain `publier_message()` call
+(the raison parameter omitted) creates zero report rows, confirming the
+overwhelmingly common case stays byte-identical; a call with a raison
+set publishes the content **and** atomically records a real automatic
+report with `reporter_id` null, the correct `reported_user_id`/`raison`/
+`statut`, in the same RPC call; and the full grant audit —
+`signaler_publication_automatique()` has **no** `EXECUTE` grant for any
+role at all, not just `anon` (checked under real `anon` and
+`authenticated` non-superuser roles, same discipline as
+`appliquer_statut_compte()`'s own test), while `publier_message()`
+itself is confirmed to keep its existing `authenticated`-only (never
+`anon`) grant after being redefined with the new 6th parameter.
+
+Verified visually end-to-end, in two separate real-browser passes rather
+than one, since the two halves of this feature don't share a natural
+single page to drive them both through:
+
+1. **The composer flow** — a throwaway mock Auth/PostgREST server (same
+   technique used throughout this file) backing a real `next dev`, one
+   fixture `créateur_verifie` user logged in for real via `/login`, then
+   `/home` driven with Playwright, `/api/publications/moderer` and
+   `/api/publications` intercepted **at the browser's own network
+   layer** (`page.route`, not the mock server) so each classification
+   branch could be forced directly without needing a real Anthropic
+   call: typing text and forcing `violation_claire` shows the exact
+   blocked message ("Cette publication enfreint les règles de contenu de
+   FanBoss et ne peut pas être publiée." / its English equivalent) and —
+   checked directly against the intercepted request log, not assumed —
+   confirms `/api/publications` is never called at all; forcing `ambigu`
+   publishes successfully and forwards the exact `raison` string as
+   `signalement_automatique_raison` in the same POST body; forcing `ok`
+   publishes with that field sent as `null`; a delayed `moderer` response
+   makes the "Analyse du contenu..." / "Reviewing content..." button
+   label observable mid-flight, not just theoretically reachable; and a
+   real ~2s silent video, generated on the fly via canvas +
+   `MediaRecorder` (same technique already established for this
+   project's publications-video verification, migration `0037` — no
+   video fixture exists in this sandbox), was selected and submitted
+   with **zero text typed at all**, confirming the moderation request's
+   own `videoFramesBase64` array actually carried 3 real, non-trivial
+   base64 JPEG strings — the frame extraction genuinely ran, not just
+   compiled without error. All of the above holds in both `fr` and
+   `/en/`.
+2. **The admin badge** — `/admin`'s own page assembles its "Publications
+   signalées" list from a dozen-plus interdependent service-role
+   queries unrelated to this feature; reproducing all of it in a
+   throwaway mock purely to see one badge render would have risked a
+   subtly-wrong mock silently passing or failing for the wrong reason.
+   Instead, the real, unmodified `PublicationsSignaleesManager.tsx` was
+   rendered directly with two fixture rows — one `isAutomatique: true`
+   (its `reporterLabel` computed via the real `useTranslations("Admin
+   .publicationsSignalees")` call, exactly like `buildPublicationSignalee()`
+   does in production, not a hardcoded string) and one ordinary manual
+   signalement — via a temporary route added only for this check and
+   deleted immediately after, never committed. Confirmed directly: the
+   automatic row, and only that row, shows the "🤖 Signalement
+   automatique" / "🤖 Automatic report" badge and "signalé par Modération
+   automatique" / "reported by Automatic moderation"; the manual row
+   shows neither. Checked in both `fr`/`en` and light/dark (`page.
+   emulateMedia`).
+
+One real, non-obvious harness gotcha hit and fixed along the way, worth
+recording since it isn't specific to this feature: a folder name
+prefixed with a double underscore (`__verify_moderation`, the first
+name tried for the temporary admin-badge route) is a Next.js *private
+folder* convention — opted out of routing entirely — so the page 404'd
+until renamed. And the video-frame-extraction check initially looked
+broken when it wasn't: waiting for the composer's textarea to "become
+empty" as proof the publish had completed is meaningless for a
+file-only, no-text submission, since the textarea is already empty
+before the click — the wait resolved instantly, before the real
+upload/moderation/publish chain had done anything, making the assertion
+race its own setup. Fixed by waiting for the actual network response to
+the final `/api/publications` call instead.
+
 ## Admin dashboard: time-series charts (no migration)
 
 `/admin`'s "Vue d'ensemble" tab used to be entirely static-snapshot

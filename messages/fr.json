@@ -62,9 +62,11 @@
       "submit": "Publier",
       "sending": "Publication...",
       "checking": "Vérification...",
+      "moderating": "Analyse du contenu...",
       "uploadError": "envoi du fichier impossible",
       "dureeTropLongue": "Vidéo trop longue ({duree}s) -- la durée maximale est de {max} secondes.",
       "lectureImpossible": "Impossible de lire la durée de cette vidéo. Réessaie avec un autre fichier.",
+      "violationClaire": "Cette publication enfreint les règles de contenu de FanBoss et ne peut pas être publiée.",
       "unknownError": "une erreur est survenue"
     },
     "actions": {
@@ -659,6 +661,8 @@
     "publicationsSignalees": {
       "empty": "Aucune publication signalée en attente.",
       "reportedBy": "signalé par {reporter}",
+      "automatique": "Modération automatique",
+      "automatiqueBadge": "🤖 Signalement automatique",
       "raisonLabel": "Raison : {raison}",
       "repostIndicator": "Repost de {auteur} :",
       "openPublication": "Voir la publication signalée",

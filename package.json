@@ -11,6 +11,7 @@
     "test:sql": "bash supabase/tests/run_sql_tests.sh"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.117.1",
     "@aws-sdk/client-s3": "^3.1092.0",
     "@aws-sdk/s3-request-presigner": "^3.1092.0",
     "@supabase/ssr": "^0.12.3",

@@ -3712,10 +3712,10 @@ begin
   -- current signature or it would just report "no such function" (a
   -- silent, always-false-condition no-op in plpgsql's IF, never an
   -- error) instead of meaningfully testing the grant.
-  if has_function_privilege('anon', 'publier_message(text,text,text,text,text)', 'EXECUTE') then
+  if has_function_privilege('anon', 'publier_message(text,text,text,text,text,text)', 'EXECUTE') then
     raise exception 'TEST FAILED: anon should NOT have EXECUTE on publier_message()';
   end if;
-  if not has_function_privilege('authenticated', 'publier_message(text,text,text,text,text)', 'EXECUTE') then
+  if not has_function_privilege('authenticated', 'publier_message(text,text,text,text,text,text)', 'EXECUTE') then
     raise exception 'TEST FAILED: authenticated lost EXECUTE on publier_message()';
   end if;
   raise notice 'PASS: EXECUTE grants on peut_voir_publication_complete()/publier_message() are exactly as intended';
@@ -4733,10 +4733,10 @@ begin
   -- comment on this same rename pattern, above) -- checked against the
   -- real current signature, not the 4-arg one this block originally
   -- referenced.
-  if not has_function_privilege('authenticated', 'publier_message(text,text,text,text,text)', 'EXECUTE') then
+  if not has_function_privilege('authenticated', 'publier_message(text,text,text,text,text,text)', 'EXECUTE') then
     raise exception 'TEST FAILED: authenticated lost EXECUTE on the updated 5-arg publier_message()';
   end if;
-  if has_function_privilege('anon', 'publier_message(text,text,text,text,text)', 'EXECUTE') then
+  if has_function_privilege('anon', 'publier_message(text,text,text,text,text,text)', 'EXECUTE') then
     raise exception 'TEST FAILED: anon should NOT have EXECUTE on publier_message()';
   end if;
   raise notice 'PASS: authenticated holds EXECUTE on all 4 new functions and the updated publier_message(); anon holds none';
@@ -10273,6 +10273,181 @@ end $$;
 -- the real Supabase base grants replicated before writing this
 -- migration; not re-asserted here since no other table's RLS policy is
 -- verified this way in this file either.
+
+-- =========================================================================
+-- Automatic publication moderation (migration 0054). Fixture: créateur A
+-- (verified) publishes both a plain post and an "ambiguous" post through
+-- the real publier_message() RPC, exactly the path the /api/publications
+-- route drives once /api/publications/moderer has already classified the
+-- content.
+-- =========================================================================
+
+insert into users (id, createur_verifie) values
+  ('d0540001-0000-0000-0000-000000000001', true);
+
+-- reports_reporter_ou_automatique / the raw reports_type_check CHECK,
+-- proven directly against the raw table (superuser, bypassing any RPC
+-- entirely) -- same "prove the constraint itself" discipline as
+-- publications_media_exclusif elsewhere in this file.
+do $$
+begin
+  begin
+    insert into reports (reporter_id, reported_user_id, type, statut)
+      values (null, 'd0540001-0000-0000-0000-000000000001', 'signalement', 'en_attente');
+    raise exception 'TEST FAILED: a NULL reporter_id was accepted for a real user signalement';
+  exception when check_violation then
+    raise notice 'PASS: reports_reporter_ou_automatique rejects NULL reporter_id for type=signalement';
+  end;
+  begin
+    insert into reports (reporter_id, reported_user_id, type, statut)
+      values (null, 'd0540001-0000-0000-0000-000000000001', 'signalement_automatique', 'en_attente');
+    raise notice 'PASS: reports_reporter_ou_automatique accepts NULL reporter_id for type=signalement_automatique';
+  end;
+  begin
+    insert into reports (reporter_id, reported_user_id, type, statut)
+      values ('d0540001-0000-0000-0000-000000000001', 'd0540001-0000-0000-0000-000000000001', 'signalement_automatique_typo', 'en_attente');
+    raise exception 'TEST FAILED: an invalid report type was accepted by reports_type_check';
+  exception when check_violation then
+    raise notice 'PASS: reports_type_check still rejects an unrecognized type after being redefined';
+  end;
+end $$;
+
+-- signaler_publication_automatique() rejects an unknown publication id --
+-- and, being ungranted entirely, can never even be reached directly by
+-- any role in the first place (see the grant-audit block further down).
+do $$
+begin
+  begin
+    perform signaler_publication_automatique('00000000-0000-0000-0000-000000000000', 'x');
+    raise exception 'TEST FAILED: signaler_publication_automatique() accepted an unknown publication id';
+  exception when others then
+    if sqlerrm like 'TEST FAILED%' then raise; end if;
+    if sqlerrm != 'publication not found' then
+      raise exception 'TEST FAILED: unexpected error: %', sqlerrm;
+    end if;
+    raise notice 'PASS: signaler_publication_automatique() rejects an unknown publication id';
+  end;
+end $$;
+
+-- A plain, non-ambiguous publish (p_signalement_automatique_raison
+-- omitted) never creates any report row at all -- the default,
+-- overwhelmingly common case must stay byte-identical to before this
+-- migration.
+select set_config('app.current_user_id', 'd0540001-0000-0000-0000-000000000001', false);
+set role authenticated;
+select publier_message(p_contenu := '0054 plain publication, not ambiguous');
+reset role;
+
+do $$
+declare
+  v_publication_id uuid;
+  v_report_count int;
+begin
+  select id into v_publication_id from publications
+    where auteur_id = 'd0540001-0000-0000-0000-000000000001'
+      and contenu = '0054 plain publication, not ambiguous';
+  if v_publication_id is null then
+    raise exception 'TEST FAILED: the plain publication was never created';
+  end if;
+
+  select count(*) into v_report_count from reports where publication_id = v_publication_id;
+  if v_report_count != 0 then
+    raise exception 'TEST FAILED: a plain publish created % unexpected report row(s)', v_report_count;
+  end if;
+  raise notice 'PASS: a plain publish (no raison) creates no report row at all';
+end $$;
+
+-- "ambigu" case: publier_message() with p_signalement_automatique_raison
+-- set both publishes the content AND records an automatic report,
+-- atomically, in the same call -- reporter_id null, the correct
+-- reported_user_id/publication_id/raison, statut en_attente, exactly
+-- what /admin's "Publications signalées" worklist already reads.
+select set_config('app.current_user_id', 'd0540001-0000-0000-0000-000000000001', false);
+set role authenticated;
+select publier_message(
+  p_contenu := '0054 ambiguous publication',
+  p_signalement_automatique_raison := 'ton potentiellement agressif'
+);
+reset role;
+
+do $$
+declare
+  v_publication_id uuid;
+  v_report record;
+begin
+  select id into v_publication_id from publications
+    where auteur_id = 'd0540001-0000-0000-0000-000000000001'
+      and contenu = '0054 ambiguous publication';
+  if v_publication_id is null then
+    raise exception 'TEST FAILED: the ambiguous publication was never created';
+  end if;
+
+  select reporter_id, reported_user_id, type, raison, publication_id, statut into v_report
+    from reports where publication_id = v_publication_id;
+
+  if v_report.reporter_id is not null then
+    raise exception 'TEST FAILED: automatic report has a non-NULL reporter_id';
+  end if;
+  if v_report.reported_user_id != 'd0540001-0000-0000-0000-000000000001' then
+    raise exception 'TEST FAILED: automatic report reported_user_id mismatch';
+  end if;
+  if v_report.type != 'signalement_automatique' then
+    raise exception 'TEST FAILED: automatic report has the wrong type (%)', v_report.type;
+  end if;
+  if v_report.raison != 'ton potentiellement agressif' then
+    raise exception 'TEST FAILED: automatic report raison mismatch (%)', v_report.raison;
+  end if;
+  if v_report.statut != 'en_attente' then
+    raise exception 'TEST FAILED: automatic report statut should be en_attente (got %)', v_report.statut;
+  end if;
+
+  raise notice 'PASS: publier_message() with a raison publishes the content and atomically records a real automatic report (reporter_id null, correct type/raison/statut)';
+end $$;
+
+-- Grant audit -- signaler_publication_automatique() is deliberately
+-- ungranted to every role, not just anon (the same 0020/0021 discipline
+-- applied one step further, matching appliquer_statut_compte()'s own
+-- test above): checked under real non-superuser roles, since the
+-- migration-applying superuser this file otherwise runs as bypasses
+-- every privilege check unconditionally.
+set role anon;
+do $$
+begin
+  begin
+    perform signaler_publication_automatique('00000000-0000-0000-0000-000000000000', 'x');
+    raise exception 'TEST FAILED: anon could call signaler_publication_automatique() directly';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon has no EXECUTE on signaler_publication_automatique()';
+  end;
+end $$;
+reset role;
+
+set role authenticated;
+do $$
+begin
+  begin
+    perform signaler_publication_automatique('00000000-0000-0000-0000-000000000000', 'x');
+    raise exception 'TEST FAILED: authenticated could call signaler_publication_automatique() directly';
+  exception when insufficient_privilege then
+    raise notice 'PASS: signaler_publication_automatique() has no EXECUTE grant for any role -- internal-only, callable only from inside publier_message()''s own execution context';
+  end;
+end $$;
+reset role;
+
+-- publier_message() itself keeps its existing authenticated-only grant
+-- (create or replace with an additive, trailing-default 6th parameter
+-- never restates a grant) -- positively re-confirmed here rather than
+-- assumed, same discipline as every other redefinition in this file.
+do $$
+begin
+  if not has_function_privilege('authenticated', 'publier_message(text,text,text,text,text,text)', 'EXECUTE') then
+    raise exception 'TEST FAILED: authenticated lost EXECUTE on the redefined publier_message()';
+  end if;
+  if has_function_privilege('anon', 'publier_message(text,text,text,text,text,text)', 'EXECUTE') then
+    raise exception 'TEST FAILED: anon unexpectedly gained EXECUTE on publier_message()';
+  end if;
+  raise notice 'PASS: publier_message() keeps its existing authenticated-only (never anon) EXECUTE grant after being redefined with a 6th parameter';
+end $$;
 
 do $$
 begin

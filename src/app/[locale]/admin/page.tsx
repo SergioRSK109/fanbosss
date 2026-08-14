@@ -162,11 +162,13 @@ export default async function AdminPage() {
     // rows never show up here. `repost_de_id` is selected so a
     // signalement on a repost can be resolved to its original's real
     // contenu below (a repost's own contenu is always null -- see
-    // buildPublicationSignalee()).
+    // buildPublicationSignalee()). `type` is selected too (migration
+    // 0054) -- the real, explicit signal for an automatic signalement,
+    // never inferred from reporter_id's own nullability.
     serviceSupabase
       .from("reports")
       .select(
-        "id, raison, created_at, reporter_id, reported_user_id, publications(id, contenu, repost_de_id)",
+        "id, type, raison, created_at, reporter_id, reported_user_id, publications(id, contenu, repost_de_id)",
       )
       .not("publication_id", "is", null)
       .eq("statut", "en_attente")
@@ -473,6 +475,7 @@ export default async function AdminPage() {
     return buildPublicationSignalee(
       {
         reportId: row.id,
+        type: row.type,
         raison: row.raison,
         createdAt: row.created_at,
         reporterId: row.reporter_id,
@@ -485,6 +488,7 @@ export default async function AdminPage() {
       pseudoById,
       userLabelById,
       t("deletedUser"),
+      t("publicationsSignalees.automatique"),
     );
   });
 

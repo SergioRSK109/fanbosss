@@ -30,6 +30,7 @@ export async function POST(request: NextRequest) {
     p_visibilite: parsed.data.visibilite ?? "public",
     p_autorise_repost: parsed.data.autorise_repost ?? "tous",
     p_video_r2_key: parsed.data.video_r2_key ?? null,
+    p_signalement_automatique_raison: parsed.data.signalement_automatique_raison ?? null,
   });
 
   if (error) {
