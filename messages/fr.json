@@ -177,7 +177,8 @@
       "shoutout": "Mention (shoutout)",
       "contenu_debloque": "Contenu exclusif",
       "evenement_live": "Accès live privé",
-      "campagne": "Campagne de collecte de fonds"
+      "campagne": "Campagne de collecte de fonds",
+      "produit": "Produit physique"
     },
     "reassurance": {
       "whatsapp": "Remboursé automatiquement si le créateur n'accepte pas ta demande sous 48h.",
@@ -633,6 +634,22 @@
     "statTransactions": "Transactions",
     "statGmvBrut": "GMV brut",
     "statCreateursActifs": "Créateurs actifs",
+    "usersHeading": "Utilisateurs",
+    "statTotalInscrits": "Total inscrits",
+    "statUtilisateursActifs": "Actifs (30 derniers jours)",
+    "chartInscriptionsTitle": "Nouvelles inscriptions / jour",
+    "argentHeading": "Argent",
+    "chartGmvTitle": "Volume total transigé (GMV) / jour",
+    "chartRevenuTitle": "Revenu réel FanBoss (commission) / jour",
+    "chartBreakdownTitle": "Répartition par type d'offre (30 derniers jours)",
+    "activiteHeading": "Activité",
+    "chartPublicationsTitle": "Publications créées / jour",
+    "statCreateursProduit": "Créateurs avec un produit physique actif",
+    "statConcours": "Concours créés (total)",
+    "charts": {
+      "today": "Aujourd'hui",
+      "breakdownEmpty": "Aucune transaction sur cette période."
+    },
     "remboursementsHeading": "Remboursements manuels en attente",
     "remboursementsIntro": "Transactions remboursées côté FanBoss mais pas encore réellement remboursées via CinetPay (voir CLAUDE.md « Automatic CinetPay refunds »). Une fois le remboursement fait manuellement dans le dashboard CinetPay, marque-le comme traité ici.",
     "verificationHeading": "Vérifications",

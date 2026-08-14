@@ -6949,6 +6949,259 @@ immediately in that account's own history list marked "non vu" — the
 account's status badge stays "Actif" throughout, confirming visually
 (not just at the SQL level) that a warning never blocks anything.
 
+## Admin dashboard: time-series charts (no migration)
+
+`/admin`'s "Vue d'ensemble" tab used to be entirely static-snapshot
+numbers (this month's GMV, top 10 créateurs, top 20 donateurs — all
+either "as of now" or "this calendar month", never a trend). This lot
+extends that same tab (per explicit instruction — not a new tab, not a
+new page) with real day-by-day movement: 4 daily trend charts, one
+category breakdown, and 4 new plain numbers, covering Utilisateurs/
+Argent/Activité. **New dependency: `recharts`** — the first and, as of
+this writing, only charting library in this project (confirmed via
+`package.json` before adding it).
+
+### The one definition this whole feature is built around: "actif" = 30 days
+
+**`ADMIN_STATS_WINDOW_DAYS = 30`** (`src/lib/adminStats.ts`) is the single
+source of truth for two related but distinct things, and every part of
+this feature reuses the same constant rather than a second hardcoded
+`30`:
+1. **"Actifs" (users)** — an account whose `auth.users.last_sign_in_at`
+   falls within the last 30 days. Computed as a plain rolling interval,
+   `now - 30×24h`, **not** a calendar-day cutoff — this matches every
+   other "last N days" window already established elsewhere in this
+   project (`classement_volume`'s own 30-day scope, `mes_progres_classement()`,
+   the parrainage bonus's 30-day window from `date_creation`, the wallet's
+   own rolling buckets) rather than inventing a calendar-based rule that
+   would behave differently depending on what time of day "today" is.
+   `isActiveWithinWindow(lastSignInAt, windowDays, now)` — a `null`
+   `last_sign_in_at` (never authenticated past signup, a legacy/service
+   account) is never active; there's no sign-in event to measure against.
+2. **Every daily chart's own 30-day span** — the last 30 UTC calendar
+   dates, ending today, zero-filled (a genuinely quiet day still shows as
+   `0`, never a silently skipped gap that would make the line jump). This
+   is deliberately a *different* mechanism from #1 despite sharing the
+   same window length: a chart needs stable, enumerable calendar-day
+   buckets to plot against (`buildDailyDateBuckets()`), while "is this
+   user active right now" needs only a single boolean rolling-interval
+   check with no buckets at all. Computed in UTC, same reasoning as the
+   signup age-gate/litiges business-day helpers elsewhere in this
+   project — a local-timezone cutoff could shift which day a
+   near-midnight event lands in depending on the admin's own browser
+   timezone, disagreeing with the database's own UTC session.
+
+**`computeStatsWindowStartIso()` is what keeps the SQL query and the
+chart's own bucket range from ever drifting apart** — it returns the
+*first* bucket's own start-of-day instant (not a separately-computed
+`now - 30×24h`), and every `.gte("created_at", ...)` query this feature
+adds uses that exact same value as its threshold. A separately-computed
+rolling threshold would not line up with the UTC calendar-day bucket
+boundaries and could silently drop or double-count rows right at the
+edge — flagged here explicitly since it's the kind of off-by-a-few-hours
+bug that's easy to introduce by "simplifying" this into two independent
+computations later.
+
+### Live computation, no cache table
+
+Per explicit instruction, matching this project's own standing
+discipline (`campagnes_montant_collecte`, `solde_wallet_createur`,
+`badges_fidelite_publics`...): every number and every chart point is
+computed fresh from the raw rows on each page load, nothing is
+pre-aggregated or cached anywhere. If load time ever becomes a real
+problem at scale, that's a separate, later chantier — not something this
+lot tries to anticipate. All the new queries are added to the page's
+existing single `Promise.all(...)` batch (one round trip, same pattern
+this file already uses throughout) rather than a second sequential
+fetch.
+
+### `src/lib/adminStats.ts` — pure helpers
+
+Same reasoning as `campagnes.ts`/`classementProgres.ts`/`litiges.ts`:
+this project has no jsdom/testing-library, so the chart components
+themselves can't be rendered in a test — the bucketing/aggregation logic
+lives here instead, unit-tested directly with genuinely staggered
+fixture data (not just instantaneous totals), so it can never silently
+disagree with what a chart renders.
+
+- `isActiveWithinWindow(lastSignInAt, windowDays, now)` — see above.
+- `buildDailyDateBuckets(days, now)` — `days` consecutive UTC calendar
+  dates, oldest first, ending today.
+- `computeStatsWindowStartIso(days, now)` — the shared SQL/chart
+  threshold, see above.
+- `buildDailyCountSeries(timestamps, days, now)` /
+  `buildDailySumSeries(entries, days, now)` — generic day-bucketed
+  count/sum series, zero-filled. Used for inscriptions/jour and
+  publications/jour (count), GMV/jour and revenu/jour (sum). Sums are
+  rounded to 2dp per bucket, same "never let float accumulation show as
+  82.60000000000001" discipline as `calculerRepartitionPaiement()`'s own
+  `round2`.
+- `computeOffreTypeBreakdown(entries)` — aggregates montant+count per
+  `OffreType` across the window, sorted descending by montant, omitting
+  any type with zero activity entirely (an empty bar among up to 8
+  possible types is noise, not information).
+
+### The 4 daily charts, the répartition chart, and why each looks the way it does
+
+Per the `dataviz` skill (consulted before writing any chart code, per its
+own trigger): **form before color**. Every one of the 4 daily metrics
+(inscriptions, GMV, revenu, publications) is "trend over time" — a
+single-series line, one hue, **no legend** (a single series needs no
+legend box, the chart's own title already says what's plotted), and
+critically: each metric lives in its own separate card/chart, never
+overlaid with another series on the same axis — so there's no
+categorical-palette colorblind-safety check to run at all (that only
+applies when two-or-more hues have to be told apart on *one* plot,
+which never happens here). The répartition-by-type chart is a
+**"compare magnitude" job** (per the skill's own form table), not an
+identity/distinct-series question — so it's a single sequential hue
+(`brand-500`) for every bar, never one color per offer type; coloring
+each bar a different categorical hue would double-encode the same
+"which type" information the Y-axis labels already carry, for zero
+benefit, while burning the "one hue = one identity" channel this project
+doesn't otherwise need here. Horizontal, not vertical columns, since
+offer-type labels ("Contenu exclusif", "Accès live privé"...) are long.
+
+**Colors, none of them new — every hue is an existing CSS custom
+property already defined in `globals.css`**: GMV → `--color-brand-500`
+(the platform's primary hue, "the headline money metric"); revenu réel →
+`--color-accent-500` (explicitly required to read as visually distinct
+from GMV — the project's own reserved secondary accent); inscriptions →
+`--color-success-500` (new-signup growth is an unambiguously positive
+metric, the one semantically-justified reuse of a status-adjacent token
+in this feature — deliberately not reused for any of the other 3
+metrics, which have no comparable "good/bad" framing); publications →
+`--color-brand-400` (a lighter purple, visually distinct from GMV's
+`brand-500` at a glance without introducing a new token); répartition
+bars → `--color-brand-500` again (safe reuse — a bar chart and a line
+chart are different enough shapes, in a different section header, that
+reusing brand-500 here just reinforces "this is a money chart too"
+rather than causing confusion).
+
+**Marks**: 2px lines, round join/cap (`strokeLinecap`/`strokeLinejoin`),
+no per-point dots except on hover (`activeDot`, with a 2px surface-color
+ring so it stays legible crossing the line) — per the skill's own mark
+spec. Bars are capped at 20px thick (under the skill's own ≤24px rule),
+4px-rounded at the data end (the bar's tip), square at the baseline.
+Gridlines are horizontal-only hairlines in `--color-border`, one step off
+the surface, never dashed.
+
+**Every chart's most decision-relevant value is readable without
+hovering — the "no tooltip-only value" rule from the skill's own
+interaction guidance, applied pragmatically for a 30-point daily line
+rather than building a full parallel table-view toggle**: each line
+chart shows its own latest ("Aujourd'hui"/"Today") value as plain text
+next to the title, and every répartition bar has its montant labeled
+directly at the tip — so a reader gets the two numbers that matter most
+(today, and each type's total) without ever needing to hover. Full
+day-by-day historical values for the other 29 points are reachable via
+the standard recharts hover tooltip (crosshair on the line charts),
+which is an enhancement on top of that, not the only way to read a
+value. A complete WCAG-style "table view" twin for each chart was
+**not** built — flagged as a deliberate scope call for an internal,
+non-public admin tool with a single founder as its only real user,
+rather than silently skipped.
+
+**`unit` is a plain `"currency" | "count"` string prop, never a
+formatter function** — `AdminStatChartCard`/`AdminOffreTypeBarChart` are
+both `"use client"` (recharts needs the DOM; `useLocale()` needs the
+i18n client context) while `admin/page.tsx` is a Server Component, and a
+closure can't cross that boundary as a prop, only plain serializable
+data can. The actual formatting logic (and the offer-type label
+translation via the pre-existing `CreateurProfile.offerTypes` namespace,
+now extended with the one type it was missing — see below) lives inside
+the client components, driven by that one string.
+
+**`CreateurProfile.offerTypes` gained a `produit` key** (`"Produit
+physique"`/`"Physical product"`) — this shared label map already existed
+(used by `LitigesManager`/`CreateurProfileView`) but had never been
+extended past `campagne` (added for an unrelated bug fix, see this
+file's own créateur-verification section) since `produit` was added to
+`OFFRE_TYPES` (migration `0039`). The répartition chart is the first
+surface that actually needs a label for every one of the 8 possible
+offer types, which is what surfaced the gap — fixed in the one shared
+namespace rather than adding a second, parallel label map.
+
+### Queries added (all inside the page's existing `Promise.all`)
+
+- `users` — the existing full-list query gained `date_creation` (feeds
+  inscriptions/jour; `id`/`pseudo`/etc. were already selected for other
+  admin tools on this same page, reused rather than a second query).
+- `transactions` (a second, independent read of the same table the
+  existing "this month" query already reads, this one scoped to
+  `computeStatsWindowStartIso()` instead of `startOfMonth`) — `montant,
+  created_at, offres(type)`, feeds both GMV/jour (sum) and the
+  répartition chart from one fetch, same "reuse one fetch, filter/derive
+  in JS" pattern this page already uses for `campagneIds` elsewhere.
+  Every status included (gross), same unadjusted "brut" philosophy the
+  page's existing GMV Brut stat already established — a later refund
+  doesn't retroactively remove a day's transacted volume from the chart.
+- `paiements` — `commission_plateforme, created_at`, scoped to the same
+  window. **Anchored on `paiements.created_at` (when commission was
+  actually locked in at `validee`), not `transactions.created_at` (when
+  the fan paid)** — the two differ by up to 48h for `video`/`shoutout`/
+  `whatsapp` (an acceptation step in between), and `paiements.created_at`
+  is the only timestamp that means "this is the day FanBoss's own
+  commission became real". Every row regardless of `statut_paiement`,
+  same unadjusted-brut reasoning as GMV — a later refund doesn't
+  retroactively zero out the commission that was actually recorded.
+- `publications` — `created_at` only, scoped to the window.
+- `offres` — `createur_id`, filtered to `type = 'produit' and actif =
+  true`; deduplicated to a distinct-créateur count in JS (same `new
+  Set(...).size` pattern the page already uses for
+  `createursActifsCount`).
+- `concours` — `select("id", { count: "exact", head: true })`, an
+  all-time cumulative total (not windowed — per the brief's own "chiffres
+  simples, pas nécessairement en courbe" for the two adoption numbers),
+  same count-only query shape already used elsewhere in this project
+  (`/api/offres`, `notifications.ts`).
+
+### Testing
+
+`src/lib/__tests__/adminStats.test.ts` (19 tests): `isActiveWithinWindow`
+at the exact 30-day boundary (inclusive) and one millisecond past it
+(excluded), a null `last_sign_in_at`, and a custom window; `buildDailyDateBuckets`
+producing the exact expected 5-date range with no gaps/duplicates;
+`computeStatsWindowStartIso` matching the first bucket's own start-of-day
+instant exactly; `buildDailyCountSeries`/`buildDailySumSeries` against a
+**genuinely staggered fixture** (values spread unevenly across several
+different days within the window, not a single instantaneous total),
+confirming every bucket — including the zero days — comes back correct,
+a timestamp outside the window is ignored, and an empty input still
+returns a fully zero-filled series rather than `[]`; `computeOffreTypeBreakdown`
+aggregating montant+count correctly across a mixed-type fixture sorted
+descending, omitting a zero-activity type entirely, and rounding to 2dp.
+
+Verified visually end-to-end (same throwaway mock-Supabase/Playwright
+technique used throughout this file, extended with a genuinely staggered
+fixture: transactions/paiements/publications spread across specific days
+25, 20, 10, 5, 2, 1, and 0 days ago rather than all "now", plus users with
+`date_creation`/`last_sign_in_at` deliberately spread so "Actifs" is a
+real subset of "Total inscrits", not all of it, and one `produit` offre
+deliberately `actif = false` to prove that filter is real): all three new
+section headings (Utilisateurs/Argent/Activité) render; the 4 stat tiles
+show the exact expected fixture numbers (7 total inscrits, 5 actifs, 2
+créateurs avec un produit actif — the inactive one correctly excluded, 3
+concours); all 4 line charts render a real SVG path with genuine
+multi-point coordinate data (not a flat/degenerate line) and their own
+correct "Aujourd'hui"/"Today" latest-value label; the répartition chart
+renders exactly 6 real bars (matching the fixture's 6 distinct offer
+types touched in the window) each with real, distinct, non-zero
+proportional widths and a correct value label at the tip; and zero
+console errors — confirmed in both `fr` (light) and `/en/` (dark). A
+**real, if incidental, bug was caught by this same pass and fixed in the
+fixture itself, not the app**: the first draft of the new `transactions`
+fixture rows omitted `createur_id`/`fan_id` (irrelevant to the stats
+queries themselves, which don't select those columns) — but that same
+table also backs the page's **pre-existing** "this month"/"top créateurs"
+section, where a transaction with an `undefined` `createur_id` collapsed
+into a single bogus `key={undefined}` list item and tripped a real React
+"each child in a list should have a unique key" console warning. Fixed
+by giving every fixture transaction a real `createur_id`/`fan_id` — a
+reminder that extending a shared fixture table for one feature's
+verification can silently affect an unrelated, already-shipped section's
+own rendering if the new rows aren't realistically shaped.
+
 ## Admin dashboard (`/admin`, migration `0015`)
 
 Business-only page, gated by `users.est_admin` — see the schema entry

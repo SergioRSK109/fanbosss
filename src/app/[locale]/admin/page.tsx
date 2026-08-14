@@ -2,6 +2,8 @@ import { notFound } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { AdminTabs } from "@/components/admin/AdminTabs";
 import type { StatutCompte } from "@/components/admin/AccountQuickActions";
+import { AdminOffreTypeBarChart } from "@/components/admin/charts/AdminOffreTypeBarChart";
+import { AdminStatChartCard } from "@/components/admin/charts/AdminStatChartCard";
 import { GestionAdminsManager, type AdminManageableUser } from "@/components/admin/GestionAdminsManager";
 import { GestionComptesManager, type AccountManageableUser } from "@/components/admin/GestionComptesManager";
 import { LitigesManager, type LitigeEnAttente } from "@/components/admin/LitigesManager";
@@ -20,6 +22,14 @@ import {
   type PublicationOriginalRow,
   type PublicationSignalee,
 } from "@/lib/adminPublicationsSignalees";
+import {
+  ADMIN_STATS_WINDOW_DAYS,
+  buildDailyCountSeries,
+  buildDailySumSeries,
+  computeOffreTypeBreakdown,
+  computeStatsWindowStartIso,
+  isActiveWithinWindow,
+} from "@/lib/adminStats";
 import { resolveDisplayName } from "@/lib/profil";
 import { createSupabaseServerClient, createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 import type { OffreType } from "@/lib/validation";
@@ -64,6 +74,13 @@ export default async function AdminPage() {
   const startOfMonth = new Date(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
   ).toISOString();
+  // "Vue d'ensemble" time-series charts (see CLAUDE.md's own section for
+  // the full account) -- one shared window start, computed the same way
+  // the daily buckets themselves are, so the SQL filter and the chart's
+  // own bucket range can never drift apart (see adminStats.ts's own
+  // comment on computeStatsWindowStartIso for why a separately-computed
+  // `now - 30*24h` threshold would risk exactly that).
+  const statsWindowStart = computeStatsWindowStartIso(ADMIN_STATS_WINDOW_DAYS, now);
 
   const [
     { data: monthTransactions },
@@ -76,6 +93,11 @@ export default async function AdminPage() {
     { data: signalementRows },
     { data: paiementsReussisRows },
     { data: avertissementRows },
+    { data: statsTransactions },
+    { data: statsPaiements },
+    { data: statsPublications },
+    { data: produitOffresActives },
+    { count: concoursCount },
   ] = await Promise.all([
     serviceSupabase
       .from("transactions")
@@ -115,9 +137,15 @@ export default async function AdminPage() {
       .select("id, montant, createur_id, demande_at")
       .eq("statut", "en_attente")
       .order("demande_at", { ascending: true }),
+    // `date_creation` added for the "Vue d'ensemble" inscriptions/jour
+    // chart below -- reusing this same full-user-list query rather than
+    // a second, near-duplicate one, same "one fetch, filter/derive in
+    // JS" pattern this admin page already uses elsewhere on this file.
     serviceSupabase
       .from("users")
-      .select("id, pseudo, nom_affichage, est_admin, statut_compte, statut_compte_raison"),
+      .select(
+        "id, pseudo, nom_affichage, est_admin, statut_compte, statut_compte_raison, date_creation",
+      ),
     serviceSupabase.auth.admin.listUsers({ page: 1, perPage: 1000 }),
     // Only the two actionable statuses -- an approved/refused demande no
     // longer needs an admin decision, see VerificationsManager.
@@ -167,6 +195,40 @@ export default async function AdminPage() {
       .from("avertissements")
       .select("id, user_id, raison, emis_at, vu_at")
       .order("emis_at", { ascending: false }),
+    // Vue d'ensemble charts, computed live, no cache table -- same
+    // discipline as montant_collecte/solde_wallet_createur elsewhere in
+    // this project (see CLAUDE.md). GMV/jour + répartition par type
+    // d'offre share this one query: every status is included (gross,
+    // same "brut" definition monthTransactions/gmvBrut above already
+    // use), joined to offres(type) for the breakdown.
+    serviceSupabase
+      .from("transactions")
+      .select("montant, created_at, offres(type)")
+      .gte("created_at", statsWindowStart),
+    // Revenu réel FanBoss/jour -- commission_plateforme, distinct from
+    // the GMV brut above (see CLAUDE.md for why paiements.created_at,
+    // not transactions.created_at, is the right anchor here). Every row
+    // regardless of statut_paiement, same unadjusted "brut" philosophy
+    // as GMV -- a later refund doesn't retroactively zero out the
+    // commission that was actually recorded at validation time.
+    serviceSupabase
+      .from("paiements")
+      .select("commission_plateforme, created_at")
+      .gte("created_at", statsWindowStart),
+    serviceSupabase
+      .from("publications")
+      .select("created_at")
+      .gte("created_at", statsWindowStart),
+    // Adoption: distinct créateurs with >= 1 active `produit` offer.
+    serviceSupabase
+      .from("offres")
+      .select("createur_id")
+      .eq("type", "produit")
+      .eq("actif", true),
+    // Adoption: total concours ever created (all-time, not windowed --
+    // a simple cumulative count, per the brief's own "chiffres simples,
+    // pas nécessairement en courbe").
+    serviceSupabase.from("concours").select("id", { count: "exact", head: true }),
   ]);
 
   const userLabelById = new Map(
@@ -193,6 +255,64 @@ export default async function AdminPage() {
   );
   const createursActifsCount = new Set(
     (monthTransactions ?? []).map((t) => t.createur_id),
+  ).size;
+
+  // "Vue d'ensemble" time-series charts -- computed live from the raw
+  // rows fetched above, no new cache table (same discipline as
+  // montant_collecte/solde_wallet_createur, see CLAUDE.md's own section
+  // on this feature for the full account, including why "actif" means
+  // "signed in within ADMIN_STATS_WINDOW_DAYS days").
+  const totalInscritsCount = (allUsers ?? []).length;
+  const utilisateursActifsCount = (authUsersPage?.users ?? []).filter((u) =>
+    isActiveWithinWindow(u.last_sign_in_at ?? null, ADMIN_STATS_WINDOW_DAYS, now),
+  ).length;
+  const inscriptionsParJour = buildDailyCountSeries(
+    (allUsers ?? [])
+      .map((u) => u.date_creation)
+      .filter((d): d is string => Boolean(d)),
+    ADMIN_STATS_WINDOW_DAYS,
+    now,
+  );
+
+  // GMV/jour + répartition par type d'offre share one query (see above)
+  // -- `offres(type)` is a to-one embed but Supabase/PostgREST still
+  // types it as an array, same shape already handled for litigeRows.
+  const statsTransactionsWithType = (statsTransactions ?? []).map((row) => {
+    const offre = Array.isArray(row.offres) ? row.offres[0] : row.offres;
+    return {
+      montant: Number(row.montant),
+      createdAt: row.created_at,
+      type: offre?.type as OffreType | undefined,
+    };
+  });
+  const gmvParJour = buildDailySumSeries(
+    statsTransactionsWithType.map((row) => ({ timestamp: row.createdAt, amount: row.montant })),
+    ADMIN_STATS_WINDOW_DAYS,
+    now,
+  );
+  const offreTypeBreakdown = computeOffreTypeBreakdown(
+    statsTransactionsWithType
+      .filter((row): row is typeof row & { type: OffreType } => row.type !== undefined)
+      .map((row) => ({ type: row.type, montant: row.montant })),
+  );
+
+  const revenuParJour = buildDailySumSeries(
+    (statsPaiements ?? []).map((row) => ({
+      timestamp: row.created_at,
+      amount: Number(row.commission_plateforme),
+    })),
+    ADMIN_STATS_WINDOW_DAYS,
+    now,
+  );
+
+  const publicationsParJour = buildDailyCountSeries(
+    (statsPublications ?? []).map((row) => row.created_at),
+    ADMIN_STATS_WINDOW_DAYS,
+    now,
+  );
+
+  const createursProduitActifsCount = new Set(
+    (produitOffresActives ?? []).map((row) => row.createur_id),
   ).size;
 
   // Top 10 créateurs par volume ce mois -- same gross basis as GMV brut
@@ -393,6 +513,70 @@ export default async function AdminPage() {
             <div className="text-xs text-foreground-muted">{t("statCreateursActifs")}</div>
           </div>
         </div>
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-lg font-bold">{t("usersHeading")}</h2>
+        <div className="mb-3 grid grid-cols-2 gap-3">
+          <div className="card px-4 py-3 text-center">
+            <div className="text-2xl font-bold">{totalInscritsCount}</div>
+            <div className="text-xs text-foreground-muted">{t("statTotalInscrits")}</div>
+          </div>
+          <div className="card px-4 py-3 text-center">
+            <div className="text-2xl font-bold">{utilisateursActifsCount}</div>
+            <div className="text-xs text-foreground-muted">{t("statUtilisateursActifs")}</div>
+          </div>
+        </div>
+        <AdminStatChartCard
+          title={t("chartInscriptionsTitle")}
+          data={inscriptionsParJour}
+          color="var(--color-success-500)"
+          unit="count"
+        />
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-lg font-bold">{t("argentHeading")}</h2>
+        <div className="flex flex-col gap-3">
+          <AdminStatChartCard
+            title={t("chartGmvTitle")}
+            data={gmvParJour}
+            color="var(--color-brand-500)"
+            unit="currency"
+          />
+          <AdminStatChartCard
+            title={t("chartRevenuTitle")}
+            data={revenuParJour}
+            color="var(--color-accent-500)"
+            unit="currency"
+          />
+          <div className="card p-4">
+            <h3 className="mb-2 text-sm font-semibold text-foreground-muted">
+              {t("chartBreakdownTitle")}
+            </h3>
+            <AdminOffreTypeBarChart data={offreTypeBreakdown} color="var(--color-brand-500)" />
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-lg font-bold">{t("activiteHeading")}</h2>
+        <div className="mb-3 grid grid-cols-2 gap-3">
+          <div className="card px-4 py-3 text-center">
+            <div className="text-2xl font-bold">{createursProduitActifsCount}</div>
+            <div className="text-xs text-foreground-muted">{t("statCreateursProduit")}</div>
+          </div>
+          <div className="card px-4 py-3 text-center">
+            <div className="text-2xl font-bold">{concoursCount ?? 0}</div>
+            <div className="text-xs text-foreground-muted">{t("statConcours")}</div>
+          </div>
+        </div>
+        <AdminStatChartCard
+          title={t("chartPublicationsTitle")}
+          data={publicationsParJour}
+          color="var(--color-brand-400)"
+          unit="count"
+        />
       </section>
 
       <section>
