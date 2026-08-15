@@ -101,6 +101,7 @@ export function ParametresForm({
   masqueExploration,
   badgeFidelitePublic,
   badgeDonateurPublic,
+  porteeLivraison,
   photoUrl,
   couvertureUrl,
 }: {
@@ -119,6 +120,11 @@ export function ParametresForm({
   masqueExploration: boolean;
   badgeFidelitePublic: boolean;
   badgeDonateurPublic: boolean;
+  // Delivery-zone restriction (migration 0055) -- NULL means "not
+  // configured yet," the unchanged, unrestricted current behavior; the
+  // radio group below only ever offers the 3 real scopes, never a way
+  // to pick "not configured" once one has been chosen.
+  porteeLivraison: "province" | "pays" | "aucune_restriction" | null;
   photoUrl: string | null;
   couvertureUrl: string | null;
 }) {
@@ -134,6 +140,7 @@ export function ParametresForm({
   const [masqueExplorationValue, setMasqueExplorationValue] = useState(masqueExploration);
   const [badgeFideliteValue, setBadgeFideliteValue] = useState(badgeFidelitePublic);
   const [badgeDonateurValue, setBadgeDonateurValue] = useState(badgeDonateurPublic);
+  const [porteeLivraisonValue, setPorteeLivraisonValue] = useState(porteeLivraison);
   const [file, setFile] = useState<File | null>(null);
   // The raw file straight from the OS picker, before cropping -- opens
   // PhotoCropper when set. Never uploaded directly: `file` (above) only
@@ -338,6 +345,7 @@ export function ParametresForm({
         masque_exploration: masqueExplorationValue,
         badge_fidelite_public: badgeFideliteValue,
         badge_donateur_public: badgeDonateurValue,
+        portee_livraison: porteeLivraisonValue,
       };
 
       if (file) {
@@ -685,6 +693,31 @@ export function ParametresForm({
           />
           <span className="text-sm">{t("badgeDonateurCheckboxLabel")}</span>
         </label>
+
+        {/* Delivery-zone restriction for physical products (migration
+            0055) -- 3 mutually exclusive radios, not a checkbox: unlike
+            every other setting on this page, NULL/"not configured" isn't
+            one of the offered choices, only the 3 real scopes are (see
+            porteeLivraison's own prop comment above). */}
+        <fieldset className="flex flex-col gap-2">
+          <legend className="text-sm">{t("porteeLivraisonLabel")}</legend>
+          {(["province", "pays", "aucune_restriction"] as const).map((option) => (
+            <label key={option} className="flex items-center gap-3">
+              <input
+                type="radio"
+                name="portee_livraison"
+                value={option}
+                checked={porteeLivraisonValue === option}
+                onChange={() => {
+                  setPorteeLivraisonValue(option);
+                  mainSave.dismiss();
+                }}
+                className="h-5 w-5 accent-brand-500"
+              />
+              <span className="text-sm">{t(`porteeLivraisonOptions.${option}`)}</span>
+            </label>
+          ))}
+        </fieldset>
 
         {mainSave.status === "error" && (
           <p className="text-sm text-danger-600">{mainSave.errorMessage}</p>

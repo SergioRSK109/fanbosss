@@ -7270,6 +7270,229 @@ upload/moderation/publish chain had done anything, making the assertion
 race its own setup. Fixed by waiting for the actual network response to
 the final `/api/publications` call instead.
 
+## Delivery-zone restriction for physical products (migration `0055`)
+
+A créateur selling a physical product (offre type `produit`, Phase
+1-3 above) ships it themselves — nothing in this app previously stopped
+a fan on the other side of the country, or the continent, from paying
+for something the créateur never intended to ship that far. This adds
+an opt-in scope: "my province only," "my whole country," or "no
+restriction" (the unchanged, current default).
+
+### Why a 3-level scope, not a fixed list of RDC provinces
+
+**The deliberate design decision this whole feature is built around.**
+A hardcoded province list (the 26 RDC provinces, `src/lib/states.ts`'s
+own generated dataset for the signup dropdown) would have been the
+obvious-looking shortcut — this app's own `users.province`/`users.pays`
+are already populated from that exact dataset at signup (migration
+`0012`), so "just check against the RDC list" is the naive read. It was
+rejected for two concrete reasons:
+
+1. **This app already isn't RDC-only, by explicit design.** `COUNTRIES`
+   (`src/lib/countries.ts`) lists 38 real countries, not just RDC, and
+   `getStatesForCountry()` already resolves a matching province/state
+   list for whichever one a user actually picked at signup — a créateur
+   or fan signing up from Belgium, France, or any of the other 37
+   countries already has a real `province`/`pays` pair on their own row,
+   populated the exact same way. A restriction hardcoded to RDC's own 26
+   provinces would either silently do nothing for every non-RDC
+   créateur (never actually protecting them) or need its own per-country
+   province table duplicated from `states.json` — a second copy of data
+   this codebase already has, that could drift out of sync with the
+   first.
+2. **Zero maintenance burden, by construction.** `checkDeliveryZone()`
+   (`src/lib/livraison.ts`) never needs to know what a "valid" province
+   or country name even looks like — it does one case/whitespace-
+   insensitive string comparison between two already-collected fields
+   (`users.province`, `users.pays`), for whichever of the two the
+   créateur's own `portee_livraison` selects. Adding a new country to
+   `COUNTRIES` later, or a new province to `states.json`, needs zero
+   changes here — the exact same comparison keeps working, because it
+   was never a lookup against a fixed list in the first place.
+
+The 3-level scope (province / pays / aucune_restriction) is what makes
+this genuinely reusable at whatever granularity a créateur actually
+needs, without this feature ever having to encode "what counts as a
+valid province" itself — that's still, and only ever, `states.json`'s
+job, for the signup dropdown alone.
+
+### Schema
+
+```sql
+alter table users add column portee_livraison text
+  check (portee_livraison in ('province', 'pays', 'aucune_restriction'));
+```
+
+**`NULL` is the default for every existing row** (no `default` clause)
+and stays `NULL` until a créateur actively picks one of the 3 real
+scopes in `/parametres` — the same "never retroactively restrict a
+créateur who hasn't configured this yet" principle already applied to
+`masque_exploration`/`classement_public` elsewhere in this schema, just
+inverted: those two default to a concrete boolean, this one is
+genuinely 3-way and a 4th "not configured" state has to live in `NULL`,
+not as a 4th `CHECK` value (there is no `'non_configure'` string
+anywhere in this feature — a `NULL` column read is the only signal, and
+`checkDeliveryZone()`'s own type treats `null` and `'aucune_restriction'`
+identically on purpose, see below). Verified directly in
+`checklist_2_3.sql`: the raw `CHECK` rejects an unrecognized value,
+accepts all 3 real ones, accepts `NULL`, and a brand-new user row (no
+explicit `portee_livraison` in the `INSERT`) defaults to `NULL` on its
+own — this last check is what actually proves "never retroactively
+block," not just the column's own nullability in isolation.
+
+### `src/lib/livraison.ts` — the one comparison, shared
+
+Pure and DOM/database-free, same reasoning as `campagnes.ts`/
+`classementProgres.ts` elsewhere in this codebase — this logic is worth
+unit-testing directly (`livraison.test.ts`), and having exactly one
+definition is what guarantees the checkout page's blocking decision can
+never silently disagree with itself.
+
+`checkDeliveryZone(portee, fanValue, createurValue)` returns
+`{blocked, missingFanData}`:
+- `portee` is `null` or `'aucune_restriction'` → never blocks, full
+  stop — the current, unrestricted behavior, byte-identical to before
+  this migration for every créateur who hasn't opted in.
+- The fan's own value (province or pays, whichever `portee` selects) is
+  missing/blank → **never blocks**, but `missingFanData: true` — there's
+  nothing to compare against, and penalizing an incomplete profile for
+  a decision the fan never made would be the wrong call. This is a soft,
+  dismissable heads-up on the checkout page, never a hard stop.
+- The créateur's own value is missing/blank (a créateur who selected a
+  scope but has no province/pays of their own on file — an edge case,
+  but the columns are nullable) → **also never blocks**, for the
+  identical reason from the other side: there's nothing meaningful to
+  compare against either. No warning is shown for this side specifically
+  — it's indistinguishable from "no restriction" from the fan's own
+  point of view, and there's no actionable thing *the fan* could do
+  about a gap in the créateur's own profile.
+- Both sides have a real value → a genuine string comparison,
+  `.trim().toLowerCase()` on each side first (case/whitespace-
+  insensitive, same discipline as every other free-text field
+  comparison in this project) — `blocked: true` only on an actual
+  mismatch.
+
+### Where the check runs — strictly before `reserver_stock_produit()`, never inside it
+
+Per the brief's own instruction, this lives in
+`src/app/[locale]/paiement/produit/[offreId]/page.tsx` (the Server
+Component), not inside `ProduitCheckoutContent.tsx`'s own mount effect
+that calls `/api/offres/[id]/reserver-produit`. A blocked fan never even
+sees the "reserving..." transient state, because the page renders a
+distinct blocked screen in place of `<ProduitCheckoutContent>` entirely
+— `reserver_stock_produit()` (migration `0039`) is never reached, never
+holds a stock unit for 10 minutes on a request that was always going to
+be pointless.
+
+**Reading the créateur's own `portee_livraison`/`province`/`pays`
+needs the service-role client** — `profils_publics` exposes `pays` but
+not `province`, and `portee_livraison` isn't public at all (extending
+`profils_publics` for this one feature would have made a créateur's
+exact province visible to every anonymous visitor, not just a fan
+already mid-checkout for their product). Same "authenticated route
+bypasses RLS for a specific, already-authorized read" pattern already
+established for `whatsapp-link`/`content-url`/`live-link` — this page
+has already verified the caller is a real, logged-in fan about to
+transact with this specific créateur (via `offre.createur_id`, itself
+already read through the public `offres_publiques` view) before ever
+reaching for the service-role client. The fan's own `province`/`pays`
+comes from the plain authenticated client instead — `users_select_self`
+RLS already lets a caller read every column of their own row.
+
+**The blocked screen and the soft warning are two different UI
+surfaces, not two states of one component**: a real mismatch replaces
+the entire page (no `<ProduitCheckoutContent>` render at all — the copy
+explains which scope blocked it, `zoneBloqueeProvince`/`zoneBloqueePays`,
+so the fan understands why, not just that something failed); missing
+fan data instead passes `avertissementZoneLivraison={true}` down into
+`ProduitCheckoutContent`, which renders a plain, dismissable-by-scrolling-
+past banner above the still-fully-functional reservation form — the
+reservation flow proceeds completely normally underneath it, per the
+"never block on missing data" rule.
+
+### Interface créateur — `/parametres`
+
+Three real `<input type="radio">` elements (not a `<select>`, per
+explicit instruction — this project otherwise leans on a plain `<select>`
+for binary/few-way choices, e.g. the concours objectif-points Oui/Non
+question, but this brief asked for radios specifically), placed
+immediately after the existing `badge_donateur_public` checkbox block in
+`ParametresForm.tsx` — same component, same "each concern is one more
+row in the main form" pattern every other opt-in setting on this page
+already follows, saved together with the rest of the main form's submit
+(nom_affichage, social links, the other checkboxes), not its own
+separate save button. **Reuses `users.province`/`users.pays` exactly as
+already collected at signup** (migration `0012`) — no new field to
+re-enter, no second copy of the créateur's own location; the radio
+group only ever picks which of those two *existing* columns the
+comparison uses, never asks for a location a second time.
+
+There is deliberately no 4th radio for "not configured" — once a
+créateur has picked one of the 3 real scopes there's no UI path back to
+`NULL` (a genuine irreversibility this feature accepts, same as
+`masquer_ma_publication()`'s own one-way design elsewhere in this
+project, though for a much lower-stakes reason here: a créateur who
+wants no restriction again simply picks "Aucune restriction," which is
+functionally identical to the original `NULL` state from every read
+path's point of view, per `checkDeliveryZone()`'s own equivalence
+between the two).
+
+### Testing
+
+`src/lib/__tests__/livraison.test.ts`: both real scopes (`province`/
+`pays`) tested independently, each in both directions (a genuine
+match, a genuine mismatch), case/whitespace-insensitivity on both,
+missing fan data never blocking (flagged as a warning instead) for
+both scopes, missing créateur data never blocking either (no warning
+flag for that side), and `null`/`'aucune_restriction'` both never
+blocking regardless of what either side's value actually is.
+`validation.test.ts` covers `parametresProfilSchema`'s new
+`portee_livraison` field directly: all 3 real values accepted, `null`
+and omission both accepted, an unrecognized string rejected.
+`checklist_2_3.sql` covers the raw `CHECK` constraint (see "Schema"
+above) — the DB-level guarantee; the actual comparison logic has no SQL
+component at all, it's pure application code, so there's no RPC/trigger
+test for it here.
+
+Verified visually end-to-end (same throwaway mock-Supabase/Playwright
+technique used throughout this file — a small Node mock of the
+Auth/PostgREST surface with one créateur fixture and three fan fixtures
+— matching province/pays, mismatched province, and missing
+province/pays entirely — a real `next dev`, and scripted Chromium
+sessions): `/parametres` renders exactly 3 radios with none pre-checked
+while `portee_livraison` is `null`, selecting "Tout mon pays" and saving
+shows the success confirmation, and the choice survives a full page
+reload (real server-side persistence via the mock's own `PATCH
+/rest/v1/users` handler, not just local React state). On
+`/paiement/produit/[offreId]`: a fan in a different province than a
+`'province'`-scoped créateur sees the blocked screen with **zero**
+network calls ever made to `reserver-produit` (confirmed via a request
+spy, not assumed from the UI alone); a fan in the same province
+proceeds normally through to the real reservation form; a fan with no
+province at all sees the soft warning banner while the reservation flow
+still completes normally underneath it; `portee_livraison = null` and
+`= 'aucune_restriction'` both never block regardless of a real province
+mismatch; and a `'pays'`-scoped créateur correctly compares country
+specifically — a fan in a different province but the *same* country is
+let through, proving the two scopes genuinely check different columns
+rather than one silently standing in for the other. All of the above
+confirmed in both `fr` (light/dark) and `/en/` (light/dark) via real
+screenshots, not just DOM assertions.
+
+One real test-harness bug caught and fixed along the way, worth
+recording since it isn't specific to this feature: an early version of
+one assertion used `page.textContent("body")` (which, as this project's
+own CLAUDE.md already documents for an unrelated earlier debugging
+session, includes text inside `<script>` tags — Next.js embeds the full
+serialized RSC/translation payload there) to check for the *absence* of
+the blocked-page's own heading text, and got a false positive: the
+string existed in the embedded hydration payload even on a page that
+correctly rendered the normal checkout form. Fixed by switching to
+`document.body.innerText` (layout-aware, excludes non-rendered content),
+the same fix already established for the "Compte suspendu" mock-debug
+session earlier in this file.
+
 ## Admin dashboard: time-series charts (no migration)
 
 `/admin`'s "Vue d'ensemble" tab used to be entirely static-snapshot

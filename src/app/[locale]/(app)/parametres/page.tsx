@@ -59,7 +59,7 @@ export default async function ParametresPage({
     supabase
       .from("users")
       .select(
-        "nom_affichage, pseudo, pseudo_modifie_at, bio, lien_tiktok, lien_instagram, lien_youtube, lien_autre, classement_public, masque_exploration, badge_fidelite_public, badge_donateur_public, createur_verifie, photo_r2_key, photo_couverture_r2_key",
+        "nom_affichage, pseudo, pseudo_modifie_at, bio, lien_tiktok, lien_instagram, lien_youtube, lien_autre, classement_public, masque_exploration, badge_fidelite_public, badge_donateur_public, portee_livraison, createur_verifie, photo_r2_key, photo_couverture_r2_key",
       )
       .eq("id", user.id)
       .single(),
@@ -230,6 +230,9 @@ export default async function ParametresPage({
         masqueExploration={profil?.masque_exploration ?? false}
         badgeFidelitePublic={profil?.badge_fidelite_public ?? false}
         badgeDonateurPublic={profil?.badge_donateur_public ?? false}
+        porteeLivraison={
+          (profil?.portee_livraison as "province" | "pays" | "aucune_restriction" | null) ?? null
+        }
         photoUrl={photoUrl}
         couvertureUrl={couvertureUrl}
       />
