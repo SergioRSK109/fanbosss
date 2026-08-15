@@ -8563,18 +8563,156 @@ Database](https://github.com/dr5hn/countries-states-cities-database)
 (ODbL-licensed — attribution in `CREDITS.md`, per the license's
 requirement): the full upstream dataset also carries cities and
 postcodes for ~250 countries (states.json alone is ~6.4MB upstream);
-this repo only keeps the states/provinces for the 38 real countries in
+this repo only keeps the states/provinces for the real countries in
 `COUNTRIES` (`lib/countries.ts`), pre-filtered and stripped down to
-`{code, name}` at generation time (~45KB) — not fetched at runtime, so
-signup has no third-party network dependency. French names are used
-where the upstream `translations.fr` field has one (all 26 RDC
-provinces do), falling back to the dataset's default (English) name
-otherwise. `getStatesForCountry(code)` returns `[]` for a country with
-no entry (only `"OTHER"` in practice — verified in
-`states.test.ts`, which also asserts every real `COUNTRIES` entry has
-at least one province, so a future country added there without
+`{code, name}` at generation time — not fetched at runtime, so signup
+has no third-party network dependency. French names are used where the
+upstream `translations.fr` field has one, falling back to the dataset's
+default (English) name otherwise. `getStatesForCountry(code)` returns
+`[]` for a country with no entry (only `"OTHER"` in practice — verified
+in `states.test.ts`, which also asserts every real `COUNTRIES` entry
+has at least one province, so a future country added there without
 regenerating the dataset fails a test instead of silently showing an
 empty dropdown).
+
+**As of the RDC-neighbors/diaspora extension below, all 42 real
+countries in `COUNTRIES` have province data (41 countries + `"OTHER"`,
+which deliberately has none — free text only).** This wasn't always
+true country-by-country from day one (each addition to `COUNTRIES` has
+to bring its own `states.json` entry, per the `states.test.ts` guard
+above), but by the time of that extension every one of the 38
+originally-shipped countries already had real data — see that section
+for the one place this matters: it corrects an incoming task brief that
+assumed only RDC had provinces filled in, which was no longer true.
+
+### RDC-neighbors/diaspora extension: 4 new countries, 17 verified (no new migration)
+
+A follow-up batch added 4 genuinely new countries to `COUNTRIES` —
+**Centrafrique (CF), Soudan du Sud (SS), Zambie (ZM), Angola (AO)** —
+completing the 9 direct RDC neighbors (the other 5 — Congo-Brazzaville,
+Rwanda, Burundi, Tanzanie, Ouganda — were already present with real
+province data since the original 38-country list). The brief driving
+this batch also named 8 diaspora destinations (France, Belgique,
+Canada, États-Unis, Royaume-Uni, Suisse, Allemagne, Portugal) as
+needing province data — all 8 were already present with real data too,
+so nothing needed adding there; only verifying it.
+
+**The task brief's own premise didn't match the codebase** — flagged
+here explicitly, since blindly following a brief without checking it
+against the real code would have led to regenerating already-correct
+data or misdescribing the starting point. It stated "`countries.ts`
+today lists 194 countries, but only RDC has its `provinces` table
+filled in" — neither half of that was true: `COUNTRIES` has always
+listed 38 (now 42) countries, not 194, and `states.json` already had
+real province data for all 38 of them (not just RDC), going back to the
+original migration `0012` build. The actual, much smaller gap: 4
+countries named in the brief (CF/SS/ZM/AO) weren't in `COUNTRIES` at
+all yet. This section documents what was actually done, not what the
+brief assumed needed doing.
+
+**Generation method, kept identical to the original dataset's own
+approach** (verified by reverse-checking a known-good RDC entry against
+the upstream row before trusting the method): fetched
+`states.json`/`countries.json` directly from the same upstream
+[Countries States Cities Database](https://github.com/dr5hn/countries-states-cities-database)
+project already credited in `CREDITS.md` (via `raw.githubusercontent.com`,
+not a temporary npm package — the upstream repo's raw JSON was directly
+reachable, so no unmaintained/unverifiable npm wrapper was needed) —
+`code` = the row's own `iso2`, `name` = `translations.fr` when present
+else the upstream English `name`, sorted alphabetically by name, giving
+each new country's array the exact same shape as every existing one.
+Dial codes for the 4 new countries (CF +236, SS +211, ZM +260, AO +244)
+were cross-checked against a second, independent source (the
+`world-countries` npm package, itself derived from restcountries.com)
+before being added to `COUNTRIES` — a temporary `npm pack`, never added
+to `package.json`, same "generation tool only" discipline as the
+upstream states dataset itself.
+
+**Verification performed, per country, before considering this batch
+done:**
+- **The 9 RDC neighbors** — full list cross-checked against an
+  independent source (`pycountry`, wrapping the official ISO 3166-2
+  register via Debian's `iso-codes`, installed temporarily via `pip`,
+  never added to any manifest) for both the exact subdivision count and
+  spot-checked names: Congo-Brazzaville (12, confirmed), Centrafrique
+  (17 — 16 préfectures + Bangui commune, confirmed against both
+  `pycountry` and the well-known French-language prefecture list),
+  Soudan du Sud (10 states, confirmed — the post-2020 reunified count,
+  not the short-lived 32-state period), Ouganda (139, confirmed —
+  regions + subregions + districts all coexist as real ISO 3166-2
+  entries for Uganda, which is why the count looks large next to a
+  10–20-division neighbor), Rwanda (5, confirmed), Burundi (18,
+  confirmed), Tanzanie (31, confirmed), Zambie (10 provinces,
+  confirmed), Angola (18 provinces, confirmed).
+- **The 8 diaspora destinations** — sample of 3–5 divisions per country
+  plus a total-count check against `pycountry`, per the brief's own
+  lighter bar for this group: France (124 — ISO 3166-2:FR mixes régions
+  and départements/collectivités in one flat list, not just the 18
+  headline régions; ~this is pre-existing, already-shipped data,
+  unrelated to this batch, and 124 real ISO entries is not wrong, just
+  more granular than "régions only"), Belgique (13, confirmed),
+  Canada (13 = 10 provinces + 3 territoires, the brief's own worked
+  example, confirmed), États-Unis (`pycountry` reports 57 real ISO
+  entries; the pre-existing dataset carries 60 — the 3 extra are
+  `AA`/`AE`/`AP`, USPS-style "Armed Forces Americas/Europe/Pacific"
+  pseudo-states present in the upstream dr5hn dataset since before this
+  batch, not part of it, and harmless for a signup dropdown), Royaume-Uni
+  (221, confirmed), Suisse (26, confirmed), Allemagne (16, confirmed),
+  Portugal (20, confirmed).
+
+**Two real, pre-existing data-quality bugs were found during this
+verification and fixed in place, both flagged rather than silently
+carried forward** (found precisely because the brief demanded full
+independent verification of these specific countries, not because a
+routine audit was run against the other, out-of-scope countries in the
+dataset):
+1. **`AO-CUS`'s upstream `translations.fr` was truncated to `"Cuanza"`**
+   — the real ISO 3166-2:AO subdivision is Cuanza Sul (confirmed against
+   `pycountry`'s `"Cuanza-Sul Province"` and the well-known Angolan
+   province list). Fixed to `"Cuanza Sul"`, matching the naming style of
+   the sibling `"Cuanza Norte"` entry already in the same list.
+2. **`UG-302`'s upstream `translations.fr` was a mistranslation**:
+   `"Asie-Pacifique"` (Asia-Pacific) for what is actually Apac, a real
+   Ugandan district — confirmed by cross-referencing the same row's
+   English `name` (`"Apac"`) and its upstream `wikiDataId`
+   (`Q1229750` = Apac District, Uganda). The upstream machine
+   translation appears to have confused the district's name with the
+   "APAC" business-region acronym. Fixed to `"Apac"`. This was already
+   live in production before this batch — caught only because Ouganda
+   is one of the 9 neighbors this batch was required to verify in full,
+   not from any broader sweep of the other, out-of-scope countries.
+
+Neither fix touched any country outside this batch's own 17 — per
+explicit instruction to stay strictly within them, no other country's
+data (however tempting a similar spot-check might have looked) was
+audited or changed.
+
+**Per the brief's own explicit framing, this is one palier of a longer
+extension, not the end of it** — 4 new countries were added this time,
+bringing the total to 42; the remaining ~150+ countries with no
+`COUNTRIES` entry at all (and therefore no province data, no dial code)
+are deliberately left for a later, similarly-scoped batch. Don't
+attempt to "finish" the world in one sitting on top of this section —
+that's an explicitly rejected approach (the founder declined a ~94-country
+jump in one lot, judging the error risk too high without a real business
+reason), not an oversight to correct.
+
+Tested: `states.test.ts` (unchanged — its existing "every real
+`COUNTRIES` entry has at least one province" assertion is what would
+have caught a missing entry for any of the 4 new countries) passes with
+all 42 countries; `npm run tsc`/`npm run lint`/`npm test` all pass with
+no changes needed anywhere outside `countries.ts`/`states.json` — this
+was a pure data addition, no new UI branch, no schema change. Verified
+visually end-to-end in a real `next dev` + Playwright session (a
+minimal Auth-endpoint mock was enough here, unlike most of this file's
+other visual passes, since `SignupForm.tsx` never touches Supabase until
+the final submit): the province `<select>` renders with the exact
+expected option count for one neighbor genuinely new to this batch
+(Centrafrique, 17), one low-division diaspora country (Belgique, 13),
+and one high-division diaspora country (États-Unis, 60) — confirmed in
+`fr`/`en` and light/dark (4 combinations × 3 countries), all real,
+visible dropdowns with a non-zero bounding box, not just present in the
+DOM.
 
 `SignupForm.tsx`'s province `<select>` only renders when
 `getStatesForCountry(countryCode)` is non-empty, and changing the
