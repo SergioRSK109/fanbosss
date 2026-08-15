@@ -104,11 +104,74 @@ describe("COUNTRIES", () => {
     );
   });
 
-  it("leaves every non-RDC country without a province list in this lot", () => {
+  // The 9 RDC neighbours (CG/CF/SS/UG/RW/BI/TZ/ZM/AO) + the 8 diaspora
+  // destinations (FR/BE/CA/US/GB/CH/DE/PT) named in the follow-up lot to
+  // RD Congo's own province list above. Each entry's count/alphabetical
+  // order/one known member was independently verified (ISO 3166-2 via
+  // pycountry, cross-checked with real web searches for anything
+  // time-sensitive or ambiguous) before being trusted -- see CLAUDE.md's
+  // own "src/lib/countries.ts" section for the full account, including
+  // why some countries use a coarser tier than their full ISO 3166-2
+  // subdivision list (France's 18 régions, not its 124 région+département
+  // mix; Uganda's 4 geographical regions, not its 139 districts; the UK's
+  // 4 constituent countries, not its 221 councils/boroughs/authorities)
+  // and Burundi's real 2023 reform (18 provinces merged down to 5).
+  it("gives each of the 17 RDC-neighbour/diaspora countries a verified province list", () => {
+    const expected: Record<string, { count: number; contains: string }> = {
+      CG: { count: 12, contains: "Pool" }, // Congo-Brazzaville
+      CF: { count: 17, contains: "Bangui" }, // République centrafricaine
+      SS: { count: 10, contains: "Jonglei" }, // Soudan du Sud
+      UG: { count: 4, contains: "Centre" }, // Ouganda
+      RW: { count: 5, contains: "Kigali" }, // Rwanda
+      BI: { count: 5, contains: "Bujumbura" }, // Burundi (2023 reform: 18 -> 5)
+      TZ: { count: 31, contains: "Zanzibar Nord" }, // Tanzanie
+      ZM: { count: 10, contains: "Lusaka" }, // Zambie
+      AO: { count: 18, contains: "Cuanza Sul" }, // Angola
+      FR: { count: 18, contains: "Île-de-France" }, // France
+      BE: { count: 11, contains: "Bruxelles-Capitale" }, // Belgique
+      CA: { count: 13, contains: "Québec" }, // Canada
+      US: { count: 51, contains: "District de Columbia" }, // États-Unis
+      GB: { count: 4, contains: "Écosse" }, // Royaume-Uni
+      CH: { count: 26, contains: "Genève" }, // Suisse
+      DE: { count: 16, contains: "Berlin" }, // Allemagne
+      PT: { count: 20, contains: "Açores" }, // Portugal
+    };
+    for (const [code, { count, contains }] of Object.entries(expected)) {
+      const country = COUNTRIES.find((c) => c.code === code);
+      expect(country?.provinces, `${code} should have a provinces array`).toBeDefined();
+      expect(country?.provinces, `${code} province count`).toHaveLength(count);
+      expect(country?.provinces, `${code} should contain ${contains}`).toContain(contains);
+      expect(country?.provinces, `${code} provinces should be alphabetically ordered`).toEqual(
+        [...(country?.provinces ?? [])].sort((a, b) => a.localeCompare(b, "fr")),
+      );
+    }
+  });
+
+  it("leaves every other country (not RDC or one of the 17 neighbour/diaspora countries) without a province list", () => {
+    const expectedWithProvinces = new Set([
+      "CD",
+      "CG",
+      "CF",
+      "SS",
+      "UG",
+      "RW",
+      "BI",
+      "TZ",
+      "ZM",
+      "AO",
+      "FR",
+      "BE",
+      "CA",
+      "US",
+      "GB",
+      "CH",
+      "DE",
+      "PT",
+    ]);
     const withProvinces = COUNTRIES.filter(
       (c) => (c.provinces?.length ?? 0) > 0,
     ).map((c) => c.code);
-    expect(withProvinces).toEqual(["CD"]);
+    expect(new Set(withProvinces)).toEqual(expectedWithProvinces);
   });
 });
 
