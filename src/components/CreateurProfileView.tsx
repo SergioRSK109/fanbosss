@@ -140,7 +140,7 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
 
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-bold text-white">{displayName ?? t("heading")}</h1>
-            {createurVerifie && <VerifiedBadge label={t("verified")} tone="onDark" />}
+            {createurVerifie && <VerifiedBadge label={tCommon("verified")} tone="onDark" />}
           </div>
 
           {bio && (

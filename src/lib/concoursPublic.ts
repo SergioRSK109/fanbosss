@@ -20,6 +20,7 @@ export interface ConcoursParticipant {
   pseudo: string | null;
   photoUrl: string | null;
   isLeader: boolean;
+  createurVerifie: boolean;
 }
 
 export interface ConcoursPublicData {
@@ -75,7 +76,7 @@ export async function getConcoursPublicData(concoursId: string): Promise<Concour
     supabase
       .from("concours_publics")
       .select(
-        "concours_id, nom, mode, organisateur_id, date_fin, date_debut, objectif_points, temps_record, createur_id, campagne_id, montant_collecte, pseudo, nom_affichage, photo_r2_key, photo_trophee_r2_key",
+        "concours_id, nom, mode, organisateur_id, date_fin, date_debut, objectif_points, temps_record, createur_id, campagne_id, montant_collecte, pseudo, nom_affichage, photo_r2_key, photo_trophee_r2_key, createur_verifie",
       )
       .eq("concours_id", concoursId),
     supabase
@@ -137,6 +138,7 @@ export async function getConcoursPublicData(concoursId: string): Promise<Concour
       pseudo: row.pseudo,
       photoUrl: row.photo_r2_key ? photoUrlByKey.get(row.photo_r2_key) ?? null : null,
       isLeader: leaderIds.has(row.createur_id),
+      createurVerifie: row.createur_verifie ?? false,
     })),
   };
 }

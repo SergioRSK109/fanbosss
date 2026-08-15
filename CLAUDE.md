@@ -8096,6 +8096,137 @@ containing only the display name, nothing appended — in all 4 of
 confirming it still reads clearly at true size, not just in the
 isolated 400px preview.
 
+### Verified badge follows the créateur everywhere (no migration except `0056`)
+
+Follow-up to the gear/checkmark redesign above, per explicit instruction:
+the badge previously only appeared on a créateur's own public profile
+header. It now appears next to their name on every other public surface
+this app has where a créateur's identity is shown to someone else —
+publications, the public leaderboard, and creator contests — not just
+their profile.
+
+**`Common.verified` replaces `CreateurProfile.verified`.** The label was
+scoped to one namespace when it had one caller; with call sites now
+spanning `PublicationCard`/`PublicationTeaser`, `/classement`, and
+`/concours/[id]`(`/ecran`), it moved to the `Common` namespace (same
+home as `zoomProfilePhotoAriaLabel`, another string reused across
+unrelated components) — a plain move, not a duplicate: `CreateurProfile`
+no longer has its own `verified` key at all.
+`CreateurProfileView.tsx`'s own call site was updated to `tCommon
+("verified")` in the same change.
+
+**Surfaces covered, each following the same shape — extend whatever
+query already resolves the créateur's public identity to also select
+`createur_verifie`, thread a `createurVerifie: boolean` field through the
+returned shape, render `<VerifiedBadge tone="light" .../>` next to the
+name (or `tone="onDark"` where the surface's own background is a fixed
+dark/gradient one, matching the existing tone convention)**:
+
+- **Publications** (`src/lib/publications.ts#hydratePublications`) —
+  `profils_publics`'s select gained `createur_verifie`, threaded onto
+  `PublicationAuteur.createurVerifie`. `PublicationCard.tsx` renders the
+  badge in three places, each independently correct because each reads
+  its own row's `auteur.createurVerifie`, never a inherited/assumed
+  value: (1) a plain or the full-content half of a repost's own author
+  row (`PublicationBody`), (2) the repost's own "🔁 {reposter} a
+  reposté" header line (the *reposter's* own verification, independent
+  of whether the original they reposted is verified — verified directly:
+  a repost by a non-verified créateur of a verified créateur's content
+  shows the badge only on the embedded original's author row, never on
+  the "a reposté" line), (3) `PublicationTeaser.tsx`'s locked-card
+  message (a new optional `auteurVerifie` prop, default `false`) — a
+  fan who can't see the content yet still sees whose content it's
+  reserved for, badge included, matching every other identity-display
+  surface's own behavior.
+- **`/classement`** (`src/lib/classementPublic.ts`) — `profils_publics`'s
+  select gained `createur_verifie`, threaded onto `ClassementEntry
+  .createurVerifie`; `classementPublic.test.ts`'s own exact-columns/
+  exact-shape assertions (this file's own "prove this page never leaks
+  a column beyond what's public" test) were updated in place to expect
+  the new column/field rather than left describing the pre-badge shape.
+- **Creator contests** (`/concours/[id]`, `/concours/[id]/ecran`) —
+  needed a real schema change, migration `0056`: `concours_publics`
+  (last redefined by migration `0052`) gained `u.createur_verifie` as a
+  **trailing** column (same "`CREATE OR REPLACE VIEW` can append, never
+  reorder/insert among existing columns" constraint documented
+  throughout this file), byte-identical otherwise — including its own
+  suspended/banned exclusion logic, which needed no change: an account
+  already excluded from this view by that logic never reaches the new
+  column either. No grant restatement (this view has been granted to
+  `authenticated, anon` since migration `0045` and was never narrowed —
+  verified directly with `has_table_privilege`, not assumed).
+  `concoursPublic.ts`'s select gained the column, threaded onto
+  `ConcoursParticipant.createurVerifie`. The broadcast screen
+  (`/ecran`, always-dark, huge typography) uses `tone="onDark"` and a
+  proportionally larger badge (`h-6 w-6 sm:h-9 sm:w-9`, vs. the plain
+  page's `h-4 w-4`) to match its own scale, not the plain page's fixed
+  size.
+
+**Deliberately left out, each a real scope decision, not an
+oversight**:
+- **`/explorer`'s publication grid** — tiles show media only (image/
+  video/text snippet), no author name text anywhere on a tile itself
+  (only inside the fullscreen viewer, which renders via
+  `PublicationPermalinkView` → `PublicationCard`, already covered). No
+  identity text exists there to attach a badge to.
+- **`BadgesFideliteCard.tsx`** (a fan's own private "créateurs I
+  support" list, `/dashboard`) — this is a self-only view of the fan's
+  own data, not a *public* appearance of a créateur's identity to
+  someone else, and its own query (`transactions`, not
+  `profils_publics`) has no `createur_verifie` in scope at all today.
+  Extending it would mean a second, parallel identity query this page
+  doesn't otherwise need.
+- **Notifications** (`NotificationBell`/`getNotifications`) — the
+  `acteur` shown in a notification ("X a aimé ta publication") is
+  whoever performed the action, which is very often a *fan*, not the
+  créateur the notification is about; a "verified" badge on the actor
+  doesn't carry the same meaning it does everywhere else in this
+  section (confirming the créateur *receiving* attention is who they
+  claim to be), so it was left out rather than added somewhere it
+  doesn't actually fit the badge's own purpose.
+- **`ConcoursManager.tsx`** (the créateur's own authenticated concours-
+  management UI on `/offres`) — self-service tooling for managing one's
+  own contest, not a surface fans see; lower value than the public pages
+  above, left out to keep this lot's scope to genuinely public
+  "apparitions," per the brief's own wording.
+
+Tested end-to-end in `checklist_2_3.sql` (migration `0056`'s own
+section): a dedicated fixture (organisateur A, `createur_verifie`
+flipped directly to `true` — same "backdate/flip a column directly"
+pattern already used throughout this file for unrelated schema checks,
+rather than driving the full verification-request/approval RPC flow for
+an unrelated column; participant B left at the default `false`) proves
+`concours_publics.createur_verifie` reflects each real participant's own
+status, not a blanket value copied from the organizer; a schema-level
+check confirms the column exists; and `anon`/`authenticated` are both
+confirmed to still hold `SELECT` on the view after the trailing column
+was added, guarding against exactly the kind of silent grant-widening/
+narrowing regression this project has caught before on this same class
+of change (migrations `0033`/`0037`). The full, pre-existing 10,000+-line
+checklist and the produit-reservation concurrency tests were re-run in
+full afterward and still pass unchanged.
+
+Verified visually end-to-end with the same throwaway mock-Supabase/
+Playwright technique used throughout this file, extended with a
+dedicated fixture (créateur A — verified, with one plain public post and
+one `soutiens`-only post; créateur B — not verified, reposts A's public
+post; a `classement_volume` entry for A and a `classement_reactivite`
+entry for B; a 2-participant concours with A leading) and driven by real
+DOM assertions (`svg[aria-label="Vérifié"]` counts scoped to specific
+rows/cards), not raw-HTML string matching — the latter was tried first
+and gave a false read, since Next embeds the full serialized RSC payload
+in a `<script>` tag that duplicates visible text (the exact trap this
+file's own "Compte suspendu" investigation already documented once
+before). Confirmed: A's profile header and both of A's own posts
+(including the locked teaser, badge next to the "Réservé aux soutiens"
+message) show the badge; B's profile shows the repost with **no** badge
+on "Marie a reposté" but **does** show the badge on the embedded
+original's own author row (A); `/classement` shows the badge only on
+A's row in the volume section, never on B's row in réactivité;
+`/concours/[id]` and its `/ecran` broadcast screen both show the badge
+only on A's participant card. `npm run tsc`/`npm run lint`/`npm test`
+all pass (608 tests).
+
 ## Video/content delivery (brief 0.5)
 
 R2 bucket is private, no public URL configured anywhere.

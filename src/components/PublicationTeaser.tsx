@@ -1,4 +1,5 @@
 import { useTranslations } from "next-intl";
+import { VerifiedBadge } from "@/components/ui/VerifiedBadge";
 import { Link } from "@/i18n/navigation";
 
 // A visually distinct "locked" card, not CSS-blurred real text -- the
@@ -10,19 +11,25 @@ import { Link } from "@/i18n/navigation";
 export function PublicationTeaser({
   auteurHref,
   auteurLabel,
+  auteurVerifie = false,
 }: {
   auteurHref: string;
   auteurLabel: string;
+  auteurVerifie?: boolean;
 }) {
   const t = useTranslations("Publications.teaser");
+  const tCommon = useTranslations("Common");
 
   return (
     <div className="card flex flex-col items-center gap-2 border-dashed px-5 py-6 text-center">
       <span aria-hidden className="text-2xl">
         🔒
       </span>
-      <p className="text-sm font-medium text-foreground-muted">
+      <p className="flex flex-wrap items-center justify-center gap-1.5 text-sm font-medium text-foreground-muted">
         {t("reservedTo", { auteur: auteurLabel })}
+        {auteurVerifie && (
+          <VerifiedBadge label={tCommon("verified")} tone="light" className="h-4 w-4 shrink-0" />
+        )}
       </p>
       {/* Offres is already this profile's default tab (ProfileTabs), so a
           plain link to the profile itself lands there directly -- no

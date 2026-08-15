@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { EcranAutoRefresh } from "@/components/EcranAutoRefresh";
+import { VerifiedBadge } from "@/components/ui/VerifiedBadge";
 import { computeCampagneProgressPercent } from "@/lib/campagnes";
 import { formatPoints } from "@/lib/concours";
 import { getConcoursPublicData } from "@/lib/concoursPublic";
@@ -31,6 +32,7 @@ export default async function ConcoursEcranPage({
 }) {
   const { locale, id } = await params;
   const t = await getTranslations({ locale, namespace: "Concours" });
+  const tCommon = await getTranslations({ locale, namespace: "Common" });
 
   const concours = await getConcoursPublicData(id);
 
@@ -118,8 +120,15 @@ export default async function ConcoursEcranPage({
                   </div>
                 )}
 
-                <p className="break-words text-2xl font-extrabold sm:text-4xl">
+                <p className="flex flex-wrap items-center justify-center gap-2 break-words text-2xl font-extrabold sm:text-4xl">
                   {participant.displayName ?? t("createurAnonyme")}
+                  {participant.createurVerifie && (
+                    <VerifiedBadge
+                      label={tCommon("verified")}
+                      tone="onDark"
+                      className="h-6 w-6 shrink-0 sm:h-9 sm:w-9"
+                    />
+                  )}
                 </p>
 
                 {badge && (

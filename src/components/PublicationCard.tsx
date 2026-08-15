@@ -4,6 +4,7 @@ import { PublicationContentLink } from "@/components/PublicationContentLink";
 import { PublicationTeaser } from "@/components/PublicationTeaser";
 import { PublicationVideoPlayer } from "@/components/PublicationVideoPlayer";
 import { RepostIcon } from "@/components/ui/icons";
+import { VerifiedBadge } from "@/components/ui/VerifiedBadge";
 import { Link } from "@/i18n/navigation";
 import { publicationPermalinkHref } from "@/lib/publicationLinks";
 import type { Publication } from "@/lib/publications";
@@ -39,12 +40,19 @@ function PublicationBody({
   expandable?: boolean;
 }) {
   const t = useTranslations("Publications");
+  const tCommon = useTranslations("Common");
   const locale = useLocale();
   const { auteur } = publication;
   const auteurLabel = auteur.displayName ?? auteur.pseudo ?? t("anonymousAuteur");
 
   if (!publication.contenuComplet) {
-    return <PublicationTeaser auteurHref={auteurHrefFor(auteur)} auteurLabel={auteurLabel} />;
+    return (
+      <PublicationTeaser
+        auteurHref={auteurHrefFor(auteur)}
+        auteurLabel={auteurLabel}
+        auteurVerifie={auteur.createurVerifie}
+      />
+    );
   }
 
   const contentBlock = (
@@ -95,6 +103,9 @@ function PublicationBody({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <p className="truncate text-sm font-semibold hover:underline">{auteurLabel}</p>
+            {auteur.createurVerifie && (
+              <VerifiedBadge label={tCommon("verified")} tone="light" className="h-4 w-4" />
+            )}
             {publication.type === "annonce_fanboss" && (
               <span className="shrink-0 rounded-full bg-accent-500/15 px-2 py-0.5 text-xs font-bold text-accent-600">
                 FanBoss
@@ -150,6 +161,7 @@ export function PublicationCard({
   expandable?: boolean;
 }) {
   const t = useTranslations("Publications");
+  const tCommon = useTranslations("Common");
   const { auteur } = publication;
   const auteurLabel = auteur.displayName ?? auteur.pseudo ?? t("anonymousAuteur");
 
@@ -159,6 +171,9 @@ export function PublicationCard({
         <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground-muted">
           <RepostIcon className="h-3.5 w-3.5" />
           {t("repostedBy", { auteur: auteurLabel })}
+          {auteur.createurVerifie && (
+            <VerifiedBadge label={tCommon("verified")} tone="light" className="h-3.5 w-3.5" />
+          )}
           {publication.type === "annonce_fanboss" && (
             <span className="shrink-0 rounded-full bg-accent-500/15 px-2 py-0.5 text-xs font-bold text-accent-600">
               FanBoss

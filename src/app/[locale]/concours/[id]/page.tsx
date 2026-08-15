@@ -5,6 +5,7 @@ import { CheckoutButton } from "@/components/CheckoutButton";
 import { ConcoursCountdown } from "@/components/ConcoursCountdown";
 import { ShareCampagneButton } from "@/components/ShareCampagneButton";
 import { buttonClass } from "@/components/ui/button-styles";
+import { VerifiedBadge } from "@/components/ui/VerifiedBadge";
 import { computeCampagneProgressPercent } from "@/lib/campagnes";
 import { computeEqualSharePercent, formatPoints } from "@/lib/concours";
 import { getConcoursPublicData } from "@/lib/concoursPublic";
@@ -31,6 +32,7 @@ export default async function ConcoursPage({
 }) {
   const { locale, id } = await params;
   const t = await getTranslations({ locale, namespace: "Concours" });
+  const tCommon = await getTranslations({ locale, namespace: "Common" });
 
   const concours = await getConcoursPublicData(id);
 
@@ -143,8 +145,13 @@ export default async function ConcoursPage({
                     🙂
                   </div>
                 )}
-                <span className="font-semibold">
-                  {participant.displayName ?? t("createurAnonyme")}
+                <span className="flex items-center gap-1.5">
+                  <span className="font-semibold">
+                    {participant.displayName ?? t("createurAnonyme")}
+                  </span>
+                  {participant.createurVerifie && (
+                    <VerifiedBadge label={tCommon("verified")} tone="light" className="h-4 w-4 shrink-0" />
+                  )}
                 </span>
               </Link>
 
