@@ -255,7 +255,11 @@
     "reservationExpiree": "Ta réservation a expiré. Recommence pour réserver à nouveau.",
     "confirmerPaiement": "Confirmer le paiement",
     "confirmationEnCours": "Confirmation en cours...",
-    "confirmationImpossible": "Confirmation impossible. Réessaie."
+    "confirmationImpossible": "Confirmation impossible. Réessaie.",
+    "zoneBloqueeTitre": "Hors de la zone de livraison",
+    "zoneBloqueeProvince": "Ce créateur ne livre que dans sa propre province. Ton compte n'est pas rattaché à cette province, cette commande ne peut pas être passée.",
+    "zoneBloqueePays": "Ce créateur ne livre que dans son propre pays. Ton compte n'est pas rattaché à ce pays, cette commande ne peut pas être passée.",
+    "zoneAvertissement": "Ce créateur limite ses livraisons à sa province ou à son pays, et ton profil n'indique pas ta propre localisation -- vérifie que tu es bien dans sa zone de livraison avant de payer."
   },
   "PaiementRetour": {
     "heading": "Merci !",
@@ -531,6 +535,12 @@
     "masqueExplorationCheckboxLabel": "Ne pas me suggérer dans l'exploration (je reste trouvable par recherche)",
     "badgeFideliteCheckboxLabel": "Rendre mes badges de fidélité publics (visibles sur ton profil et sur celui des créateurs que tu soutiens)",
     "badgeDonateurCheckboxLabel": "Rendre mon badge de soutien public (basé sur tes dépenses cumulées sur toute la plateforme, tous créateurs confondus)",
+    "porteeLivraisonLabel": "Zone de livraison pour tes produits physiques",
+    "porteeLivraisonOptions": {
+      "province": "Ma province uniquement",
+      "pays": "Tout mon pays",
+      "aucune_restriction": "Aucune restriction"
+    },
     "pseudoLabel": "Choisis ton identifiant",
     "pseudoPlaceholder": "ex: sergio_123, sergioRSK",
     "pseudoAvailable": "✓ disponible",

@@ -7,6 +7,7 @@ import {
   definirTropheeConcoursSchema,
   isAtLeast18,
   minBirthDateForSignup,
+  parametresProfilSchema,
   publierMessageSchema,
   pseudoLockedUntil,
   PSEUDO_COOLDOWN_MS,
@@ -588,5 +589,22 @@ describe("definirTropheeConcoursSchema", () => {
 
   it("rejects an empty r2Key", () => {
     expect(definirTropheeConcoursSchema.safeParse({ r2Key: "" }).success).toBe(false);
+  });
+});
+
+describe("parametresProfilSchema -- portee_livraison (migration 0055)", () => {
+  it("accepts each of the 3 real scopes", () => {
+    for (const value of ["province", "pays", "aucune_restriction"] as const) {
+      expect(parametresProfilSchema.safeParse({ portee_livraison: value }).success).toBe(true);
+    }
+  });
+
+  it("accepts null (never configured / explicitly cleared) and omission", () => {
+    expect(parametresProfilSchema.safeParse({ portee_livraison: null }).success).toBe(true);
+    expect(parametresProfilSchema.safeParse({}).success).toBe(true);
+  });
+
+  it("rejects an unrecognized scope", () => {
+    expect(parametresProfilSchema.safeParse({ portee_livraison: "ville" }).success).toBe(false);
   });
 });

@@ -289,6 +289,15 @@ export const parametresProfilSchema = z
     // tier publicly; the admin-only top-20 ranking (/admin) always shows
     // everyone regardless of this flag.
     badge_donateur_public: z.boolean().optional(),
+    // Delivery-zone restriction for physical products (migration 0055) --
+    // the DB CHECK on users.portee_livraison is the real guarantee, this
+    // just mirrors it for a clean 400. Nullable: a créateur can never
+    // "unset" it back to NULL through this form once picked (the radio
+    // group only ever offers the 3 real scopes -- see
+    // ParametresForm.tsx), but the field itself stays nullable/optional
+    // here since a request that never mentions it must leave the column
+    // untouched, same as every other optional field in this schema.
+    portee_livraison: z.enum(["province", "pays", "aucune_restriction"]).nullable().optional(),
     // Set after a successful upload via POST /api/profil/photo-upload-url
     // + PUT to R2 -- never accepted directly from arbitrary client input
     // without that round-trip, but the schema itself doesn't need to know

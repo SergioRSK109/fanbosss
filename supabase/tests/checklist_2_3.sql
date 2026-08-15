@@ -10449,6 +10449,74 @@ begin
   raise notice 'PASS: publier_message() keeps its existing authenticated-only (never anon) EXECUTE grant after being redefined with a 6th parameter';
 end $$;
 
+-- ---------------------------------------------------------------------
+-- Delivery-zone restriction for physical products (migration 0055):
+-- users.portee_livraison, a plain 3-value CHECK constraint. The actual
+-- comparison logic (checkDeliveryZone(), src/lib/livraison.ts) is pure
+-- TypeScript and already covered directly by vitest -- there is no RPC
+-- or trigger involved here at all, so this is the DB-level half only:
+-- the CHECK constraint itself rejects an unrecognized value and accepts
+-- each real one, and NULL (every existing row, no default clause) is
+-- left completely untouched -- never retroactively restricting a
+-- créateur who hasn't configured this yet.
+-- ---------------------------------------------------------------------
+do $$
+begin
+  begin
+    update users set portee_livraison = 'ville'
+      where id = '11111111-1111-1111-1111-111111111111';
+    raise exception 'TEST FAILED: an unrecognized portee_livraison value was accepted';
+  exception when check_violation then
+    raise notice 'PASS: portee_livraison rejects an unrecognized scope';
+  end;
+end $$;
+
+do $$
+declare
+  v_value text;
+begin
+  for v_value in select unnest(array['province', 'pays', 'aucune_restriction']) loop
+    update users set portee_livraison = v_value
+      where id = '11111111-1111-1111-1111-111111111111';
+    select portee_livraison into v_value from users
+      where id = '11111111-1111-1111-1111-111111111111';
+  end loop;
+  raise notice 'PASS: portee_livraison accepts all 3 real scopes (province, pays, aucune_restriction)';
+end $$;
+
+do $$
+declare
+  v_value text;
+begin
+  update users set portee_livraison = null
+    where id = '11111111-1111-1111-1111-111111111111';
+  select portee_livraison into v_value from users
+    where id = '11111111-1111-1111-1111-111111111111';
+  if v_value is not null then
+    raise exception 'TEST FAILED: portee_livraison should accept NULL, got %', v_value;
+  end if;
+  raise notice 'PASS: portee_livraison accepts NULL -- the unchanged, unrestricted default for every créateur who hasn''t configured this yet';
+end $$;
+
+-- A brand-new user row (no explicit portee_livraison in the INSERT)
+-- confirms the column has no DEFAULT of its own beyond plain NULL --
+-- this is what makes "never retroactively block" true for every
+-- pre-existing créateur, not just the fixture rows this file happens to
+-- touch above.
+do $$
+declare
+  v_value text;
+begin
+  insert into users (id, telephone, pays)
+    values ('55000055-0000-0000-0000-000000000001', '+243900000055', 'RDC');
+  select portee_livraison into v_value from users
+    where id = '55000055-0000-0000-0000-000000000001';
+  if v_value is not null then
+    raise exception 'TEST FAILED: a brand-new user row should default portee_livraison to NULL, got %', v_value;
+  end if;
+  raise notice 'PASS: a brand-new user row defaults portee_livraison to NULL';
+end $$;
+
 do $$
 begin
   raise notice 'ALL SQL CHECKLIST TESTS PASSED';

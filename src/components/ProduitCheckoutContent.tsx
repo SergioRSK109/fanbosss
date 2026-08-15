@@ -29,11 +29,18 @@ export function ProduitCheckoutContent({
   libelle,
   prix,
   quantite,
+  avertissementZoneLivraison = false,
 }: {
   offreId: string;
   libelle: string | null;
   prix: number;
   quantite: number;
+  // Delivery-zone restriction (migration 0055) -- true only when this
+  // créateur has a scope configured AND the fan's own province/pays is
+  // missing, per checkDeliveryZone()'s own "never block on missing
+  // data" rule. A real mismatch is never reached here at all: the
+  // server page blocks rendering this component outright in that case.
+  avertissementZoneLivraison?: boolean;
 }) {
   const t = useTranslations("PaiementProduit");
   const locale = useLocale();
@@ -177,6 +184,12 @@ export function ProduitCheckoutContent({
           {t("recapitulatif", { libelle: libelle ?? "", quantite, prix: prix * quantite })}
         </p>
       </div>
+
+      {avertissementZoneLivraison && (
+        <p className="rounded-2xl bg-accent-500/10 px-4 py-2.5 text-center text-sm text-accent-600">
+          {t("zoneAvertissement")}
+        </p>
+      )}
 
       {phase === "reserving" && (
         <p className="text-center text-sm text-foreground-muted">{t("reservationEnCours")}</p>

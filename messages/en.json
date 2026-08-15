@@ -255,7 +255,11 @@
     "reservationExpiree": "Your reservation has expired. Start over to reserve again.",
     "confirmerPaiement": "Confirm payment",
     "confirmationEnCours": "Confirming...",
-    "confirmationImpossible": "Confirmation failed. Try again."
+    "confirmationImpossible": "Confirmation failed. Try again.",
+    "zoneBloqueeTitre": "Outside the delivery zone",
+    "zoneBloqueeProvince": "This créateur only ships within their own province. Your account isn't linked to that province, so this order can't be placed.",
+    "zoneBloqueePays": "This créateur only ships within their own country. Your account isn't linked to that country, so this order can't be placed.",
+    "zoneAvertissement": "This créateur limits shipping to their own province or country, and your profile doesn't list your own location -- double check you're within their delivery zone before paying."
   },
   "PaiementRetour": {
     "heading": "Thank you!",
@@ -531,6 +535,12 @@
     "masqueExplorationCheckboxLabel": "Don't suggest me in the explore page (I stay findable by search)",
     "badgeFideliteCheckboxLabel": "Make my loyalty badges public (visible on your profile and on the créateurs you support)",
     "badgeDonateurCheckboxLabel": "Make my supporter badge public (based on your cumulative spend across the whole platform, every créateur combined)",
+    "porteeLivraisonLabel": "Delivery zone for your physical products",
+    "porteeLivraisonOptions": {
+      "province": "My province only",
+      "pays": "My whole country",
+      "aucune_restriction": "No restriction"
+    },
     "pseudoLabel": "Choose your handle",
     "pseudoPlaceholder": "e.g.: sergio_123, sergioRSK",
     "pseudoAvailable": "✓ available",
