@@ -52,9 +52,11 @@ before being considered done (see "Testing" below for how).
 - `pays text default 'RDC'` — now set from the signup country selector,
   not hardcoded
 - `province text` — added in `0012`, nullable/optional. Set from a
-  signup dropdown (`src/lib/states.ts`, see "Province/ville" below),
-  dependent on the selected country the same way the phone country
-  selector already is. Stored as the province's display name (matching
+  signup field that's a dropdown or free text depending on the selected
+  country (`src/lib/countries.ts`'s own per-country `provinces` array —
+  see "World country list + searchable country picker" below), dependent
+  on the selected country the same way the phone country selector already
+  is. Stored as the province's display name (matching
   how `pays` stores the country's full name, not an ISO code) — no other
   table joins on it, so a normalized foreign key would add nothing.
   `users_province_max_length` caps it at 100 chars, same pattern as
@@ -7282,40 +7284,44 @@ restriction" (the unchanged, current default).
 ### Why a 3-level scope, not a fixed list of RDC provinces
 
 **The deliberate design decision this whole feature is built around.**
-A hardcoded province list (the 26 RDC provinces, `src/lib/states.ts`'s
-own generated dataset for the signup dropdown) would have been the
+A hardcoded province list (the 26 RDC provinces) would have been the
 obvious-looking shortcut — this app's own `users.province`/`users.pays`
-are already populated from that exact dataset at signup (migration
+are already populated from a signup dropdown/free-text pair (migration
 `0012`), so "just check against the RDC list" is the naive read. It was
 rejected for two concrete reasons:
 
 1. **This app already isn't RDC-only, by explicit design.** `COUNTRIES`
-   (`src/lib/countries.ts`) lists 38 real countries, not just RDC, and
-   `getStatesForCountry()` already resolves a matching province/state
-   list for whichever one a user actually picked at signup — a créateur
-   or fan signing up from Belgium, France, or any of the other 37
-   countries already has a real `province`/`pays` pair on their own row,
-   populated the exact same way. A restriction hardcoded to RDC's own 26
-   provinces would either silently do nothing for every non-RDC
-   créateur (never actually protecting them) or need its own per-country
-   province table duplicated from `states.json` — a second copy of data
-   this codebase already has, that could drift out of sync with the
-   first.
+   (`src/lib/countries.ts`) lists every real country in the world, not
+   just RDC — a créateur or fan signing up from any other country already
+   has a real `province`/`pays` pair on their own row, populated the
+   same way RDC's is. A restriction hardcoded to RDC's own 26 provinces
+   would either silently do nothing for every non-RDC créateur (never
+   actually protecting them) or need its own per-country province table
+   duplicated from `countries.ts` — a second copy of data this codebase
+   already has, that could drift out of sync with the first. (At the
+   time this reasoning was written, `COUNTRIES` only listed 38 curated
+   countries with provinces sourced from a separate `states.ts`/
+   `states.json` dataset — see "World country list + searchable country
+   picker" for the later lot that replaced both with the complete world
+   list and per-country `provinces` arrays declared directly in
+   `countries.ts`. The reasoning below was, and still is, unaffected by
+   that rewrite either way.)
 2. **Zero maintenance burden, by construction.** `checkDeliveryZone()`
    (`src/lib/livraison.ts`) never needs to know what a "valid" province
    or country name even looks like — it does one case/whitespace-
    insensitive string comparison between two already-collected fields
    (`users.province`, `users.pays`), for whichever of the two the
    créateur's own `portee_livraison` selects. Adding a new country to
-   `COUNTRIES` later, or a new province to `states.json`, needs zero
-   changes here — the exact same comparison keeps working, because it
-   was never a lookup against a fixed list in the first place.
+   `COUNTRIES` later, or a new province to some country's `provinces`
+   array, needs zero changes here — the exact same comparison keeps
+   working, because it was never a lookup against a fixed list in the
+   first place.
 
 The 3-level scope (province / pays / aucune_restriction) is what makes
 this genuinely reusable at whatever granularity a créateur actually
 needs, without this feature ever having to encode "what counts as a
-valid province" itself — that's still, and only ever, `states.json`'s
-job, for the signup dropdown alone.
+valid province" itself — that's still, and only ever,
+`countries.ts`'s job, for the signup form alone.
 
 ### Schema
 
@@ -8556,34 +8562,33 @@ it brought the section back.
 
 ## Signup: province/ville + password confirmation (migration `0012`)
 
-**Province** is a dropdown dependent on the selected country, backed by
-`src/lib/states.ts` / `src/lib/data/states.json`. That JSON is a
-generated, filtered slice of the [Countries States Cities
-Database](https://github.com/dr5hn/countries-states-cities-database)
-(ODbL-licensed — attribution in `CREDITS.md`, per the license's
-requirement): the full upstream dataset also carries cities and
-postcodes for ~250 countries (states.json alone is ~6.4MB upstream);
-this repo only keeps the states/provinces for the 38 real countries in
-`COUNTRIES` (`lib/countries.ts`), pre-filtered and stripped down to
-`{code, name}` at generation time (~45KB) — not fetched at runtime, so
-signup has no third-party network dependency. French names are used
-where the upstream `translations.fr` field has one (all 26 RDC
-provinces do), falling back to the dataset's default (English) name
-otherwise. `getStatesForCountry(code)` returns `[]` for a country with
-no entry (only `"OTHER"` in practice — verified in
-`states.test.ts`, which also asserts every real `COUNTRIES` entry has
-at least one province, so a future country added there without
-regenerating the dataset fails a test instead of silently showing an
-empty dropdown).
+> **Province's own mechanism was rewritten from scratch by a later lot —
+> corrected in place here per this file's own "the code is correct,
+> update the doc" rule.** This section originally described a dropdown
+> backed by `src/lib/states.ts`/`src/lib/data/states.json` (a filtered
+> slice of the third-party "Countries States Cities Database"), covering
+> province data for the 38 curated countries `lib/countries.ts` used to
+> list. Both `states.ts` and `states.json` are gone now, along with the
+> curated 38-country list itself — see "World country list + searchable
+> country picker" below for the full replacement (the complete ~194-country
+> world list, provinces now declared inline per-country in
+> `countries.ts`, and a searchable combobox replacing the old plain
+> `<select>`). What's still accurate from here: **Ville** is plain free
+> text, capped at 100 chars client-side (`maxLength`) — there's no usable
+> finite list of cities worldwide, so no dropdown was attempted — and
+> everything below about `raw_user_meta_data`/password confirmation is
+> unchanged.
 
-`SignupForm.tsx`'s province `<select>` only renders when
-`getStatesForCountry(countryCode)` is non-empty, and changing the
-country (`handleCountryChange`) resets the selected province back to
-`""` — otherwise a previously chosen province code could silently point
-at the wrong region (or nothing at all) once the underlying list swaps
-out. **Ville** is plain free text, capped at 100 chars client-side
-(`maxLength`) — there's no usable finite list of cities worldwide, so no
-dropdown was attempted.
+**Province**, as of the rewrite below, is a dropdown whenever the
+selected country's `countries.ts` entry carries a non-empty `provinces`
+array (only RD Congo, for now), and a plain free-text input otherwise —
+always one or the other, never hidden entirely the way it briefly was
+under the old "only render if the curated dataset has an entry" logic.
+Changing the country (`handleCountryChange`) resets the selected/typed
+province back to `""` — otherwise a previously chosen dropdown value (or
+a free-text value meant for a different country) could silently point at
+the wrong region, or at nothing at all, once the underlying field type
+itself swaps out.
 
 Both are optional and sent through `raw_user_meta_data` the exact same
 way `telephone`/`pays` already are — signup calls
@@ -8610,6 +8615,234 @@ cooldown, which really can be attacked by a direct REST call skipping
 the app's client code entirely). `handleSubmit` checks
 `password !== confirmPassword` and blocks the request with a translated
 error (`t("passwordMismatch")`) before ever calling `signUp()`.
+
+## World country list + searchable country picker (no migration)
+
+The founder wants to edit `src/lib/countries.ts` by hand on GitHub going
+forward (adding a country's provinces, fixing a name) rather than go
+through a database — this lot rewrites that file into the complete
+~195-country world list (up from the previous curated 38), replaces the
+signup form's plain `<select>` with a searchable combobox filtered as you
+type, and makes the province field's dropdown-vs-free-text behavior
+depend on that same file's own per-country `provinces` array instead of
+the separate ODbL dataset the previous section describes.
+
+**Explicitly out of scope, on purpose — do not touch alongside this
+work**: `checkDeliveryZone()` (`src/lib/livraison.ts`, migration `0055`)
+has a known, real gap in how it treats the `"OTHER"`/"Autre" fallback
+value — two fans from genuinely different countries who both end up on
+"Autre" would read as being in the same country to that function. This
+lot does not fix it; "Autre" is kept in `COUNTRIES` exactly as before
+(see below) specifically so that existing, separately-scoped bug stays
+reachable and unchanged, for a later, dedicated lot to actually fix.
+
+### `src/lib/countries.ts` — structure, and how to extend it by hand
+
+```ts
+export interface Country {
+  code: string;       // ISO 3166-1 alpha-2, stable, never edit once added
+  name: string;        // displayed + stored in users.pays for fr signups
+  nameEn: string;       // displayed + stored in users.pays for en signups
+  dial: string;          // e.g. "+243" -- "" only for the "Autre" fallback
+  provinces?: string[];   // omitted/empty => province field is free text
+}
+```
+
+The file itself carries the same how-to-extend comment block verbatim at
+its own top (per explicit instruction, so a future editor sees it right
+there, not just in this doc) — the short version: find a country's line
+by name or ISO code, add a `provinces: [...]` array (exact names, French,
+alphabetical order) to turn its province field into a dropdown; nothing
+else in the codebase needs to change; `provinces` absent or empty keeps
+the free-text field. **One caution worth repeating here**: `name`/`nameEn`
+are stored verbatim into `users.pays` at signup (see the schema section
+near the top of this file — `pays` holds "the country's full name," not
+an ISO code) — fixing an actual typo is safe, but replacing an
+already-used name outright means new signups store a different string
+than existing accounts for the same real country. `code` has nothing in
+this codebase depending on it staying stable yet, but is still meant to
+never change once a country's been added.
+
+**195 entries**: the 194 ISO 3166-1 sovereign states (193 UN member
+states + Vatican City — the same "independent" population most country
+pickers use, deliberately excluding dependent territories like Hong Kong
+or French Guiana, which have no `pays` value of their own distinct from
+their sovereign state in this app's signup flow) plus the pre-existing
+`"OTHER"`/"Autre" fallback, kept last and unchanged (see the scope note
+above).
+
+### Generation and verification method — not typed from memory
+
+Per explicit instruction, ~195 country entries is far too much to type
+or recall accurately by hand without real, external verification. Two
+independently-maintained npm datasets were installed **temporarily**
+(never added to `package.json` — generated the list once into a plain
+`.ts` file, then removed) to cross-reference against each other rather
+than trusting either alone or the model's own training-data recall:
+[`world-countries`](https://www.npmjs.com/package/world-countries)
+(ISO/UN-sourced; supplied the ISO 3166-1 alpha-2 code, the `independent`
+flag used to select the 194, and the French/English display names) and
+[`country-telephone-data`](https://www.npmjs.com/package/country-telephone-data)
+(supplied the dial code per ISO code — `world-countries`' own `idd`
+field fragments a country's calling code into a "root" plus a long list
+of internal area-code "suffixes" for countries like the US/Kazakhstan,
+which isn't directly usable as a single dial string the way this file
+needs).
+
+**Verified against a third, independent source before being trusted** —
+not just cross-checked between the two generation datasets, which could
+in principle share the same upstream error: real web searches (via
+`WebSearch`, since direct fetches to Wikipedia/restcountries.com are
+blocked by this sandbox's own egress policy) confirmed dial codes for
+RD Congo plus all 9 of its neighbouring countries (Angola, Zambie,
+Tanzanie, Burundi, Rwanda, Ouganda, Soudan du Sud, République
+centrafricaine, Congo-Brazzaville — all matched exactly) and a random
+sample of 20 further countries spanning every region (all matched
+exactly) — both samples are pinned down as regression tests in
+`src/lib/__tests__/countries.test.ts`, not just asserted once and
+forgotten. A handful of entries were corrected by hand after this pass,
+where the generated data was either outdated or an awkward literal
+translation:
+- **Eswatini** (`SZ`) — the generated French name was "Swaziland," the
+  country's own pre-2018 name; confirmed via search that Larousse and
+  French diplomatic sources now use "Eswatini."
+- **Cap-Vert** (`CV`) — the generated name was "Îles du Cap-Vert";
+  confirmed "Cap-Vert" is the name French terminology authorities
+  actually recommend (the UN's own French text uses "Cabo Verde" since
+  2013, but that's a UN-specific choice, not the standard French form).
+- **El Salvador** (`SV`) — the generated name was the bare "Salvador";
+  confirmed "El Salvador" is the form actually used in French UN/
+  diplomatic text.
+- **Palaos** (`PW`) — the generated name was the awkward literal
+  "Palaos (Palau)"; simplified to plain "Palaos."
+- **RD Congo** (`CD`) / **Congo-Brazzaville** (`CG`) — the generated
+  French names were the longer official forms ("Congo (Rép. dém.)" /
+  plain "Congo"); overridden to match this app's own pre-existing short
+  names instead, specifically so `users.pays` keeps meaning the same
+  thing for accounts created before and after this rewrite (see the
+  caution above).
+
+**Not exhaustively verified, flagged rather than silently assumed
+correct**: with ~194 entries, checking every single one against an
+independent source individually wasn't practical in the time available
+for this lot, per this project's own explicit "flag it rather than claim
+100% exactness" discipline. The RD Congo neighbourhood + 20-country
+random sample (29 entries total, ~15% of the list) is real, external
+verification, not just internal cross-referencing — but a further
+mistake somewhere in the remaining ~165 entries, inherited from the
+generation datasets themselves, can't be ruled out. If the founder spots
+one while editing this file by hand, fixing it is exactly the kind of
+edit the file's own top-of-file comment describes.
+
+**RD Congo's 26 provinces** were given directly in this lot's own brief
+(not re-derived from `world-countries`, which has no province-level
+data at all) and cross-checked against the standard, well-known list of
+DRC's 26 administrative provinces since the 2015 découpage — matches
+exactly. Stored alphabetically (French collation), per the extension
+comment's own stated convention, even though the brief's own list order
+was grouped by region instead — alphabetical is friendlier for a
+dropdown and is what any future country's `provinces` array is expected
+to follow too.
+
+### `CountrySelect.tsx` — the searchable combobox
+
+`src/components/ui/CountrySelect.tsx`, a real ARIA combobox (not just a
+visually-filtered list): `role="combobox"` on the text input,
+`role="listbox"`/`role="option"` on the results,
+`aria-activedescendant` tracking the keyboard-highlighted option. Typing
+filters live via `filterCountriesByQuery()` (`src/lib/countries.ts`, pure
+and unit-tested — same "pure helper in lib, UI in the component" split
+this codebase already uses everywhere else); arrow keys move the
+highlight (`clampHighlightedIndex()`, also pure/unit-tested), Enter
+selects the highlighted option, Escape or a click outside the component
+closes the dropdown.
+
+**Matching is accent- and case-insensitive, and word-based, not a plain
+whole-string prefix check** — `normalizeForSearch()` strips diacritics
+via `.normalize("NFD")` + stripping the Unicode combining-marks range
+(U+0300–U+036F) before lowercasing, so "Cote" matches "Côte d'Ivoire."
+Both the query and the country's own name are split into words
+(`searchTokens()`), and **every** word of the query must prefix-match
+**some** word of the name — this is what makes "CO" find "RD Congo" (a
+match on its second word, "Congo," not the start of the whole name)
+alongside "Congo-Brazzaville"/"Colombie"/"Comores"/"Côte d'Ivoire," and
+is also what makes typing a country's full multi-word name (e.g. "RD
+Congo" itself) still find it. **A real bug caught by the visual
+verification pass below, not by the unit tests alone**: an earlier
+version normalized the query as one single string without splitting it
+into words — a single-word query like "CO" worked by coincidence (one
+word can't help but "start with" a shorter one-word query), but focusing
+the field pre-fills the search text with the *currently selected*
+country's full name (see below), which is almost always more than one
+word — under the old logic this yielded zero results the instant the
+field was focused, since no single name-word is as long as a multi-word
+query. Fixed by tokenizing the query exactly the same way the name
+already was; the regression is now pinned down directly in
+`countries.test.ts` ("matches a full multi-word country name").
+
+**The displayed text while closed is deliberately never held in
+`useState` synced via a `useEffect`** — it's derived at render time
+(`isOpen ? query : selectedName`) instead, which is what let this
+component avoid the `react-hooks/set-state-in-effect` trap this codebase
+already documents working around elsewhere (`ParametresForm`'s pseudo
+check, `ProduitCheckoutContent`'s mount effect, both via a
+`setTimeout(fn, 0)`) — deriving instead of syncing sidesteps the problem
+entirely, no `setTimeout` workaround needed here. `query` (the in-progress
+search text) only ever changes from a direct event handler — typing,
+focusing (pre-fills it with the current selection's name so a visitor can
+edit/backspace from there), or selecting — never from an effect reacting
+to a prop/state change. The one real `useEffect` in this component
+(closing the dropdown on an outside click) only ever calls `setState`
+from inside its DOM event listener callback, not synchronously in the
+effect body itself — the exact distinction the lint rule's own message
+draws, and the legitimate use of an effect ("subscribe to an external
+system, call setState from its own callback") it's meant to allow.
+
+`SignupForm.tsx` no longer squeezes the country picker into a narrow box
+next to the phone number field (the old `<select>` only ever needed to
+show a code + short label; a searchable combobox needs room to show full
+names while typing) — it now gets its own full-width row, with the phone
+row showing the selected country's dial code as a small read-only chip
+next to the number input instead.
+
+### Testing
+
+`src/lib/__tests__/countries.test.ts`: no duplicate ISO codes; exactly
+195 entries; `"OTHER"` last with no dial code and no provinces; every
+entry has both a French and English name and (except `"OTHER"`) a dial
+code; the RD-Congo-neighbourhood and 20-country independently-verified
+samples described above, pinned as regression tests; RD Congo's exact 26
+provinces, alphabetically ordered, including the capital; every other
+country has no `provinces` in this lot; `getCountryName()`'s locale
+switch (including a full locale tag like `"en-US"`, not just bare
+`"en"`); `filterCountriesByQuery()`'s prefix/case/accent-insensitive/
+word-based matching, including the multi-word-query regression above and
+that requiring an unrelated second query word correctly excludes a
+country; and `clampHighlightedIndex()`'s boundaries (never negative,
+never past the last index, stays at 0 with zero results).
+
+Verified visually end-to-end with a real Chromium browser (this
+sandbox's pre-installed one) driven by a temporarily-installed Playwright
+(never added to `package.json`) against a real `next dev` server — the
+signup page needs no mock backend at all for this particular check, since
+`createSupabaseServerClient().auth.getUser()` resolves to "no session"
+without ever making a network call when there's no session cookie
+present, so this pass ran against dummy, unreachable Supabase env vars in
+a gitignored `.env.local`, never committed: focusing the country field
+opens the dropdown pre-filled with the current selection; typing "CO"
+shows the expected multi-word-matched results including "RD Congo";
+typing "Cote" finds "Côte d'Ivoire" in French and correctly finds nothing
+in English (the English name is "Ivory Coast," which "Cote" doesn't
+match — confirmed as expected behavior, not a bug); ArrowDown highlights
+a result and Enter selects it, closing the dropdown; typing a full
+multi-word name ("RD Congo," "DR Congo," "Ivory Coast") correctly selects
+that exact country (the regression check for the bug above); selecting
+RD Congo turns the province field into a real `<select>` with 26
+provinces plus a placeholder; switching to France turns it back into free
+text; an unmatched query shows the localized "no results" message; and
+the phone row's dial-code chip updates correctly (`+243` → `+33`) when
+the country changes. All of the above confirmed in both `fr` (light/dark)
+and `/en/` (light/dark), zero console errors.
 
 ## Signup: nom/post-nom + 18+ age gate (migration `0016`)
 
@@ -9536,18 +9769,25 @@ NOT translated, flagged rather than guessed at:**
    client pass an explicit locale param, or switch to returning error
    *codes* that the calling client component translates itself) rather
    than a same-shape text swap. Left alone until that decision is made.
-2. **Country/province names** (`src/lib/countries.ts`'s `COUNTRIES` list,
-   consumed only by `SignupForm.tsx`, and the generated `states.json`
-   dataset behind it). These are stored verbatim in `users.pays`/`.province`
-   (see the schema section) — translating the dropdown's displayed name
-   without changing what gets stored would mean the *same* country is
-   saved under a different literal string depending on which locale the
-   visitor signed up in ("États-Unis" vs "United States"), which would
-   quietly fragment any future aggregation/analytics on that column. This
-   needs a real data-modeling decision (keep storage canonical and only
-   translate display, or move to storing an ISO code) that goes beyond
-   this task's "swap hardcoded text for a translation key" scope. Left
-   alone, flagged rather than guessed at.
+2. **Province names** (`src/lib/countries.ts`'s per-country `provinces`
+   arrays, consumed only by `SignupForm.tsx`). These are stored verbatim
+   in `users.province` (see the schema section) as a single, one-language
+   list per country (RD Congo's is French-only) — there's no per-locale
+   variant to translate at all yet, so this is a non-issue for now rather
+   than a deliberately-skipped one, but the same data-modeling question
+   as below would apply the moment a second-language `provinces` variant
+   was ever wanted. **`COUNTRIES` itself, by contrast, was later given a
+   real `nameEn` alongside `name`** (see "World country list + searchable
+   country picker" below) specifically so the signup combobox can search
+   and display in the visitor's own locale — this looked at first like
+   it would reopen the exact fragmentation risk this bullet used to warn
+   about (the same country stored under a different literal string
+   depending on signup locale), but `SignupForm.tsx` deliberately always
+   sends `country.name` (the canonical French form) to `pays` regardless
+   of which locale the visitor is signed up in — `nameEn` is used for
+   display/search only, never for what gets stored. So the country-name
+   half of this original concern is resolved, not left open; the
+   province-locale question above remains the only unaddressed part.
 
 Also found, confirmed **genuinely dead code, not a gap**:
 `src/lib/verification.ts#STATUT_VERIFICATION_LABELS` (French-only status

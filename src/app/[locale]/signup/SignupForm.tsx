@@ -4,13 +4,17 @@ import { useTranslations } from "next-intl";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { buttonClass } from "@/components/ui/button-styles";
+import { CountrySelect } from "@/components/ui/CountrySelect";
 import { inputClass, labelClass } from "@/components/ui/field-styles";
 import { COUNTRIES } from "@/lib/countries";
-import { getStatesForCountry } from "@/lib/states";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { isAtLeast18, minBirthDateForSignup } from "@/lib/validation";
 
-const DEFAULT_COUNTRY = COUNTRIES[0];
+// Not COUNTRIES[0] -- the list is alphabetical now (see countries.ts),
+// so the array's first entry is whatever sorts first in French, not RDC.
+// FanBoss launched in Kinshasa; the signup form should still open on RDC
+// by default regardless of where "RD Congo" happens to fall alphabetically.
+const DEFAULT_COUNTRY = COUNTRIES.find((country) => country.code === "CD") ?? COUNTRIES[0];
 // Combined with the space nom_affichage joins them with, this keeps the
 // concatenated "{nom} {postnom}" within the column's 60-char constraint
 // (users_nom_affichage_max_length, migration 0009) with margin to spare.
@@ -44,7 +48,7 @@ export function SignupForm() {
   const [dateNaissance, setDateNaissance] = useState("");
   const [countryCode, setCountryCode] = useState(DEFAULT_COUNTRY.code);
   const [phoneNumber, setPhoneNumber] = useState("");
-  const [provinceCode, setProvinceCode] = useState("");
+  const [province, setProvince] = useState("");
   const [ville, setVille] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "sent" | "error">(
     "idle",
@@ -52,18 +56,17 @@ export function SignupForm() {
   const [errorMessage, setErrorMessage] = useState("");
 
   const country = COUNTRIES.find((c) => c.code === countryCode) ?? DEFAULT_COUNTRY;
-  const states = getStatesForCountry(countryCode);
-  const province = states.find((s) => s.code === provinceCode) ?? null;
   // Limits the native date picker itself so it never even offers an
   // under-18 date, on top of the real submit-time check below.
   const maxBirthDate = minBirthDateForSignup();
 
   function handleCountryChange(code: string) {
     setCountryCode(code);
-    // The province list is entirely different (or empty) for the new
-    // country -- a previously selected code would silently point at the
-    // wrong region, or at nothing at all, if left in place.
-    setProvinceCode("");
+    // The province dropdown's own values (or the meaning of a free-text
+    // entry) are entirely different for the new country -- a previously
+    // selected/typed value would silently point at the wrong region, or
+    // at nothing at all, if left in place.
+    setProvince("");
   }
 
   async function handleSubmit(event: React.FormEvent) {
@@ -98,7 +101,7 @@ export function SignupForm() {
         data: {
           telephone,
           pays: country.name,
-          province: province?.name ?? null,
+          province: province.trim() || null,
           ville: ville.trim() || null,
           nom_affichage: nomAffichage,
           date_naissance: dateNaissance,
@@ -184,19 +187,23 @@ export function SignupForm() {
             />
           </label>
           <label className={labelClass}>
+            <span>{t("country")}</span>
+            <CountrySelect
+              countries={COUNTRIES}
+              value={countryCode}
+              onChange={handleCountryChange}
+              noResultsLabel={t("countryNoResults")}
+            />
+          </label>
+          <label className={labelClass}>
             <span>{t("phone")}</span>
             <div className="flex gap-2">
-              <select
-                value={countryCode}
-                onChange={(event) => handleCountryChange(event.target.value)}
-                className={`${inputClass} w-[8.5rem] min-w-0 px-3`}
+              <span
+                className={`${inputClass} flex w-20 shrink-0 items-center justify-center px-2 text-center`}
+                aria-hidden="true"
               >
-                {COUNTRIES.map((c) => (
-                  <option key={c.code} value={c.code}>
-                    {c.name} {c.dial && `(${c.dial})`}
-                  </option>
-                ))}
-              </select>
+                {country.dial || "—"}
+              </span>
               <input
                 type="tel"
                 inputMode="numeric"
@@ -207,23 +214,31 @@ export function SignupForm() {
               />
             </div>
           </label>
-          {states.length > 0 && (
-            <label className={labelClass}>
-              <span>{t("province")}</span>
+          <label className={labelClass}>
+            <span>{t("province")}</span>
+            {country.provinces && country.provinces.length > 0 ? (
               <select
-                value={provinceCode}
-                onChange={(event) => setProvinceCode(event.target.value)}
+                value={province}
+                onChange={(event) => setProvince(event.target.value)}
                 className={`${inputClass} w-full`}
               >
                 <option value="">{t("provincePlaceholder")}</option>
-                {states.map((s) => (
-                  <option key={s.code} value={s.code}>
-                    {s.name}
+                {country.provinces.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
                   </option>
                 ))}
               </select>
-            </label>
-          )}
+            ) : (
+              <input
+                type="text"
+                value={province}
+                onChange={(event) => setProvince(event.target.value)}
+                maxLength={100}
+                className={`${inputClass} w-full`}
+              />
+            )}
+          </label>
           <label className={labelClass}>
             <span>{t("city")}</span>
             <input
