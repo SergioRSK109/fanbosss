@@ -114,6 +114,8 @@
     "nom": "First name",
     "postnom": "Last name",
     "dateNaissance": "Date of birth",
+    "country": "Country",
+    "countryNoResults": "No country found.",
     "phone": "Phone (WhatsApp)",
     "phoneNumberPlaceholder": "900000000",
     "province": "Province / region",
