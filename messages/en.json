@@ -226,7 +226,6 @@
       }
     },
     "participer": "Participate",
-    "verified": "Verified",
     "tabs": {
       "offres": "Offers",
       "publications": "Publications",
@@ -375,7 +374,8 @@
     "close": "Close",
     "unknownError": "unknown error",
     "saveError": "couldn't save",
-    "zoomProfilePhotoAriaLabel": "Enlarge profile photo"
+    "zoomProfilePhotoAriaLabel": "Enlarge profile photo",
+    "verified": "Verified"
   },
   "CopyProfileLink": {
     "button": "📋 Copy my link",

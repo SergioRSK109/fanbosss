@@ -10,6 +10,7 @@ export interface ClassementEntry {
   displayName: string | null;
   pseudo: string | null;
   photoUrl: string | null;
+  createurVerifie: boolean;
 }
 
 // Public /classement page data: reuses classement_volume/reactivite
@@ -53,13 +54,18 @@ export async function getClassementPublicData(): Promise<{
 
   const profilesById = new Map<
     string,
-    { pseudo: string | null; nom_affichage: string | null; photo_r2_key: string | null }
+    {
+      pseudo: string | null;
+      nom_affichage: string | null;
+      photo_r2_key: string | null;
+      createur_verifie: boolean;
+    }
   >();
 
   if (allIds.length > 0) {
     const { data: profils } = await supabase
       .from("profils_publics")
-      .select("id, pseudo, nom_affichage, photo_r2_key")
+      .select("id, pseudo, nom_affichage, photo_r2_key, createur_verifie")
       .in("id", allIds);
 
     for (const profil of profils ?? []) {
@@ -90,6 +96,7 @@ export async function getClassementPublicData(): Promise<{
         displayName: resolveDisplayName(profil?.nom_affichage ?? null, profil?.pseudo ?? null),
         pseudo: profil?.pseudo ?? null,
         photoUrl: profil?.photo_r2_key ? photoUrlByKey.get(profil.photo_r2_key) ?? null : null,
+        createurVerifie: profil?.createur_verifie ?? false,
       };
     });
   }

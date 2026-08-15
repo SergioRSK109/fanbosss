@@ -18,7 +18,13 @@ vi.mock("@/lib/r2", () => ({
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getClassementPublicData } from "@/lib/classementPublic";
 
-type Profil = { id: string; pseudo: string | null; nom_affichage: string | null; photo_r2_key: string | null };
+type Profil = {
+  id: string;
+  pseudo: string | null;
+  nom_affichage: string | null;
+  photo_r2_key: string | null;
+  createur_verifie: boolean;
+};
 type Row = { createur_id: string; rang: number };
 
 function buildRankChain(rows: Row[]) {
@@ -72,7 +78,7 @@ describe("getClassementPublicData", () => {
       buildClient(fromSpy, selectCalls, {
         volume: [{ createur_id: "a", rang: 1 }],
         reactivite: [],
-        profils: [{ id: "a", pseudo: "sergio", nom_affichage: null, photo_r2_key: null }],
+        profils: [{ id: "a", pseudo: "sergio", nom_affichage: null, photo_r2_key: null, createur_verifie: false }],
       }) as unknown as Awaited<ReturnType<typeof createSupabaseServerClient>>,
     );
 
@@ -93,7 +99,7 @@ describe("getClassementPublicData", () => {
       buildClient(fromSpy, selectCalls, {
         volume: [{ createur_id: "a", rang: 1 }],
         reactivite: [{ createur_id: "a", rang: 2 }],
-        profils: [{ id: "a", pseudo: "sergio", nom_affichage: null, photo_r2_key: null }],
+        profils: [{ id: "a", pseudo: "sergio", nom_affichage: null, photo_r2_key: null, createur_verifie: false }],
       }) as unknown as Awaited<ReturnType<typeof createSupabaseServerClient>>,
     );
 
@@ -111,14 +117,14 @@ describe("getClassementPublicData", () => {
       buildClient(fromSpy, selectCalls, {
         volume: [{ createur_id: "a", rang: 1 }],
         reactivite: [],
-        profils: [{ id: "a", pseudo: "sergio", nom_affichage: null, photo_r2_key: null }],
+        profils: [{ id: "a", pseudo: "sergio", nom_affichage: null, photo_r2_key: null, createur_verifie: false }],
       }) as unknown as Awaited<ReturnType<typeof createSupabaseServerClient>>,
     );
 
     await getClassementPublicData();
 
     const profilSelect = selectCalls.find((call) => call.table === "profils_publics");
-    expect(profilSelect?.columns).toBe("id, pseudo, nom_affichage, photo_r2_key");
+    expect(profilSelect?.columns).toBe("id, pseudo, nom_affichage, photo_r2_key, createur_verifie");
   });
 
   it("returns entries with exactly rank + public display fields -- no leaked count/amount", async () => {
@@ -126,14 +132,14 @@ describe("getClassementPublicData", () => {
       buildClient(fromSpy, selectCalls, {
         volume: [{ createur_id: "a", rang: 1 }],
         reactivite: [],
-        profils: [{ id: "a", pseudo: "sergio", nom_affichage: "Sergio", photo_r2_key: null }],
+        profils: [{ id: "a", pseudo: "sergio", nom_affichage: "Sergio", photo_r2_key: null, createur_verifie: true }],
       }) as unknown as Awaited<ReturnType<typeof createSupabaseServerClient>>,
     );
 
     const { volume } = await getClassementPublicData();
 
     expect(volume).toEqual([
-      { createurId: "a", rang: 1, displayName: "Sergio", pseudo: "sergio", photoUrl: null },
+      { createurId: "a", rang: 1, displayName: "Sergio", pseudo: "sergio", photoUrl: null, createurVerifie: true },
     ]);
   });
 
@@ -142,7 +148,7 @@ describe("getClassementPublicData", () => {
       buildClient(fromSpy, selectCalls, {
         volume: [{ createur_id: "a", rang: 1 }],
         reactivite: [],
-        profils: [{ id: "a", pseudo: "sergio", nom_affichage: null, photo_r2_key: "photos/a.jpg" }],
+        profils: [{ id: "a", pseudo: "sergio", nom_affichage: null, photo_r2_key: "photos/a.jpg", createur_verifie: false }],
       }) as unknown as Awaited<ReturnType<typeof createSupabaseServerClient>>,
     );
 

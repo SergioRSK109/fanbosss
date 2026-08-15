@@ -1,4 +1,5 @@
 import { getTranslations } from "next-intl/server";
+import { VerifiedBadge } from "@/components/ui/VerifiedBadge";
 import { Link } from "@/i18n/navigation";
 import type { ClassementEntry } from "@/lib/classementPublic";
 import { getClassementPublicData } from "@/lib/classementPublic";
@@ -16,12 +17,14 @@ function Section({
   emptyLabel,
   anonymousLabel,
   rankLabel,
+  verifiedLabel,
 }: {
   title: string;
   entries: ClassementEntry[];
   emptyLabel: string;
   anonymousLabel: string;
   rankLabel: (rank: number) => string;
+  verifiedLabel: string;
 }) {
   return (
     <section>
@@ -54,8 +57,13 @@ function Section({
                       🙂
                     </div>
                   )}
-                  <span className="truncate text-sm font-semibold">
-                    {entry.displayName ?? anonymousLabel}
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span className="truncate text-sm font-semibold">
+                      {entry.displayName ?? anonymousLabel}
+                    </span>
+                    {entry.createurVerifie && (
+                      <VerifiedBadge label={verifiedLabel} tone="light" className="h-4 w-4 shrink-0" />
+                    )}
                   </span>
                 </Link>
               </li>
@@ -74,10 +82,12 @@ export default async function ClassementPage({
 }) {
   const { locale } = await params;
   const t = await getTranslations({ locale, namespace: "Classement" });
+  const tCommon = await getTranslations({ locale, namespace: "Common" });
 
   const { volume, reactivite } = await getClassementPublicData();
 
   const rankLabel = (rank: number) => t("rank", { rank });
+  const verifiedLabel = tCommon("verified");
 
   return (
     <main className="mx-auto flex max-w-4xl flex-col gap-8 px-5 pt-4">
@@ -93,6 +103,7 @@ export default async function ClassementPage({
           emptyLabel={t("empty")}
           anonymousLabel={t("anonymous")}
           rankLabel={rankLabel}
+          verifiedLabel={verifiedLabel}
         />
         <Section
           title={t("sectionReactivite")}
@@ -100,6 +111,7 @@ export default async function ClassementPage({
           emptyLabel={t("empty")}
           anonymousLabel={t("anonymous")}
           rankLabel={rankLabel}
+          verifiedLabel={verifiedLabel}
         />
       </div>
     </main>

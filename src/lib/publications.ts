@@ -16,6 +16,7 @@ export interface PublicationAuteur {
   displayName: string | null;
   pseudo: string | null;
   photoUrl: string | null;
+  createurVerifie: boolean;
 }
 
 export type AutoriseRepost = "personne" | "tous";
@@ -167,7 +168,7 @@ async function hydratePublications(
     auteurIds.length > 0
       ? await supabase
           .from("profils_publics")
-          .select("id, pseudo, nom_affichage, photo_r2_key")
+          .select("id, pseudo, nom_affichage, photo_r2_key, createur_verifie")
           .in("id", auteurIds)
       : {
           data: [] as {
@@ -175,6 +176,7 @@ async function hydratePublications(
             pseudo: string | null;
             nom_affichage: string | null;
             photo_r2_key: string | null;
+            createur_verifie: boolean;
           }[],
         };
 
@@ -234,6 +236,7 @@ async function hydratePublications(
           displayName: resolveDisplayName(profil?.nom_affichage ?? null, profil?.pseudo ?? null),
           pseudo: profil?.pseudo ?? null,
           photoUrl: photoUrlByAuteurId.get(row.auteur_id) ?? null,
+          createurVerifie: profil?.createur_verifie ?? false,
         },
         autoriseRepost: row.autorise_repost,
         likesCount: row.likes_count,

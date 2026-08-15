@@ -226,7 +226,6 @@
       }
     },
     "participer": "Participer",
-    "verified": "Vérifié",
     "tabs": {
       "offres": "Offres",
       "publications": "Publications",
@@ -375,7 +374,8 @@
     "close": "Fermer",
     "unknownError": "erreur inconnue",
     "saveError": "enregistrement impossible",
-    "zoomProfilePhotoAriaLabel": "Agrandir la photo de profil"
+    "zoomProfilePhotoAriaLabel": "Agrandir la photo de profil",
+    "verified": "Vérifié"
   },
   "CopyProfileLink": {
     "button": "📋 Copier mon lien",

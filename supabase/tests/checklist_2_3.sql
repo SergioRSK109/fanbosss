@@ -10517,6 +10517,88 @@ begin
   raise notice 'PASS: a brand-new user row defaults portee_livraison to NULL';
 end $$;
 
+-- ---------------------------------------------------------------------
+-- Migration 0056: concours_publics exposes createur_verifie (a trailing
+-- column, per CLAUDE.md's own "verified badge follows the créateur
+-- everywhere" section) -- fixture: organisateur A (c0560001, marked
+-- createur_verifie=true directly, same "backdate/flip a column directly"
+-- pattern already used throughout this file rather than driving the full
+-- demandes_verification approval flow for an unrelated schema check),
+-- participant B (c0560002, left createur_verifie=false, the default).
+-- ---------------------------------------------------------------------
+insert into users (id, telephone, pays) values
+  ('c0560001-0000-0000-0000-000000000001', '+243900000601', 'RDC'),
+  ('c0560002-0000-0000-0000-000000000002', '+243900000602', 'RDC');
+
+update users set createur_verifie = true
+  where id = 'c0560001-0000-0000-0000-000000000001';
+
+select set_config('app.current_user_id', 'c0560001-0000-0000-0000-000000000001', false);
+set role authenticated;
+select set_config(
+  'app.concours_0056_id',
+  (select creer_concours('Concours Vérifié', now() + interval '10 days'))::text,
+  false
+);
+select inviter_participant_concours(
+  current_setting('app.concours_0056_id')::uuid,
+  'c0560002-0000-0000-0000-000000000002'
+);
+reset role;
+
+select set_config('app.current_user_id', 'c0560002-0000-0000-0000-000000000002', false);
+set role authenticated;
+select accepter_invitation_concours(current_setting('app.concours_0056_id')::uuid);
+reset role;
+select set_config('app.current_user_id', null, false);
+
+do $$
+declare
+  v_verifie boolean;
+begin
+  select createur_verifie into v_verifie from concours_publics
+    where concours_id = current_setting('app.concours_0056_id')::uuid
+      and createur_id = 'c0560001-0000-0000-0000-000000000001';
+  if v_verifie is distinct from true then
+    raise exception 'TEST FAILED: concours_publics.createur_verifie should be true for the verified organisateur, got %', v_verifie;
+  end if;
+
+  select createur_verifie into v_verifie from concours_publics
+    where concours_id = current_setting('app.concours_0056_id')::uuid
+      and createur_id = 'c0560002-0000-0000-0000-000000000002';
+  if v_verifie is distinct from false then
+    raise exception 'TEST FAILED: concours_publics.createur_verifie should be false for the non-verified participant, got %', v_verifie;
+  end if;
+
+  raise notice 'PASS: concours_publics.createur_verifie reflects each real participant''s own verification status, not a blanket value';
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_name = 'concours_publics' and column_name = 'createur_verifie'
+  ) then
+    raise exception 'TEST FAILED: concours_publics is missing createur_verifie entirely';
+  end if;
+  raise notice 'PASS: concours_publics exposes createur_verifie as a real column';
+end $$;
+
+do $$
+declare
+  v_has_select boolean;
+begin
+  select has_table_privilege('anon', 'concours_publics', 'SELECT') into v_has_select;
+  if not v_has_select then
+    raise exception 'TEST FAILED: anon lost SELECT on concours_publics after adding createur_verifie -- CREATE OR REPLACE VIEW should have preserved it';
+  end if;
+  select has_table_privilege('authenticated', 'concours_publics', 'SELECT') into v_has_select;
+  if not v_has_select then
+    raise exception 'TEST FAILED: authenticated lost SELECT on concours_publics after adding createur_verifie';
+  end if;
+  raise notice 'PASS: anon/authenticated both still hold SELECT on concours_publics after the createur_verifie column was added';
+end $$;
+
 do $$
 begin
   raise notice 'ALL SQL CHECKLIST TESTS PASSED';
