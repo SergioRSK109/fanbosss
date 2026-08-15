@@ -8844,6 +8844,165 @@ the phone row's dial-code chip updates correctly (`+243` → `+33`) when
 the country changes. All of the above confirmed in both `fr` (light/dark)
 and `/en/` (light/dark), zero console errors.
 
+### RDC-neighbors/diaspora extension: provinces for 17 more countries (no migration)
+
+Follow-up to the world-country-list rewrite above: adds `provinces` arrays
+to the 9 direct RDC neighbors (Congo-Brazzaville, République
+centrafricaine, Soudan du Sud, Ouganda, Rwanda, Burundi, Tanzanie,
+Zambie, Angola) and the 8 main diaspora destinations already present in
+`COUNTRIES` (France, Belgique, Canada, États-Unis, Royaume-Uni, Suisse,
+Allemagne, Portugal) — RD Congo's own 26-province entry was the only one
+with a `provinces` array before this. Same file, same
+`provinces?: string[]` field, same by-hand-editable format; no schema
+change.
+
+**Per-country tier: not always the full ISO 3166-2 subdivision list —
+the file's own header comment already settles this.** The extension
+comment's worked example for France lists `"Auvergne-Rhône-Alpes"`,
+`"Bourgogne-Franche-Comté"` — France's 18 **régions**, not the ~124-entry
+ISO 3166-2:FR list (which mixes régions, départements, and several kinds
+of overseas collectivités in one flat namespace). That example is the
+authoritative signal for what "province" means in this file: the single
+coarsest administrative tier that plays the same role RDC's own province
+does, not necessarily every ISO 3166-2 entry a country happens to have.
+Applied consistently:
+- **Ouganda**: 4 (Centre, Est, Nord, Ouest) — ISO 3166-2:UG's own
+  `"Geographical region"` type, not its 134 districts.
+- **Royaume-Uni**: 4 (Angleterre, Écosse, Irlande du Nord, Pays de
+  Galles) — the UK's 4 constituent countries are themselves real
+  top-level ISO 3166-2:GB entries (`GB-ENG`/`GB-SCT`/`GB-WLS` type
+  `"Country"`, `GB-NIR` type `"Province"`), confirmed directly against
+  `pycountry`'s own type field before trusting it — not the other 217
+  unitary authorities/council areas/London boroughs/metropolitan
+  districts/two-tier counties, which have no single clean tier spanning
+  England, Scotland, Wales, and Northern Ireland uniformly.
+- **Belgique**: the 10 provinces, **plus an 11th, hand-added
+  "Bruxelles-Capitale"** — Brussels-Capital Region is constitutionally
+  extraprovincial (belongs to none of the 10), confirmed via search, but
+  a Belgian signing up from Brussels still needs a selectable entry, the
+  same "give every real resident an option" reasoning already implicit
+  in RDC's own province list including Kinshasa.
+- **États-Unis**: the 50 states + District of Columbia (51) —
+  deliberately **not** the 5 inhabited territories (Puerto Rico, Guam,
+  American Samoa, US Virgin Islands, Northern Mariana Islands), matching
+  this file's own stated architecture principle (`COUNTRIES` itself
+  already excludes dependent territories that have no `pays` value
+  distinct from their sovereign state) rather than silently deciding
+  either way. Flagged here as a deliberate scope cut, not an oversight —
+  add them in a later palier if a diaspora signup from one of those
+  territories ever actually needs it.
+- Every other country in this batch (Congo-Brazzaville, République
+  centrafricaine, Soudan du Sud, Rwanda, Burundi, Tanzanie, Zambie,
+  Angola, Canada, Suisse, Allemagne, Portugal) already has a single,
+  unambiguous administrative tier, so no such judgment call was needed —
+  ISO 3166-2's own subdivisions for that country are simply the
+  provinces list.
+
+**Generation/verification method — real structured sources, cross-checked,
+never typed from memory, same discipline this file's own generation
+section already established for the 195-country list itself**:
+`pycountry` (wrapping the official ISO 3166-2 register via Debian's
+`iso-codes`, installed temporarily via `pip`, never added to any
+manifest) supplied the baseline subdivision list + type field per
+country, used to decide the tier questions above. Anything time-sensitive,
+ambiguous, or a proper-noun translation was cross-checked with real
+`WebSearch`/`WebFetch` calls rather than trusted from the generation
+source alone (direct fetches to `en.wikipedia.org`/Wikipedia mirrors are
+blocked by this sandbox's egress policy — the same restriction already
+documented for the 195-country list — so `WebSearch` was the actual
+verification channel here, same as there).
+
+**A real, current administrative reform `pycountry`'s own ISO data
+hasn't caught up to, found specifically because it was checked rather
+than assumed**: **Burundi went from 18 provinces to 5 by a law dated 16
+March 2023**, operationalized at the 2025 legislative elections (new
+governors sworn in and approved by the Senate around July 2025) —
+`pycountry` still reports the old 18. Confirmed via two independent
+`WebSearch` passes (Yaga Burundi, Jimbere, Burundi Times, Xinhua, and a
+second cross-check search) before trusting it: the 5 current provinces
+are **Buhumuza, Bujumbura, Burunga, Butanyerera, Gitega** (merging the
+old 18 — e.g. Bujumbura groups the former Bujumbura/Bujumbura
+Mairie/Bubanza/Cibitoke). This is the entry in this batch, flagged
+explicitly, where the "structured ISO 3166-2 source" itself was stale —
+real, current verification mattered more than the source's own
+authority here.
+
+**Four proper-noun mistranslation bugs caught and avoided while
+hand-authoring the French names — the same class of error already
+documented once before in this file's now-superseded `states.json`
+history, re-encountered here because the underlying upstream community
+translations (used as a cross-reference, not copied blindly this time)
+still carry them**: a naive machine/community translation of a place
+name that happens to also be an ordinary word produces a false-cognate
+name that reads as a real French word instead of the actual place —
+caught by sanity-reading every name against independent knowledge/search
+rather than pasting a translated field through:
+1. **Congo-Brazzaville's "Pool" département** — the upstream community
+   translation renders this `"Piscine"` (literal French for "swimming
+   pool"). Kept as `"Pool"`, the département's real name (from Pool
+   Malebo, the river's widening near Brazzaville/Kinshasa), unchanged
+   from the English/Portuguese form, matching how every other
+   proper-noun province in this batch (Namibe, Bengo, Kagera...) is kept
+   as-is.
+2. **Angola's "Cuando Cubango" province** — the same upstream source
+   renders this `"Quand Cubango"` ("Quand" = French "when," a
+   mistranslation of "Cuando"). Kept as `"Cuando Cubango"`.
+3. **Switzerland's Bern canton** — the upstream source leaves this
+   untranslated as `"Bern"`; the real French exonym (Switzerland is
+   officially French/German/Italian/Romansh, and this canton is
+   genuinely bilingual) is **"Berne"**, confirmed via search.
+4. **Portugal's Guarda district** — the upstream source renders this
+   `"Garder"` (a French verb, "to keep/guard" — a literal mistranslation
+   of the place name "Guarda"). Kept as `"Guarda"` (confirmed via search
+   that French sources keep the Portuguese spelling unaccented, same as
+   the neighboring "Beja" district, whose own upstream translation
+   `"Béja"` was also corrected to the unaccented, confirmed-correct
+   `"Beja"`).
+
+Also confirmed correct and reused as-is (no bug, but independently
+checked rather than assumed): Angola's `"Cuanza Sul"` (this file's own
+predecessor, `states.json`, already had this exact truncation bug fixed
+— see the RDC-neighbors/diaspora section further down in this file's own
+history — the same fix carries over into this fresh hand-authored list);
+France's exact 18 région names and their non-hyphenated official
+spelling (`"Grand Est"`, `"Pays de la Loire"`, not the ISO
+machine-code-derived `"Grand-Est"`/`"Pays-de-la-Loire"`), confirmed via
+search; Canada's standard 13 provinces/territories; and every other
+country's names, spot-checked against independent knowledge/search
+without a specific bug turning up.
+
+Every province array is alphabetically sorted (French collation, via a
+generation script's own `Array.prototype.sort((a, b) => a.localeCompare(b,
+"fr"))` — the exact comparator `countries.test.ts` already checks RD
+Congo's own list against, now extended to check all 17 new ones the same
+way, not by hand-sorting and hoping) — same convention the header comment
+already states and RD Congo's own entry already follows.
+
+### Testing
+
+`countries.test.ts`: a new data-driven test covers all 17 countries at
+once (count, alphabetical order, and one known member per country — e.g.
+Congo-Brazzaville contains `"Pool"` — not `"Piscine"` — directly pinning
+down the mistranslation fix as a regression test, not just prose); the
+old "leaves every non-RDC country without a province list" assertion was
+replaced with one confirming the exact 18-country set (RD Congo + these
+17) now has provinces and no other country does. `npm run tsc`/`npm run
+lint`/`npm test` all pass with no changes needed outside
+`countries.ts`/`countries.test.ts` — pure data, no new UI branch.
+
+Verified visually end-to-end (same throwaway mock-Auth/Playwright
+technique already established for this file's own `CountrySelect`
+verification — dummy, unreachable Supabase env vars, no mock backend
+needed since the signup page never calls Supabase until submit): typing
+into the country combobox and selecting République
+centrafricaine/Belgique/Royaume-Uni/États-Unis each turns the province
+field into a real `<select>` with the exact expected option count (17,
+11, 4, 51) and correct sample members — confirmed in both `fr` (querying
+by French name) and `/en/` (querying by English name, since the
+combobox filters against whichever name matches the active locale) ×
+light/dark, all four real, visible dropdowns with a non-zero bounding
+box, not just present in the DOM.
+
 ## Signup: nom/post-nom + 18+ age gate (migration `0016`)
 
 **Nom/post-nom** are two plain text fields, both required, that
