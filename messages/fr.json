@@ -104,12 +104,9 @@
   "Home": {
     "title": "Ici, c'est toi le Boss",
     "tagline": "Monétisez votre relation avec vos fans: vidéos personnalisées, dons, vente produit, accès whatsapp privé et plus.",
-    "returningTitle": "FanBoss",
-    "returningTagline": "Monétisez votre relation avec vos fans : vidéos personnalisées, dons, WhatsApp, et plus.",
     "paymentTrust": "Paiement sécurisé via",
     "signup": "Créer un compte",
-    "login": "Se connecter",
-    "dashboard": "Accéder à mon espace"
+    "login": "Se connecter"
   },
   "Signup": {
     "heading": "Créer un compte FanBoss",
