@@ -159,3 +159,29 @@ export function EyeIcon({ className }: { className?: string }) {
     </svg>
   );
 }
+
+// Show/hide-password toggle (PasswordInput.tsx). Same eye silhouette as
+// EyeIcon above, plus a diagonal slash -- the standard "eye-off" pairing
+// -- and a broken pupil arc instead of a solid circle so the slash reads
+// as crossing an eye that's still recognizably an eye, not just a random
+// line through an oval. No active/inactive prop: PasswordInput swaps
+// between this icon and EyeIcon itself depending on the field's own
+// visibility state, rather than this icon toggling its own look.
+export function EyeOffIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M7.4 7.3A15.7 15.7 0 0 0 2.5 12S6 18.5 12 18.5c1.4 0 2.7-.2 3.9-.7M10.6 5.7c.5-.1.9-.2 1.4-.2 6 0 9.5 6.5 9.5 6.5a15.7 15.7 0 0 1-3.4 4.3" />
+      <path d="M9.9 10.1a2.6 2.6 0 0 0 3.6 3.6" />
+      <path d="M3.5 3.5l17 17" />
+    </svg>
+  );
+}

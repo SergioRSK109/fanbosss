@@ -11,8 +11,16 @@ vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServerClient: vi.fn(),
 }));
 
+vi.mock("next-intl/server", () => ({
+  getTranslations: vi.fn(async () => (key: string) => key),
+}));
+
 vi.mock("@/app/[locale]/signup/SignupForm", () => ({
   SignupForm: () => null,
+}));
+
+vi.mock("@/components/AuthPageHeader", () => ({
+  AuthPageHeader: () => null,
 }));
 
 import { redirect } from "@/i18n/navigation";

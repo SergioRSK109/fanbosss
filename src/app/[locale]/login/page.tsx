@@ -1,5 +1,7 @@
 import { Suspense } from "react";
+import { getTranslations } from "next-intl/server";
 import { redirect } from "@/i18n/navigation";
+import { AuthPageHeader } from "@/components/AuthPageHeader";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { LoginForm } from "./LoginForm";
 
@@ -28,9 +30,19 @@ export default async function LoginPage({
     return;
   }
 
+  const t = await getTranslations({ locale, namespace: "Login" });
+  const tHome = await getTranslations({ locale, namespace: "Home" });
+
   return (
-    <Suspense>
-      <LoginForm />
-    </Suspense>
+    <>
+      <AuthPageHeader
+        locale={locale}
+        linkHref="/signup"
+        linkText={`${t("noAccount")} ${tHome("signup")}`}
+      />
+      <Suspense>
+        <LoginForm />
+      </Suspense>
+    </>
   );
 }

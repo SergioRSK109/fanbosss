@@ -127,7 +127,8 @@
     "ageRestriction": "Tu dois avoir au moins 18 ans pour t'inscrire.",
     "submit": "Créer mon compte",
     "submitting": "Création...",
-    "confirmationSent": "Vérifiez votre boîte mail pour confirmer votre inscription."
+    "confirmationSent": "Vérifiez votre boîte mail pour confirmer votre inscription.",
+    "alreadyHaveAccount": "Déjà un compte ?"
   },
   "Login": {
     "heading": "Connexion",
@@ -136,7 +137,8 @@
     "submit": "Se connecter",
     "submitting": "Connexion...",
     "forgotPassword": "Mot de passe oublié ?",
-    "callbackError": "La confirmation de votre compte a échoué : {error}. Merci de vous connecter à nouveau."
+    "callbackError": "La confirmation de votre compte a échoué : {error}. Merci de vous connecter à nouveau.",
+    "noAccount": "Pas de compte ?"
   },
   "MotDePasseOublie": {
     "heading": "Mot de passe oublié",
@@ -375,7 +377,9 @@
     "unknownError": "erreur inconnue",
     "saveError": "enregistrement impossible",
     "zoomProfilePhotoAriaLabel": "Agrandir la photo de profil",
-    "verified": "Vérifié"
+    "verified": "Vérifié",
+    "showPassword": "Afficher le mot de passe",
+    "hidePassword": "Masquer le mot de passe"
   },
   "CopyProfileLink": {
     "button": "📋 Copier mon lien",
