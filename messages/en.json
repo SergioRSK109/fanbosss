@@ -104,6 +104,8 @@
   "Home": {
     "title": "Here, you're the Boss",
     "tagline": "Monetize your relationship with your fans: custom videos, tips, product sales, private WhatsApp access, and more.",
+    "returningTitle": "FanBoss",
+    "returningTagline": "Monetize your relationship with your fans: custom videos, tips, WhatsApp, and more.",
     "paymentTrust": "Secure payment via",
     "signup": "Create an account",
     "login": "Log in",

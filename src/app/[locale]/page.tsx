@@ -31,7 +31,15 @@ const PAYMENT_METHOD_LOGOS: PaymentMethodLogo[] = [
 // -- see CLAUDE.md "Logo-click 'logout' bug" for the real trace behind
 // this). The authenticated branch keeps its prior logic/content
 // unchanged -- the redesign below (header, hero, payment-trust block)
-// applies only to the logged-out branch, per explicit instruction.
+// applies only to the logged-out branch, per explicit instruction. This is
+// why the authenticated branch reads its own `returningTitle`/
+// `returningTagline` keys rather than `title`/`tagline`: those two now
+// hold the redesign's new marketing copy for the logged-out hero, and a
+// returning, already-logged-in visitor must still see the old "FanBoss" +
+// old tagline (never the new "Ici, c'est toi le Boss" accroche) --
+// reusing the same keys here was a real bug caught after the fact, not a
+// deliberate merge of the two.
+
 export default async function Home({
   params,
 }: {
@@ -58,9 +66,9 @@ export default async function Home({
         <div className="relative flex flex-col items-center gap-4">
           <span className="text-5xl">🚀</span>
           <h1 className="bg-gradient-to-br from-brand-500 to-accent-500 bg-clip-text text-4xl font-extrabold text-transparent">
-            {t("title")}
+            {t("returningTitle")}
           </h1>
-          <p className="max-w-xs text-foreground-muted">{t("tagline")}</p>
+          <p className="max-w-xs text-foreground-muted">{t("returningTagline")}</p>
         </div>
         <div className="relative flex w-full max-w-xs flex-col gap-3">
           <Link href="/home" className={buttonClass("primary", "lg")}>
