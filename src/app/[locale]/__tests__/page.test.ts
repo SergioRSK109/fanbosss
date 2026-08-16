@@ -5,7 +5,10 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 // "Créer un compte"/"Se connecter" unconditionally, which is what made
 // clicking the logo while already logged in look like a logout (the
 // visitor lands on a page that doesn't acknowledge their session, then
-// naturally clicks "Se connecter" and sees a real password form).
+// naturally clicks "Se connecter" and sees a real password form). Fixed
+// the same way login/page.tsx and signup/page.tsx already were: an
+// already-authenticated visitor is redirected straight to /home, with no
+// intermediate screen at all -- see CLAUDE.md "Logo-click 'logout' bug".
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServerClient: vi.fn(),
 }));
@@ -14,9 +17,14 @@ vi.mock("@/lib/supabase/server", () => ({
 // resolution that doesn't work under plain Vitest -- Home is only being
 // called directly here (never actually rendered to a DOM), so the JSX
 // element tree already carries the real `href` props regardless of what
-// this mock's Link implementation does.
+// this mock's Link implementation does. `redirect` mirrors Next's own
+// behavior of throwing to interrupt rendering, same shape as
+// login/signup's own redirect tests.
 vi.mock("@/i18n/navigation", () => ({
   Link: (props: { href: string; children?: ReactNode }) => props,
+  redirect: vi.fn(() => {
+    throw new Error("NEXT_REDIRECT");
+  }),
 }));
 
 vi.mock("next-intl/server", () => ({
@@ -26,12 +34,12 @@ vi.mock("next-intl/server", () => ({
       tagline: "tagline",
       signup: "Créer un compte",
       login: "Se connecter",
-      dashboard: "Accéder à mon espace",
     };
     return (key: string) => strings[key] ?? key;
   }),
 }));
 
+import { redirect } from "@/i18n/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 function buildSupabaseMock(user: { id: string } | null) {
@@ -70,7 +78,7 @@ describe("GET /[locale] (Home)", () => {
     vi.clearAllMocks();
   });
 
-  it("shows a /home CTA (not signup/login) for an already-authenticated visitor", async () => {
+  it("redirects an already-authenticated visitor straight to /home, with no intermediate screen", async () => {
     vi.mocked(createSupabaseServerClient).mockResolvedValue(
       buildSupabaseMock({ id: "user-1" }) as unknown as Awaited<
         ReturnType<typeof createSupabaseServerClient>
@@ -78,15 +86,15 @@ describe("GET /[locale] (Home)", () => {
     );
 
     const { default: Home } = await import("@/app/[locale]/page");
-    const element = await Home({ params: Promise.resolve({ locale: "fr" }) });
-    const hrefs = collectHrefs(element);
 
-    expect(hrefs).toContain("/home");
-    expect(hrefs).not.toContain("/signup");
-    expect(hrefs).not.toContain("/login");
+    await expect(
+      Home({ params: Promise.resolve({ locale: "fr" }) }),
+    ).rejects.toThrow("NEXT_REDIRECT");
+
+    expect(redirect).toHaveBeenCalledWith({ href: "/home", locale: "fr" });
   });
 
-  it("shows signup/login CTAs (not /home) for a logged-out visitor", async () => {
+  it("shows signup/login CTAs (not /home) for a logged-out visitor, without redirecting", async () => {
     vi.mocked(createSupabaseServerClient).mockResolvedValue(
       buildSupabaseMock(null) as unknown as Awaited<
         ReturnType<typeof createSupabaseServerClient>
@@ -97,6 +105,7 @@ describe("GET /[locale] (Home)", () => {
     const element = await Home({ params: Promise.resolve({ locale: "fr" }) });
     const hrefs = collectHrefs(element);
 
+    expect(redirect).not.toHaveBeenCalled();
     expect(hrefs).toContain("/signup");
     expect(hrefs).toContain("/login");
     expect(hrefs).not.toContain("/home");

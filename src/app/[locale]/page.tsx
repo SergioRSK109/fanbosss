@@ -1,5 +1,5 @@
 import { getTranslations } from "next-intl/server";
-import { Link } from "@/i18n/navigation";
+import { Link, redirect } from "@/i18n/navigation";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { Logo } from "@/components/Logo";
 import { buttonClass } from "@/components/ui/button-styles";
@@ -24,22 +24,15 @@ const PAYMENT_METHOD_LOGOS: PaymentMethodLogo[] = [
 ];
 
 // Landing-page redesign: shown to any visitor, no fan/créateur choice
-// upfront -- this app has no such role split at all (see CLAUDE.md). Shows
-// a different CTA for an already-authenticated visitor (product bug fix:
-// this page used to show "Créer un compte"/"Se connecter" unconditionally,
-// which is what made clicking the logo while logged in look like a logout
-// -- see CLAUDE.md "Logo-click 'logout' bug" for the real trace behind
-// this). The authenticated branch keeps its prior logic/content
-// unchanged -- the redesign below (header, hero, payment-trust block)
-// applies only to the logged-out branch, per explicit instruction. This is
-// why the authenticated branch reads its own `returningTitle`/
-// `returningTagline` keys rather than `title`/`tagline`: those two now
-// hold the redesign's new marketing copy for the logged-out hero, and a
-// returning, already-logged-in visitor must still see the old "FanBoss" +
-// old tagline (never the new "Ici, c'est toi le Boss" accroche) --
-// reusing the same keys here was a real bug caught after the fact, not a
-// deliberate merge of the two.
-
+// upfront -- this app has no such role split at all (see CLAUDE.md). An
+// already-authenticated visitor is redirected straight to /home instead of
+// seeing any intermediate screen -- same "no interstitial for a session
+// that already exists" pattern login/page.tsx and signup/page.tsx already
+// use for the exact same reason (product bug fix: this page used to show
+// "Créer un compte"/"Se connecter" unconditionally, which is what made
+// clicking the logo while logged in look like a logout -- see CLAUDE.md
+// "Logo-click 'logout' bug" for the real trace behind this). Everything
+// below only ever renders for a logged-out visitor.
 export default async function Home({
   params,
 }: {
@@ -53,30 +46,8 @@ export default async function Home({
   } = await supabase.auth.getUser();
 
   if (user) {
-    return (
-      <main className="relative flex flex-1 flex-col items-center justify-center gap-10 overflow-hidden px-6 py-12 text-center">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -top-24 -left-16 h-64 w-64 rounded-full bg-brand-400/30 blur-3xl"
-        />
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -bottom-20 -right-12 h-64 w-64 rounded-full bg-accent-400/30 blur-3xl"
-        />
-        <div className="relative flex flex-col items-center gap-4">
-          <span className="text-5xl">🚀</span>
-          <h1 className="bg-gradient-to-br from-brand-500 to-accent-500 bg-clip-text text-4xl font-extrabold text-transparent">
-            {t("returningTitle")}
-          </h1>
-          <p className="max-w-xs text-foreground-muted">{t("returningTagline")}</p>
-        </div>
-        <div className="relative flex w-full max-w-xs flex-col gap-3">
-          <Link href="/home" className={buttonClass("primary", "lg")}>
-            {t("dashboard")}
-          </Link>
-        </div>
-      </main>
-    );
+    redirect({ href: "/home", locale });
+    return;
   }
 
   // "Boss" is colored separately from the rest of the accroche (same
