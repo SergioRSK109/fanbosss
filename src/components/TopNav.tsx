@@ -41,7 +41,19 @@ import { Logo } from "@/components/Logo";
 // any other site chrome) visible at all. Same fix shape: a regex test
 // alongside the fixed-route list, since "/concours/<uuid>/ecran" can
 // never be a literal array entry either.
-const TOP_NAV_HIDDEN_ROUTES = ["/home", "/offres", "/finance", "/explorer", "/parametres", "/classement"];
+//
+// "/" joined this list in the landing-page redesign lot: the very first
+// screen a logged-out visitor sees (and the one re-shown on every PWA/TWA
+// launch until they log in) now builds its own dedicated header inline
+// (logo, a discreet "Se connecter" link, the language switcher -- see
+// that page's own comment) rather than sharing this one, the same
+// "route needs its own header, not this shared bar" reasoning as every
+// other entry here. Unconditional on auth state, same as every other
+// entry -- an already-authenticated visitor who lands on "/" (e.g.
+// clicking the logo) also gets no TopNav here, matching that page's own
+// "no functional change on the authenticated branch" scope (it never had
+// a bespoke header of its own either way).
+const TOP_NAV_HIDDEN_ROUTES = ["/", "/home", "/offres", "/finance", "/explorer", "/parametres", "/classement"];
 const ECRAN_ROUTE_PATTERN = /^\/concours\/[^/]+\/ecran$/;
 
 // This needed a client component (usePathname, same locale-stripped
