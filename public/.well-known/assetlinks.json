@@ -1,0 +1,8 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "app.vercel.fanbosss.twa",
+    "sha256_cert_fingerprints": ["23:3B:D4:C3:40:C9:D9:17:A2:E3:6D:02:F7:C5:76:54:2F:82:98:46:F9:31:37:5A:E8:41:79:5D:CC:E4:05:92"]
+  }
+}]
