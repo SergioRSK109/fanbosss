@@ -9801,8 +9801,16 @@ exactly as it already did to "Fan", with zero extra code needed for that.
 separate, pre-rendered raster files never generated from this SVG at
 build time — confirmed by grep (nothing in `src/app` derives them from
 `fanboss-logo.svg`) — so they're unaffected by this change and out of
-this task's own explicit file scope; regenerating them from the new mark
-would need real rasterization tooling this environment doesn't have.
+this task's own explicit file scope. **Revised by a later lot (see "PWA
+icons: real crown mark, plus maskable variants" below) — the claim that
+regenerating them "would need real rasterization tooling this
+environment doesn't have" turned out to be wrong**: a headless Chromium
+screenshot of an SVG at an exact pixel viewport is a legitimate,
+sufficient rasterizer for a flat vector mark like this one, and this
+sandbox already has Chromium pre-installed for Playwright — nothing
+exotic was actually missing, the claim was just never tested before
+being written down. `icon-192.png`/`icon-512.png` stayed as plain
+violet squares for that reason, uncorrected, until that later lot.
 
 **Follow-up fix: stroke width + crop, both regressions from the original
 integration.** Re-verified with the same throwaway mock-Supabase/
@@ -9827,6 +9835,98 @@ size (125.7×32.0 via `TopNav`, 110.0×28.0 via `/home`'s own header) —
 confirming the crop/stroke fix changed nothing about where or how large
 the logo's own outer slot renders, only how much of that slot the ink
 inside it actually fills.
+
+### PWA icons: real crown mark, plus maskable variants (no migration)
+
+`icon-192.png`/`icon-512.png` had been plain solid-violet squares ever
+since the gear/crown logo redesign above — flagged in that section's own
+text as "out of scope, would need real rasterization tooling this
+environment doesn't have," a claim never actually tested. It was wrong:
+this sandbox already has Chromium pre-installed (the same one Playwright
+uses throughout this file for visual verification), and a headless
+screenshot of an SVG rendered at an exact pixel viewport is a perfectly
+sufficient rasterizer for a flat two-color vector mark like this one —
+no Inkscape/`rsvg-convert`/ImageMagick needed. Confirmed by actually
+doing it, not re-asserting the earlier claim a second time.
+
+**Generation method**: a throwaway Node script (`gen_pwa_icons.js`, not
+committed — same "generation tool, not shipped" discipline already
+established for `countries.ts`'s own data generation) builds a small SVG
+per target — a `<rect>` background plus the crown's exact same 3 `<path
+d="...">` strings copied verbatim from `fanboss-logo.svg`'s own nested
+`<svg viewBox="7.8 16.65 32.1 23.85">` (never re-derived, never
+re-traced — copy-pasted from the one source of truth) — writes it to a
+temp HTML file, and screenshots a Chromium page sized to the exact
+target pixel dimensions (`192×192`/`512×512`), clipped to that exact
+box. This is the same "render real markup in a real browser, then
+screenshot it" technique this file already uses for every other visual
+verification, just pointed at a rasterization job instead of a
+correctness check.
+
+**A real bug in the generation script itself, caught by actually looking
+at the first output, not assumed correct from the code**: the target
+list's objects used a `size` key, but the SVG-builder function
+destructured `canvasSize` — the mismatch left `canvasSize` `undefined`
+for every real icon (only the debug safe-zone-overlay preview call
+happened to pass `canvasSize` explicitly via a spread, so it alone
+looked right). The first render came out as a white canvas — no
+background fill at all — with the crown recognizable only in a small
+untransformed corner instead of centered and scaled. Fixed by explicitly
+mapping `size` → `canvasSize` at the call site; re-verified afterward
+that all 4 outputs actually filled their declared canvas.
+
+**Colors, per explicit instruction, distinct from the interactive nav
+logo's own brand-purple stroke**: background `#171225` (this app's own
+existing `--background`/PWA `background_color`, already used in
+`manifest.json`), crown stroke `#d8c9f7` (a lighter lilac than the
+`#7c3aed` brand purple `Logo.tsx`/`fanboss-logo.svg` use elsewhere) — a
+deliberate, given choice for a home-screen icon: a small icon sitting on
+a device's own wallpaper needs more stroke-to-background contrast than
+an interactive UI element sitting on this app's own light/white
+surfaces, and a straight `#7c3aed`-on-`#171225` combination reads
+noticeably dimmer at true icon size than the lighter lilac does.
+
+**Two variants per size, matching the two `purpose` values a PWA
+manifest icon can declare**:
+- **`icon-192.png`/`icon-512.png`** (`purpose: "any"`) — the crown sized
+  to ~62% of the canvas width, a normal centered-icon composition with
+  no mask-safe-zone constraint, since a plain "any" icon is shown
+  as-is (browser tabs, desktop install prompts, and any platform that
+  doesn't apply its own adaptive-icon mask).
+- **`icon-maskable-192.png`/`icon-maskable-512.png`** (`purpose:
+  "maskable"`, new) — background still fills the canvas edge-to-edge
+  (required for a maskable icon; the OS is free to crop anything outside
+  whatever mask shape it applies, so the background must extend past
+  every possible mask), but the crown itself is sized down to ~42% of
+  the canvas width — small enough that its bounding-box **diagonal**
+  (the true worst-case distance from center for a non-circular shape)
+  fits inside a circle at 66% of the canvas diameter, comfortably inside
+  the W3C-recommended 80%-diameter safe zone, not just barely meeting
+  it. Verified two ways, not just computed: (1) a debug overlay drawing
+  the safe-zone circle directly on top of the crown at a larger preview
+  size, confirming real, visible margin on every side; (2) an actual
+  simulated worst-case circular mask (`border-radius: 50%` clipping a
+  real `<img>` of the generated PNG in a real browser, the harshest
+  common Android launcher shape) — the crown stays fully intact and
+  centered, nothing clipped.
+
+**`manifest.json`** gained the two new maskable entries and an explicit
+`"purpose": "any"` on the two existing ones (previously implicit/absent,
+which the PWA spec treats as equivalent to `"any"` but which this change
+makes explicit rather than relying on that default going forward, per
+instruction). `fanboss-logo.svg` itself was not touched — confirmed via
+`git diff` before finishing, matching the explicit instruction to leave
+it alone; only the 4 PNGs and the manifest changed.
+
+Verified end-to-end: all 4 PNGs confirmed at their exact declared pixel
+dimensions with no alpha channel (RGB, not RGBA — deliberate for a
+maskable icon, and just as correct for the plain ones, matching this
+project's "flat, solid vectors" convention elsewhere), corner pixel
+sampled directly and confirmed exactly `rgb(23, 18, 37)` (`#171225`);
+`manifest.json` re-validated as parseable JSON after editing; and a real
+`next dev` server confirmed both `/manifest.json` and all 4 icon files
+serve with `200`/`image/png` at their real byte sizes, not just present
+on disk.
 
 ## Logo-click "logout" bug — investigated and fixed
 
