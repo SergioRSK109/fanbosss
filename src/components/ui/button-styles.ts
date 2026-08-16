@@ -4,7 +4,7 @@
 // type -- a builder function lets both use the exact same visual styling
 // without wrapping Link in a polymorphic component.
 type Variant = "primary" | "secondary" | "outline" | "ghost" | "danger" | "success";
-type Size = "sm" | "md" | "lg";
+type Size = "sm" | "md" | "lg" | "xl";
 
 const base =
   "inline-flex items-center justify-center gap-2 font-semibold rounded-full transition-transform active:scale-95 disabled:opacity-50 disabled:pointer-events-none";
@@ -25,6 +25,12 @@ const sizes: Record<Size, string> = {
   sm: "text-sm px-4 py-2",
   md: "text-[0.95rem] px-5 py-3",
   lg: "text-lg px-7 py-4",
+  // Home's redesigned signup CTA (the page's own single strongest visual
+  // anchor, per that page's own comment) needed more vertical padding than
+  // "lg" -- added as a real size rather than stacking a second `py-*`
+  // utility class alongside buttonClass's own output, which would leave
+  // the winner dependent on Tailwind's build-order rather than JSX intent.
+  xl: "text-lg px-8 py-5",
 };
 
 export function buttonClass(variant: Variant = "primary", size: Size = "md", className = "") {

@@ -114,6 +114,30 @@ export function MenuIcon({ className }: { className?: string }) {
   );
 }
 
+// Home's redesigned landing screen: the payment-trust line above the
+// signup CTA ("Paiement sécurisé via"). Checked, this project has no icon
+// library at all (lucide-react confirmed absent), so this is hand-made,
+// same discipline as every other icon in this file -- outline shield +
+// checkmark, both plain strokes, no fill, no active/inactive state (it's
+// purely a trust marker, not a toggle).
+export function ShieldCheckIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M12 3.2 5 6v5.4c0 4.6 3 8.4 7 9.6 4-1.2 7-5 7-9.6V6Z" />
+      <path d="M8.7 12.3l2.4 2.4 4.4-4.8" />
+    </svg>
+  );
+}
+
 // Migration 0043: the Explorer grid's view-count overlay. Classic
 // almond-eye outline + a solid pupil -- purely informational (a raw
 // public metric, not a per-viewer toggle), so unlike Heart/Repost/Share
