@@ -42,3 +42,43 @@ export function mediaExtensionForContentType(contentType: string | null | undefi
   }
   return MEDIA_EXTENSIONS_BY_CONTENT_TYPE[contentType] ?? "";
 }
+
+export type MediaKind = "video" | "audio" | "image";
+
+// Fan gallery (Phase 2/4): derived from MEDIA_EXTENSIONS_BY_CONTENT_TYPE
+// above -- never a second, hand-maintained extension->kind table that
+// could silently drift from the one Phase 1's upload route actually
+// writes. A content type's own "image/"/"audio/"/"video/" prefix is
+// what decides the kind; every entry in the table above has exactly one
+// of those three prefixes, so this reversal is total and unambiguous.
+const MEDIA_KIND_BY_EXTENSION: Record<string, MediaKind> = Object.fromEntries(
+  Object.entries(MEDIA_EXTENSIONS_BY_CONTENT_TYPE).map(([contentType, extension]) => {
+    const kind: MediaKind = contentType.startsWith("image/")
+      ? "image"
+      : contentType.startsWith("audio/")
+        ? "audio"
+        : "video";
+    return [extension, kind];
+  }),
+);
+
+// The inverse of mediaExtensionForContentType(): given an r2_key
+// produced by that same upload route, returns the media category its
+// own extension implies, or null when the key has no recognized media
+// extension at all (no extension, or an unrecognized one -- the
+// PDF/ZIP/etc. contenu_debloque case Phase 1 already leaves untouched).
+// Only inspects the filename's own last path segment, so a folder
+// segment that happens to contain a "." (none do today, but this stays
+// correct regardless) can never be mistaken for the extension.
+export function mediaKindForR2Key(r2Key: string | null | undefined): MediaKind | null {
+  if (!r2Key) {
+    return null;
+  }
+  const filename = r2Key.slice(r2Key.lastIndexOf("/") + 1);
+  const dotIndex = filename.lastIndexOf(".");
+  if (dotIndex === -1) {
+    return null;
+  }
+  const extension = filename.slice(dotIndex).toLowerCase();
+  return MEDIA_KIND_BY_EXTENSION[extension] ?? null;
+}
