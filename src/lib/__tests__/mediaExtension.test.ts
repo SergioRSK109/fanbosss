@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mediaExtensionForContentType } from "@/lib/mediaExtension";
+import { mediaExtensionForContentType, mediaKindForR2Key } from "@/lib/mediaExtension";
 
 describe("mediaExtensionForContentType", () => {
   it("maps every recognized image content type", () => {
@@ -37,5 +37,64 @@ describe("mediaExtensionForContentType", () => {
   it("is case-sensitive and unknown-subtype-safe -- an unrecognized variant falls back, never a guess", () => {
     expect(mediaExtensionForContentType("Image/JPEG")).toBe("");
     expect(mediaExtensionForContentType("image/svg+xml")).toBe("");
+  });
+});
+
+describe("mediaKindForR2Key", () => {
+  it("resolves every recognized image extension to \"image\"", () => {
+    expect(mediaKindForR2Key("offres/offre-1/uuid.jpg")).toBe("image");
+    expect(mediaKindForR2Key("offres/offre-1/uuid.png")).toBe("image");
+    expect(mediaKindForR2Key("offres/offre-1/uuid.webp")).toBe("image");
+    expect(mediaKindForR2Key("offres/offre-1/uuid.gif")).toBe("image");
+  });
+
+  it("resolves every recognized audio extension to \"audio\"", () => {
+    expect(mediaKindForR2Key("offres/offre-1/uuid.mp3")).toBe("audio");
+    expect(mediaKindForR2Key("offres/offre-1/uuid.m4a")).toBe("audio");
+    expect(mediaKindForR2Key("offres/offre-1/uuid.wav")).toBe("audio");
+    expect(mediaKindForR2Key("offres/offre-1/uuid.ogg")).toBe("audio");
+  });
+
+  it("resolves every recognized video extension to \"video\"", () => {
+    expect(mediaKindForR2Key("offres/offre-1/uuid.mp4")).toBe("video");
+    expect(mediaKindForR2Key("offres/offre-1/uuid.mov")).toBe("video");
+    expect(mediaKindForR2Key("offres/offre-1/uuid.webm")).toBe("video");
+  });
+
+  it("returns null for a key with no extension at all (a PDF/ZIP contenu_debloque sale, per Phase 1)", () => {
+    expect(mediaKindForR2Key("offres/offre-1/6f2b1c8e-uuid-without-extension")).toBeNull();
+  });
+
+  it("returns null for an unrecognized extension", () => {
+    expect(mediaKindForR2Key("offres/offre-1/uuid.pdf")).toBeNull();
+    expect(mediaKindForR2Key("offres/offre-1/uuid.zip")).toBeNull();
+  });
+
+  it("returns null for a missing/empty key", () => {
+    expect(mediaKindForR2Key(undefined)).toBeNull();
+    expect(mediaKindForR2Key(null)).toBeNull();
+    expect(mediaKindForR2Key("")).toBeNull();
+  });
+
+  it("is a straightforward round-trip with mediaExtensionForContentType for every recognized content type", () => {
+    const roundTripCases: Array<[string, "image" | "audio" | "video"]> = [
+      ["image/jpeg", "image"],
+      ["audio/mpeg", "audio"],
+      ["video/mp4", "video"],
+    ];
+    for (const [contentType, expectedKind] of roundTripCases) {
+      const extension = mediaExtensionForContentType(contentType);
+      expect(mediaKindForR2Key(`offres/offre-1/uuid${extension}`)).toBe(expectedKind);
+    }
+  });
+
+  it("only inspects the last path segment's extension, not an unrelated dot elsewhere in the key", () => {
+    // Real r2_keys never contain a "." in the offre-id/uuid segments, but
+    // this stays correct even if a future segment ever did.
+    expect(mediaKindForR2Key("offres/offre.v2/uuid-without-extension")).toBeNull();
+  });
+
+  it("is case-insensitive on the extension itself", () => {
+    expect(mediaKindForR2Key("offres/offre-1/uuid.JPG")).toBe("image");
   });
 });
