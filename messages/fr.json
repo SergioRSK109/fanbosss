@@ -778,5 +778,19 @@
     "noHistoriqueRecu": "Aucun paiement reçu.",
     "historiqueEnvoyeHeading": "Paiements envoyés à d'autres créateurs",
     "noHistoriqueEnvoye": "Aucun paiement envoyé."
+  },
+  "Galerie": {
+    "heading": "Ma galerie",
+    "subheading": "Les vidéos, audios et photos que tu as reçus de tes créateurs.",
+    "filterAllLabel": "Tous",
+    "createurAnonyme": "Créateur FanBoss",
+    "empty": "Ta galerie est vide pour l'instant.",
+    "emptyDetail": "Les vidéos personnalisées et les contenus débloqués que tu recevras de tes créateurs apparaîtront ici.",
+    "videoTileAriaLabel": "Ouvrir la vidéo reçue de {createur}",
+    "audioTileAriaLabel": "Ouvrir l'audio reçu de {createur}",
+    "imageTileAriaLabel": "Ouvrir la photo reçue de {createur}",
+    "loading": "Chargement...",
+    "loadError": "Impossible de charger ce contenu.",
+    "expiresOn": "Accès jusqu'au {date}"
   }
 }

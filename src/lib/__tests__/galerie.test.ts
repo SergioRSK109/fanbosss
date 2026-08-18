@@ -4,11 +4,15 @@ vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServerClient: vi.fn(),
   createSupabaseServiceRoleClient: vi.fn(),
 }));
+vi.mock("@/lib/r2", () => ({
+  getSignedDownloadUrl: vi.fn(async (key: string) => `https://signed.example/${key}`),
+}));
 
 import {
   createSupabaseServerClient,
   createSupabaseServiceRoleClient,
 } from "@/lib/supabase/server";
+import { getSignedDownloadUrl } from "@/lib/r2";
 import { computeGalerieItems, getGalerieFan, type GalerieCandidate } from "@/lib/galerie";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -33,6 +37,8 @@ describe("computeGalerieItems", () => {
         mediaType: "video",
         deliveredAt: "2026-01-01T00:00:00.000Z",
         expiresAt: null,
+        deliveryRoute: "video-url",
+        imageUrl: null,
       },
     ]);
   });
@@ -56,10 +62,16 @@ describe("computeGalerieItems", () => {
         mediaType: "video",
         deliveredAt: "2026-01-01T00:00:00.000Z",
         expiresAt: null,
+        deliveryRoute: "video-url",
+        imageUrl: null,
       },
     ]);
   });
 
+  // imageUrl is always null straight out of computeGalerieItems (a pure
+  // function can't sign an R2 URL) -- getGalerieFan is what fills it in
+  // afterward, for mediaType "image" items only, see that function's
+  // own describe block below.
   it("includes a non-expired contenu_debloque with a recognized media file, with a real expiresAt", () => {
     const now = new Date("2026-01-15T00:00:00.000Z");
     const candidates: GalerieCandidate[] = [
@@ -81,8 +93,47 @@ describe("computeGalerieItems", () => {
         mediaType: "image",
         deliveredAt: "2026-01-01T00:00:00.000Z",
         expiresAt: "2026-01-31T00:00:00.000Z",
+        deliveryRoute: "content-url",
+        imageUrl: null,
       },
     ]);
+  });
+
+  it("assigns deliveryRoute per branch: video-url for video/shoutout, content-url for contenu_debloque (Phase 3)", () => {
+    const candidates: GalerieCandidate[] = [
+      {
+        transactionId: "tx-video",
+        createurId: "createur-1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        offreType: "video",
+        r2Key: null,
+        dureeAccesJours: null,
+      },
+      {
+        transactionId: "tx-shoutout",
+        createurId: "createur-1",
+        createdAt: "2026-01-02T00:00:00.000Z",
+        offreType: "shoutout",
+        r2Key: null,
+        dureeAccesJours: null,
+      },
+      {
+        transactionId: "tx-contenu",
+        createurId: "createur-1",
+        createdAt: "2026-01-03T00:00:00.000Z",
+        offreType: "contenu_debloque",
+        r2Key: "offres/offre-1/uuid.mp3",
+        dureeAccesJours: null,
+      },
+    ];
+
+    const now = new Date("2026-01-05T00:00:00.000Z");
+    const byId = new Map(
+      computeGalerieItems(candidates, now).map((item) => [item.transactionId, item.deliveryRoute]),
+    );
+    expect(byId.get("tx-video")).toBe("video-url");
+    expect(byId.get("tx-shoutout")).toBe("video-url");
+    expect(byId.get("tx-contenu")).toBe("content-url");
   });
 
   it("excludes an expired contenu_debloque (default 30-day window)", () => {
@@ -373,5 +424,48 @@ describe("getGalerieFan", () => {
     const result = await getGalerieFan("fan-1");
 
     expect(result).toEqual([]);
+  });
+
+  it("resolves imageUrl for mediaType image items only, reusing the r2Key already fetched -- never for video/audio", async () => {
+    const { client: authClient } = buildAuthenticatedClient([
+      {
+        id: "tx-image",
+        createur_id: "createur-1",
+        offre_id: "offre-image",
+        // A real, current date -- so this test's outcome can never depend
+        // on when it happens to run (contenu_debloque's own expiry
+        // window is not what this test is about; see contenuDebloque.test.ts).
+        created_at: new Date().toISOString(),
+      },
+      {
+        id: "tx-video",
+        createur_id: "createur-1",
+        offre_id: "offre-video",
+        created_at: "2026-01-02T00:00:00.000Z",
+      },
+    ]);
+    const { client: serviceClient } = buildServiceClient([
+      { id: "offre-image", type: "contenu_debloque", config: { r2_key: "offres/offre-image/uuid.jpg" } },
+      { id: "offre-video", type: "video", config: {} },
+    ]);
+    vi.mocked(createSupabaseServerClient).mockResolvedValue(
+      authClient as unknown as Awaited<ReturnType<typeof createSupabaseServerClient>>,
+    );
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(
+      serviceClient as unknown as ReturnType<typeof createSupabaseServiceRoleClient>,
+    );
+
+    const result = await getGalerieFan("fan-1");
+
+    const image = result.find((item) => item.transactionId === "tx-image");
+    const video = result.find((item) => item.transactionId === "tx-video");
+    expect(image?.mediaType).toBe("image");
+    expect(image?.imageUrl).toBe("https://signed.example/offres/offre-image/uuid.jpg");
+    expect(video?.mediaType).toBe("video");
+    expect(video?.imageUrl).toBeNull();
+    // Only the one image item's r2Key was ever signed -- not called once
+    // per item in the gallery, and never for the video item at all.
+    expect(getSignedDownloadUrl).toHaveBeenCalledTimes(1);
+    expect(getSignedDownloadUrl).toHaveBeenCalledWith("offres/offre-image/uuid.jpg");
   });
 });
