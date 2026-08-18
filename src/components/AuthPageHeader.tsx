@@ -35,7 +35,7 @@ export async function AuthPageHeader({
           {linkText}
         </Link>
         <span aria-hidden className="h-4 w-px bg-border" />
-        <LanguageSwitcher />
+        <LanguageSwitcher compact />
       </div>
     </header>
   );

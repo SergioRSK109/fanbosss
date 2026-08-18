@@ -23,19 +23,16 @@ export default async function SignupPage({
     return;
   }
 
-  const t = await getTranslations({ locale, namespace: "Signup" });
   const tHome = await getTranslations({ locale, namespace: "Home" });
 
   return (
-    <>
-      <AuthPageHeader
-        locale={locale}
-        linkHref="/login"
-        linkText={`${t("alreadyHaveAccount")} ${tHome("login")}`}
-      />
-      <Suspense>
-        <SignupForm />
-      </Suspense>
-    </>
+    <div className="flex min-h-dvh flex-col">
+      <AuthPageHeader locale={locale} linkHref="/login" linkText={tHome("login")} />
+      <div className="flex flex-1 items-center justify-center">
+        <Suspense>
+          <SignupForm />
+        </Suspense>
+      </div>
+    </div>
   );
 }

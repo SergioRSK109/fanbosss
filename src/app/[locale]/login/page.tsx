@@ -30,19 +30,16 @@ export default async function LoginPage({
     return;
   }
 
-  const t = await getTranslations({ locale, namespace: "Login" });
   const tHome = await getTranslations({ locale, namespace: "Home" });
 
   return (
-    <>
-      <AuthPageHeader
-        locale={locale}
-        linkHref="/signup"
-        linkText={`${t("noAccount")} ${tHome("signup")}`}
-      />
-      <Suspense>
-        <LoginForm />
-      </Suspense>
-    </>
+    <div className="flex min-h-dvh flex-col">
+      <AuthPageHeader locale={locale} linkHref="/signup" linkText={tHome("signup")} />
+      <div className="flex flex-1 items-center justify-center">
+        <Suspense>
+          <LoginForm />
+        </Suspense>
+      </div>
+    </div>
   );
 }

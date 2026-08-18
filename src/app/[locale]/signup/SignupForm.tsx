@@ -124,7 +124,7 @@ export function SignupForm() {
 
   if (status === "sent") {
     return (
-      <main className="mx-auto flex min-h-[70dvh] max-w-sm flex-col justify-center px-5 py-10 text-center">
+      <main className="mx-auto max-w-sm px-5 py-10 text-center">
         <div className="card flex flex-col items-center gap-3 p-6">
           <span className="text-4xl">📬</span>
           <p className="text-foreground">{t("confirmationSent")}</p>
@@ -134,7 +134,7 @@ export function SignupForm() {
   }
 
   return (
-    <main className="mx-auto flex max-w-sm flex-col justify-center px-5 py-10">
+    <main className="mx-auto max-w-sm px-5 py-10">
       <div className="card flex flex-col gap-6 p-6 shadow-sm">
         <div className="flex flex-col items-center gap-2 text-center">
           <span className="text-4xl">✨</span>
