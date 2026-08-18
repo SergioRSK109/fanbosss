@@ -7,11 +7,20 @@
 // and a fetch function doing the actual I/O.
 import { computeDateExpirationAcces, isAccesExpire } from "@/lib/contenuDebloque";
 import { mediaKindForR2Key, type MediaKind } from "@/lib/mediaExtension";
+import { getSignedDownloadUrl } from "@/lib/r2";
 import type { OffreType } from "@/lib/validation";
 import {
   createSupabaseServerClient,
   createSupabaseServiceRoleClient,
 } from "@/lib/supabase/server";
+
+// Which existing signed-URL route to call for this item at open time
+// (Phase 3): video/shoutout deliver through GET
+// /api/transactions/[id]/video-url, contenu_debloque through GET
+// /api/transactions/[id]/content-url -- two separate, already-existing
+// routes with their own ownership/expiry checks, never resolved ahead
+// of time for the whole gallery (see GalerieItem's own comment below).
+export type GalerieDeliveryRoute = "video-url" | "content-url";
 
 export interface GalerieItem {
   transactionId: string;
@@ -19,6 +28,18 @@ export interface GalerieItem {
   mediaType: MediaKind;
   deliveredAt: string; // transaction.created_at, ISO
   expiresAt: string | null; // null for video/shoutout, a real date for contenu_debloque
+  deliveryRoute: GalerieDeliveryRoute;
+  // Phase 3: a pre-resolved signed URL for mediaType "image" ONLY, always
+  // null otherwise. Photos are light enough to resolve once, up front,
+  // for the whole gallery -- unlike video/audio, which never get a
+  // signed URL here at all (see deliveryRoute's own comment); those are
+  // only ever requested on demand, at open time. Set by computeGalerieItems
+  // as a placeholder null (a pure function can't do the actual signing
+  // I/O) and filled in by getGalerieFan below -- never a raw r2_key,
+  // still just a short-lived signed URL, same class of value the
+  // video-url/content-url routes already hand the client for every
+  // other media type.
+  imageUrl: string | null;
 }
 
 // One row per `livree` transaction under consideration, already carrying
@@ -55,6 +76,8 @@ export function computeGalerieItems(
         mediaType: "video",
         deliveredAt: candidate.createdAt,
         expiresAt: null,
+        deliveryRoute: "video-url",
+        imageUrl: null,
       });
       continue;
     }
@@ -78,6 +101,8 @@ export function computeGalerieItems(
           candidate.createdAt,
           candidate.dureeAccesJours,
         ).toISOString(),
+        deliveryRoute: "content-url",
+        imageUrl: null,
       });
     }
 
@@ -173,5 +198,30 @@ export async function getGalerieFan(
     };
   });
 
-  return computeGalerieItems(candidates);
+  const items = computeGalerieItems(candidates);
+
+  // Phase 3: resolve every mediaType "image" item's signed thumbnail URL
+  // here, once, for the whole gallery -- reusing r2Key already fetched
+  // above (no second Supabase round-trip), and only for the items that
+  // actually survived computeGalerieItems' own scope/expiry filtering.
+  // video/audio items are left with imageUrl: null on purpose -- their
+  // signed URL is only ever requested on demand, at open time, via
+  // deliveryRoute.
+  const r2KeyByTransactionId = new Map(
+    candidates.map((candidate) => [candidate.transactionId, candidate.r2Key]),
+  );
+  await Promise.all(
+    items.map(async (item) => {
+      if (item.mediaType !== "image") {
+        return;
+      }
+      const r2Key = r2KeyByTransactionId.get(item.transactionId);
+      if (!r2Key) {
+        return;
+      }
+      item.imageUrl = await getSignedDownloadUrl(r2Key);
+    }),
+  );
+
+  return items;
 }

@@ -10599,6 +10599,20 @@ begin
   raise notice 'PASS: anon/authenticated both still hold SELECT on concours_publics after the createur_verifie column was added';
 end $$;
 
+-- ---------------------------------------------------------------------
+-- Reserved pseudo: 'galerie' (route /galerie, migration 0057) -- same
+-- pattern as 'classement'/'offres'/'home'/'concours' above.
+-- ---------------------------------------------------------------------
+do $$
+begin
+  begin
+    update users set pseudo = 'Galerie' where id = 'faceb001-0003-0003-0003-000000000003';
+    raise exception 'TEST FAILED: the "galerie" route name was accepted as a pseudo';
+  exception when check_violation then
+    raise notice 'PASS: "galerie" is rejected as a pseudo (reserved-word list kept in sync with the route)';
+  end;
+end $$;
+
 do $$
 begin
   raise notice 'ALL SQL CHECKLIST TESTS PASSED';

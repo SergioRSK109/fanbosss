@@ -160,6 +160,44 @@ export function EyeIcon({ className }: { className?: string }) {
   );
 }
 
+// Fan gallery (Phase 3): the generic thumbnail icon for a video/shoutout
+// tile, per the brief's own "juste une icône générique (lecture)" --
+// there's no video-thumbnail generation anywhere in this project (server-
+// side video processing is out of scope, see CLAUDE.md's own note on
+// this), so every video tile shows this same play glyph on a neutral
+// background instead. A single filled triangle -- no active/inactive
+// state, it's not a toggle.
+export function PlayIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden>
+      <path d="M8 5.3v13.4c0 .8.9 1.3 1.6.9l10.6-6.7c.7-.4.7-1.4 0-1.8L9.6 4.4c-.7-.4-1.6.1-1.6.9Z" fill="currentColor" />
+    </svg>
+  );
+}
+
+// Fan gallery (Phase 3): the generic thumbnail icon for a contenu_debloque
+// audio tile -- same reasoning as PlayIcon above, one glyph per media
+// kind that has no real thumbnail to show. A plain two-note beamed
+// pair, matching EyeIcon's own mixed stroke-plus-filled-circle style.
+export function MusicNoteIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M9 17V5.5l9-2v11" />
+      <circle cx="7" cy="17" r="2.2" fill="currentColor" stroke="none" />
+      <circle cx="16" cy="14.5" r="2.2" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 // Show/hide-password toggle (PasswordInput.tsx). Same eye silhouette as
 // EyeIcon above, plus a diagonal slash -- the standard "eye-off" pairing
 // -- and a broken pupil arc instead of a solid circle so the slash reads
