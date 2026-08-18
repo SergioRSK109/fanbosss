@@ -1,7 +1,9 @@
 {
   "LanguageSwitcher": {
     "fr": "Français",
-    "en": "English"
+    "en": "English",
+    "frShort": "FR",
+    "enShort": "EN"
   },
   "Nav": {
     "explorer": "Explorer",
@@ -127,8 +129,7 @@
     "ageRestriction": "Tu dois avoir au moins 18 ans pour t'inscrire.",
     "submit": "Créer mon compte",
     "submitting": "Création...",
-    "confirmationSent": "Vérifiez votre boîte mail pour confirmer votre inscription.",
-    "alreadyHaveAccount": "Déjà un compte ?"
+    "confirmationSent": "Vérifiez votre boîte mail pour confirmer votre inscription."
   },
   "Login": {
     "heading": "Connexion",
@@ -137,8 +138,7 @@
     "submit": "Se connecter",
     "submitting": "Connexion...",
     "forgotPassword": "Mot de passe oublié ?",
-    "callbackError": "La confirmation de votre compte a échoué : {error}. Merci de vous connecter à nouveau.",
-    "noAccount": "Pas de compte ?"
+    "callbackError": "La confirmation de votre compte a échoué : {error}. Merci de vous connecter à nouveau."
   },
   "MotDePasseOublie": {
     "heading": "Mot de passe oublié",

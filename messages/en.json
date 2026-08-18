@@ -1,7 +1,9 @@
 {
   "LanguageSwitcher": {
     "fr": "Français",
-    "en": "English"
+    "en": "English",
+    "frShort": "FR",
+    "enShort": "EN"
   },
   "Nav": {
     "explorer": "Explore",
@@ -127,8 +129,7 @@
     "ageRestriction": "You must be at least 18 years old to sign up.",
     "submit": "Create my account",
     "submitting": "Creating...",
-    "confirmationSent": "Check your inbox to confirm your signup.",
-    "alreadyHaveAccount": "Already have an account?"
+    "confirmationSent": "Check your inbox to confirm your signup."
   },
   "Login": {
     "heading": "Log in",
@@ -137,8 +138,7 @@
     "submit": "Log in",
     "submitting": "Logging in...",
     "forgotPassword": "Forgot password?",
-    "callbackError": "Account confirmation failed: {error}. Please log in again.",
-    "noAccount": "No account?"
+    "callbackError": "Account confirmation failed: {error}. Please log in again."
   },
   "MotDePasseOublie": {
     "heading": "Forgot password",
