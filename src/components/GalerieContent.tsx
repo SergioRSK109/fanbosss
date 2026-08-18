@@ -45,11 +45,24 @@ function filterChipClass(active: boolean): string {
 // fullscreen open-item overlay, all driven by plain useState here. No
 // pagination/infinite scroll (out of scope for this V1, per the brief --
 // a personal collection, not /explorer's public feed).
-export function GalerieContent({ items }: { items: GalerieItemView[] }) {
+export function GalerieContent({
+  items,
+  initialCreateurId = null,
+}: {
+  items: GalerieItemView[];
+  // Phase 4: pre-selects a filter chip when arriving via
+  // /galerie?createur={id} (a créateur profile's own "voir dans ma
+  // galerie" link) -- only ever the STARTING value, still a plain local
+  // useState afterward, so the filter stays freely changeable exactly
+  // like before this lot. An id with no matching item (stale link, lost
+  // access since) just yields an empty filtered grid -- no crash, no
+  // special-casing needed.
+  initialCreateurId?: string | null;
+}) {
   const t = useTranslations("Galerie");
   const createurAnonymeLabel = t("createurAnonyme");
   // null = "Tous" (the "all" option), never a real créateur id.
-  const [selectedCreateurId, setSelectedCreateurId] = useState<string | null>(null);
+  const [selectedCreateurId, setSelectedCreateurId] = useState<string | null>(initialCreateurId);
   const [openItem, setOpenItem] = useState<GalerieItemView | null>(null);
 
   // Distinct créateurs, in the order they first appear -- items already

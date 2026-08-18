@@ -63,7 +63,21 @@ const SOCIAL_LINK_ICONS = {
   autre: "🔗",
 } as const;
 
-export function CreateurProfileView({ profile }: { profile: CreateurProfileData }) {
+export function CreateurProfileView({
+  profile,
+  hasGalerieItems = false,
+}: {
+  profile: CreateurProfileData;
+  // Fan gallery (Phase 4): whether the currently-viewing fan has already
+  // received something from THIS créateur -- resolved by the page
+  // (getGalerieFan(user.id, { createurId }), Phase 2) and passed down
+  // rather than computed here, same "server decides, component only
+  // renders the decision" shape as viewerCanRepost/viewerId on `profile`
+  // itself. Defaults to false (no link) so every other caller of this
+  // component (createur/[id]/page.tsx, which doesn't check this yet) is
+  // completely unaffected.
+  hasGalerieItems?: boolean;
+}) {
   const t = useTranslations("CreateurProfile");
   const tCommon = useTranslations("Common");
   const locale = useLocale();
@@ -200,6 +214,23 @@ export function CreateurProfileView({ profile }: { profile: CreateurProfileData 
               tone="onDark"
             />
           )}
+        </div>
+      )}
+
+      {/* Fan gallery (Phase 4): only ever true for a logged-in fan who has
+          genuinely received something from this exact créateur -- see
+          [handle]/page.tsx's own getGalerieFan(user.id, { createurId })
+          call. Never rendered for an anonymous visitor, a different fan,
+          or the créateur viewing their own profile (nothing to receive
+          from oneself). */}
+      {hasGalerieItems && (
+        <div className="mt-4 px-5 text-center">
+          <Link
+            href={`/galerie?createur=${createurId}`}
+            className="text-sm font-semibold text-brand-600 hover:underline dark:text-brand-300"
+          >
+            {t("galerie.link")}
+          </Link>
         </div>
       )}
 

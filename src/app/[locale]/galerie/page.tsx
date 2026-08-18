@@ -17,10 +17,19 @@ const PHOTO_SIGNED_URL_EXPIRY_SECONDS = 60 * 60 * 24; // 24h, same as every othe
 
 export default async function GaleriePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ locale: string }>;
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
   const { locale } = await params;
+  const sp = await searchParams;
+  // Phase 4: a créateur's own public profile can deep-link here
+  // (/galerie?createur={id}) once a fan has already received something
+  // from them -- only ever a starting filter value, never a server-side
+  // filter of its own (GalerieContent still fetches/holds the whole
+  // gallery and filters client-side, same as before this lot).
+  const initialCreateurId = typeof sp.createur === "string" ? sp.createur : null;
   const t = await getTranslations({ locale, namespace: "Galerie" });
   const supabase = await createSupabaseServerClient();
   const {
@@ -77,7 +86,7 @@ export default async function GaleriePage({
       <p className="mt-1 text-sm text-foreground-muted">{t("subheading")}</p>
 
       <div className="mt-6">
-        <GalerieContent items={itemViews} />
+        <GalerieContent items={itemViews} initialCreateurId={initialCreateurId} />
       </div>
     </main>
   );

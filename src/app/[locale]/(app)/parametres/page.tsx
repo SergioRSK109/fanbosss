@@ -3,6 +3,7 @@ import { getTranslations } from "next-intl/server";
 import { redirect } from "@/i18n/navigation";
 import { BadgesFideliteCard } from "@/components/BadgesFideliteCard";
 import { ClassementProgresCard } from "@/components/ClassementProgresCard";
+import { GalerieCard } from "@/components/GalerieCard";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { LogoutButton } from "@/components/LogoutButton";
 import { ParametresForm } from "@/components/ParametresForm";
@@ -12,6 +13,7 @@ import { RankBadge } from "@/components/ui/RankBadge";
 import { VerificationForm } from "@/components/VerificationForm";
 import { computePremieresTransactionsParPartenaire } from "@/lib/badgesFidelite";
 import type { ProgresClassement } from "@/lib/classementProgres";
+import { getGalerieFan } from "@/lib/galerie";
 import { resolveDisplayName } from "@/lib/profil";
 import { getSignedDownloadUrl } from "@/lib/r2";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -55,6 +57,7 @@ export default async function ParametresPage({
     { data: progresRows },
     { data: transactionsLivrees },
     { data: parrainageRows },
+    galerieItems,
   ] = await Promise.all([
     supabase
       .from("users")
@@ -105,6 +108,10 @@ export default async function ParametresPage({
     // signup that used this user's referral link -- someone who signed
     // up via the link but never transacted has no row here at all.
     supabase.from("parrainages").select("filleul_id, montant_bonus").eq("parrain_id", user.id),
+    // Fan gallery entry point (Phase 4) -- reuses getGalerieFan() (Phase
+    // 2) verbatim, no créateur filter (this card only needs the total
+    // count across every créateur, not the items themselves).
+    getGalerieFan(user.id),
   ]);
 
   const photoUrl = profil?.photo_r2_key
@@ -251,6 +258,15 @@ export default async function ParametresPage({
           totalGagne={totalGagneParrainage}
         />
       </div>
+
+      {/* Fan gallery entry point (Phase 4) -- same "don't render the card
+          at all when there's nothing to show" convention this page
+          already uses for BadgesFideliteCard below. */}
+      {galerieItems.length > 0 && (
+        <div className="mt-4">
+          <GalerieCard itemCount={galerieItems.length} />
+        </div>
+      )}
 
       {/* Lot 3 merge follow-up: the former /dashboard page's own
           "Performance" content (rank badges, progress-towards-top-10,

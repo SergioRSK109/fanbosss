@@ -4,6 +4,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { buttonClass } from "@/components/ui/button-styles";
+import { formatExpirationDate } from "@/lib/formatDate";
 import type { OffreType } from "@/lib/validation";
 
 const REVEAL_ENDPOINTS: Partial<Record<OffreType, string>> = {
@@ -13,16 +14,6 @@ const REVEAL_ENDPOINTS: Partial<Record<OffreType, string>> = {
   contenu_debloque: "content-url",
   evenement_live: "live-link",
 };
-
-function formatExpirationDate(iso: string, locale: string): string {
-  // Constructing a Date from an already-known ISO string is a pure,
-  // deterministic operation (same input, same output) -- unlike
-  // Date.now()/`new Date()` with no argument, this is fine to call
-  // during render; see the comment on `expirationDateIso` below for why
-  // the actual "is it expired" *comparison* against the current wall
-  // clock is computed server-side instead.
-  return new Date(iso).toLocaleDateString(locale, { day: "numeric", month: "short", year: "numeric" });
-}
 
 export function TransactionActions({
   transactionId,
