@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { CreateurProfileView } from "@/components/CreateurProfileView";
+import { getGalerieFan } from "@/lib/galerie";
 import { getCreateurProfileData } from "@/lib/profil";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { escapeIlike } from "@/lib/validation";
@@ -52,10 +53,27 @@ export default async function HandlePage({
     notFound();
   }
 
-  const profile = await getCreateurProfileData(match.id);
+  // Contextual "voir dans ma galerie" link (Phase 4). This page must stay
+  // entirely reachable by a logged-out visitor exactly as before -- so
+  // auth.getUser() is only ever consulted here, never used to redirect.
+  // Run alongside getCreateurProfileData rather than after it: two
+  // independent reads, no reason to serialize them.
+  const [profile, userResult] = await Promise.all([
+    getCreateurProfileData(match.id),
+    supabase.auth.getUser(),
+  ]);
+  const {
+    data: { user },
+  } = userResult;
+
   if (!profile) {
     notFound();
   }
 
-  return <CreateurProfileView profile={profile} />;
+  // No session at all -> skip the extra getGalerieFan call entirely, per
+  // the brief. Filtered to THIS créateur only (Phase 2's own createurId
+  // option) -- never the visiting fan's whole gallery.
+  const galerieItems = user ? await getGalerieFan(user.id, { createurId: match.id }) : [];
+
+  return <CreateurProfileView profile={profile} hasGalerieItems={galerieItems.length > 0} />;
 }

@@ -241,6 +241,9 @@
       "reserveAvecEstimation": "Temporarily held by another fan -- a unit could free up around {date}.",
       "reserveSansEstimation": "Temporarily held by another fan.",
       "epuise": "Sold out"
+    },
+    "galerie": {
+      "link": "📸 See in my gallery"
     }
   },
   "PaiementProduit": {
@@ -581,6 +584,11 @@
       "copyError": "Couldn't copy the link.",
       "filleulsActifsLabel": "Active referrals",
       "totalGagneLabel": "Total earned"
+    },
+    "galerie": {
+      "heading": "My gallery",
+      "itemCount": "{count, plural, one {# item received} other {# items received}}",
+      "link": "See my gallery"
     }
   },
   "PhotoCropper": {

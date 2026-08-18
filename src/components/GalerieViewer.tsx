@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
+import { formatExpirationDate } from "@/lib/formatDate";
 import type { GalerieItemView } from "@/components/GalerieContent";
 
 type Phase = "loading" | "ready" | "error";
@@ -40,6 +41,7 @@ export function GalerieViewer({
 }) {
   const t = useTranslations("Galerie");
   const tCommon = useTranslations("Common");
+  const locale = useLocale();
 
   // image: already resolved server-side (getGalerieFan), nothing to
   // fetch -- starts (and stays) "ready" immediately.
@@ -118,6 +120,15 @@ export function GalerieViewer({
         )}
         {phase === "ready" && url && item.mediaType === "audio" && (
           <audio controls src={url} className="w-full" />
+        )}
+        {/* Only ever set for contenu_debloque (see GalerieItem's own
+            comment in src/lib/galerie.ts) -- always null for video/
+            shoutout, which never expires, so this never renders for
+            those. */}
+        {phase === "ready" && item.expiresAt && (
+          <p className="mt-2 text-xs text-white/60">
+            {t("expiresOn", { date: formatExpirationDate(item.expiresAt, locale) })}
+          </p>
         )}
       </div>
 

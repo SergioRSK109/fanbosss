@@ -241,6 +241,9 @@
       "reserveAvecEstimation": "Réservé temporairement par un autre fan -- une place pourrait se libérer vers {date}.",
       "reserveSansEstimation": "Réservé temporairement par un autre fan.",
       "epuise": "Épuisé"
+    },
+    "galerie": {
+      "link": "📸 Voir dans ma galerie"
     }
   },
   "PaiementProduit": {
@@ -581,6 +584,11 @@
       "copyError": "Impossible de copier le lien.",
       "filleulsActifsLabel": "Filleuls actifs",
       "totalGagneLabel": "Total gagné"
+    },
+    "galerie": {
+      "heading": "Ma galerie",
+      "itemCount": "{count, plural, one {# élément reçu} other {# éléments reçus}}",
+      "link": "Voir ma galerie"
     }
   },
   "PhotoCropper": {
