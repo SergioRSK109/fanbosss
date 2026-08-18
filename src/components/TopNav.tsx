@@ -53,7 +53,25 @@ import { Logo } from "@/components/Logo";
 // clicking the logo) also gets no TopNav here, matching that page's own
 // "no functional change on the authenticated branch" scope (it never had
 // a bespoke header of its own either way).
-const TOP_NAV_HIDDEN_ROUTES = ["/", "/home", "/offres", "/finance", "/explorer", "/parametres", "/classement"];
+//
+// "/signup" and "/login" joined this list in the header-declutter lot:
+// this bar's own "🏆 Classement" link was a real conversion distraction
+// on these two pages specifically -- worse than elsewhere, since a
+// visitor here has already started investing in the form. Both pages now
+// build their own minimal header instead (logo + a link to the *other*
+// auth page + the language switcher, AuthPageHeader.tsx), same
+// "route needs its own header, not this shared bar" reasoning as "/".
+const TOP_NAV_HIDDEN_ROUTES = [
+  "/",
+  "/home",
+  "/offres",
+  "/finance",
+  "/explorer",
+  "/parametres",
+  "/classement",
+  "/signup",
+  "/login",
+];
 const ECRAN_ROUTE_PATTERN = /^\/concours\/[^/]+\/ecran$/;
 
 // This needed a client component (usePathname, same locale-stripped

@@ -6,6 +6,7 @@ import { useState } from "react";
 import { Link, useRouter } from "@/i18n/navigation";
 import { buttonClass } from "@/components/ui/button-styles";
 import { inputClass, labelClass } from "@/components/ui/field-styles";
+import { PasswordInput } from "@/components/ui/PasswordInput";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 export function LoginForm() {
@@ -64,12 +65,10 @@ export function LoginForm() {
           </label>
           <label className={labelClass}>
             <span>{t("password")}</span>
-            <input
-              type="password"
+            <PasswordInput
               required
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              className={`${inputClass} w-full`}
             />
           </label>
           <Link

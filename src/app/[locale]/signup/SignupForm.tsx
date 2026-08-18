@@ -6,6 +6,7 @@ import { useState } from "react";
 import { buttonClass } from "@/components/ui/button-styles";
 import { CountrySelect } from "@/components/ui/CountrySelect";
 import { inputClass, labelClass } from "@/components/ui/field-styles";
+import { PasswordInput } from "@/components/ui/PasswordInput";
 import { COUNTRIES } from "@/lib/countries";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { isAtLeast18, minBirthDateForSignup } from "@/lib/validation";
@@ -251,24 +252,20 @@ export function SignupForm() {
           </label>
           <label className={labelClass}>
             <span>{t("password")}</span>
-            <input
-              type="password"
+            <PasswordInput
               required
               minLength={8}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              className={`${inputClass} w-full`}
             />
           </label>
           <label className={labelClass}>
             <span>{t("confirmPassword")}</span>
-            <input
-              type="password"
+            <PasswordInput
               required
               minLength={8}
               value={confirmPassword}
               onChange={(event) => setConfirmPassword(event.target.value)}
-              className={`${inputClass} w-full`}
             />
           </label>
           {status === "error" && (

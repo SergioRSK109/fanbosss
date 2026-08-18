@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { CopyProfileLinkButton } from "@/components/CopyProfileLinkButton";
 import { buttonClass } from "@/components/ui/button-styles";
 import { inputClass, labelClass } from "@/components/ui/field-styles";
+import { PasswordInput } from "@/components/ui/PasswordInput";
 import { ZoomablePhoto } from "@/components/ui/ZoomablePhoto";
 import { PhotoCropper } from "@/components/PhotoCropper";
 import { processCoverPhotoFile } from "@/lib/coverCrop";
@@ -860,8 +861,7 @@ export function ParametresForm({
           </button>
         ) : (
           <>
-            <input
-              type="password"
+            <PasswordInput
               value={newPassword}
               onChange={(event) => {
                 setNewPassword(event.target.value);
@@ -869,10 +869,8 @@ export function ParametresForm({
               }}
               placeholder={t("newPasswordPlaceholder")}
               minLength={8}
-              className={`${inputClass} w-full`}
             />
-            <input
-              type="password"
+            <PasswordInput
               value={confirmNewPassword}
               onChange={(event) => {
                 setConfirmNewPassword(event.target.value);
@@ -880,7 +878,6 @@ export function ParametresForm({
               }}
               placeholder={t("confirmPasswordPlaceholder")}
               minLength={8}
-              className={`${inputClass} w-full`}
             />
             <button
               type="button"

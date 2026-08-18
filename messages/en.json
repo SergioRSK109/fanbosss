@@ -127,7 +127,8 @@
     "ageRestriction": "You must be at least 18 years old to sign up.",
     "submit": "Create my account",
     "submitting": "Creating...",
-    "confirmationSent": "Check your inbox to confirm your signup."
+    "confirmationSent": "Check your inbox to confirm your signup.",
+    "alreadyHaveAccount": "Already have an account?"
   },
   "Login": {
     "heading": "Log in",
@@ -136,7 +137,8 @@
     "submit": "Log in",
     "submitting": "Logging in...",
     "forgotPassword": "Forgot password?",
-    "callbackError": "Account confirmation failed: {error}. Please log in again."
+    "callbackError": "Account confirmation failed: {error}. Please log in again.",
+    "noAccount": "No account?"
   },
   "MotDePasseOublie": {
     "heading": "Forgot password",
@@ -375,7 +377,9 @@
     "unknownError": "unknown error",
     "saveError": "couldn't save",
     "zoomProfilePhotoAriaLabel": "Enlarge profile photo",
-    "verified": "Verified"
+    "verified": "Verified",
+    "showPassword": "Show password",
+    "hidePassword": "Hide password"
   },
   "CopyProfileLink": {
     "button": "📋 Copy my link",
