@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { mediaExtensionForContentType } from "@/lib/mediaExtension";
 import { checkUploadSize, getSignedUploadUrl } from "@/lib/r2";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -58,7 +59,7 @@ export async function POST(
     );
   }
 
-  const r2Key = `offres/${id}/${randomUUID()}`;
+  const r2Key = `offres/${id}/${randomUUID()}${mediaExtensionForContentType(contentType)}`;
   const uploadUrl = await getSignedUploadUrl(r2Key, contentType, size);
 
   return NextResponse.json({ uploadUrl, r2Key });
